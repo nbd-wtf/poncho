@@ -1,6 +1,12 @@
 package app
 
+import java.net.Socket
+import scala.concurrent.duration.FiniteDuration
+import scala.scalanative.loop.Timer
+import castor.Context
 import ujson._
+
+import UnixSocket.UnixSocket
 
 class LightningdListener()(implicit ac: castor.Context)
     extends castor.SimpleActor[String] {
@@ -34,7 +40,6 @@ class LightningdListener()(implicit ac: castor.Context)
           )
         )
       case "init" => {
-        System.err.println("got init")
         System.out.println(
           ujson.write(
             ujson.Obj(
@@ -44,6 +49,24 @@ class LightningdListener()(implicit ac: castor.Context)
             )
           )
         )
+
+        val rpcAddr =
+          s"${req("params")("configuration")("lightning-dir").str}/${req("params")("configuration")("rpc-file").str}"
+
+        Timer.timeout(FiniteDuration(1, "seconds")) { () =>
+          System.err.println(s"connect to $rpcAddr")
+          UnixSocket.connect(
+            rpcAddr,
+            ujson.write(
+              ujson.Obj(
+                "jsonrpc" -> "2.0",
+                "id" -> 0,
+                "method" -> "getinfo",
+                "params" -> ujson.Obj()
+              )
+            )
+          )
+        }
       }
       case "htlc_accepted"   => {}
       case "custommsg"       => {}

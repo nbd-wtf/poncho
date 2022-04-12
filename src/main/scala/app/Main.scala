@@ -1,8 +1,5 @@
 package app
 
-import scala.concurrent.duration.FiniteDuration
-import scala.concurrent.Future
-import scala.scalanative.loop.Timer
 import scala.scalanative.loop.Poll
 import castor.Context
 
