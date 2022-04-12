@@ -1,6 +1,7 @@
 package app
 
 import java.net.Socket
+import scala.util.{Failure, Success}
 import scala.concurrent.duration.FiniteDuration
 import scala.scalanative.loop.Timer
 import castor.Context
@@ -50,23 +51,27 @@ class LightningdListener()(implicit ac: castor.Context)
           )
         )
 
-        val rpcAddr =
+        val rpcAddr: String =
           s"${req("params")("configuration")("lightning-dir").str}/${req("params")("configuration")("rpc-file").str}"
 
-        Timer.timeout(FiniteDuration(1, "seconds")) { () =>
-          System.err.println(s"connect to $rpcAddr")
-          UnixSocket.connect(
-            rpcAddr,
-            ujson.write(
-              ujson.Obj(
-                "jsonrpc" -> "2.0",
-                "id" -> 0,
-                "method" -> "getinfo",
-                "params" -> ujson.Obj()
-              )
+        val payload =
+          ujson.write(
+            ujson.Obj(
+              "jsonrpc" -> "2.0",
+              "id" -> 10000,
+              "method" -> "getinfo",
+              "params" -> ujson.Obj()
             )
           )
-        }
+        System.err.println(s"connecting to $rpcAddr")
+        UnixSocket
+          .call(rpcAddr, payload)
+          .future
+          .onComplete {
+            case Success(value) =>
+              System.err.println(s"got this result: $value")
+            case Failure(err) => System.err.println(s"got this error: $err")
+          }
       }
       case "htlc_accepted"   => {}
       case "custommsg"       => {}
