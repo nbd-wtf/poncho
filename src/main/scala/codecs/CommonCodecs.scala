@@ -1,4 +1,4 @@
-package app.codecs
+package codecs
 
 import scodec.bits.{BitVector, ByteVector}
 import scodec.codecs._

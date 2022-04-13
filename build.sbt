@@ -3,7 +3,7 @@ nativeLinkStubs := false
 
 enablePlugins(ScalaNativePlugin)
 
-name                  := "clight"
+name                  := "pokemon"
 organization          := "fiatjaf"
 scalaVersion          := "3.1.1"
 version               := "0.1.0"

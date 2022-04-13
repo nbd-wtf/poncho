@@ -38,6 +38,8 @@ object LibUVMissing {
 object UnixSocket {
   import LibUVMissing._
 
+  case class UnixDomainSocketException(s: String) extends Exception(s)
+
   val UV_CONNECT_REQUEST = 2
   val UV_EOF = -4095
 
@@ -89,7 +91,7 @@ object UnixSocket {
         val r = uv_write(write, pipe, buffer, 1, onWrite)
         if (r != 0) {
           resultPromise.failure(
-            new Exception(
+            UnixDomainSocketException(
               s"couldn't even try to write ($r): ${fromCString(uv_strerror(r))}"
             )
           )
@@ -99,7 +101,7 @@ object UnixSocket {
       case _ =>
         // fail the promise
         resultPromise.failure(
-          new Exception(
+          UnixDomainSocketException(
             s"failed to connect ($status): ${fromCString(uv_strerror(status))}"
           )
         )
@@ -115,7 +117,7 @@ object UnixSocket {
       case _ =>
         // fail the promise
         resultPromise.failure(
-          new Exception(
+          UnixDomainSocketException(
             s"failed to write ($status): ${fromCString(uv_strerror(status))}"
           )
         )
@@ -163,7 +165,9 @@ object UnixSocket {
       }
       case n if n < 0 && n != UV_EOF => {
         // error reading
-        resultPromise.failure(new Exception(s"failed to read ($nread)}"))
+        resultPromise.failure(
+          UnixDomainSocketException(s"failed to read ($nread)}")
+        )
         uv_read_stop(pipe)
         uv_close(pipe, onClose)
       }
