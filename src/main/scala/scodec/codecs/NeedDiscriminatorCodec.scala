@@ -31,7 +31,8 @@
 package scodec
 package codecs
 
-/** Supports creation of a [[DiscriminatorCodec]]. See [[discriminated]] for details.
+/** Supports creation of a [[DiscriminatorCodec]]. See [[discriminated]] for
+  * details.
   */
 abstract class NeedDiscriminatorCodec[A]:
   def by[B](discriminatorCodec: Codec[B]): DiscriminatorCodec[A, B]

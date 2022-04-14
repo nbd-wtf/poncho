@@ -30,18 +30,22 @@
 
 package scodec
 
-/** Bounds the size, in bits, of the binary encoding of a codec -- i.e., it provides a lower bound and an upper bound on the size
-  * of bit vectors returned as a result of encoding.
+/** Bounds the size, in bits, of the binary encoding of a codec -- i.e., it
+  * provides a lower bound and an upper bound on the size of bit vectors
+  * returned as a result of encoding.
   *
-  * @param lowerBound Minimum number of bits
-  * @param upperBound Maximum number of bits
+  * @param lowerBound
+  *   Minimum number of bits
+  * @param upperBound
+  *   Maximum number of bits
   */
 case class SizeBound(lowerBound: Long, upperBound: Option[Long]):
   require(lowerBound >= 0)
   require(upperBound.getOrElse(0L) >= 0)
   require(upperBound.getOrElse(lowerBound) >= lowerBound)
 
-  /** Returns the exact size of the encoded bits. Defined when the lower bound is equal to the upper bound.
+  /** Returns the exact size of the encoded bits. Defined when the lower bound
+    * is equal to the upper bound.
     */
   def exact: Option[Long] = upperBound match
     case Some(u) if lowerBound == u => upperBound
@@ -60,18 +64,21 @@ case class SizeBound(lowerBound: Long, upperBound: Option[Long]):
   def *(n: Long): SizeBound =
     SizeBound(lowerBound = lowerBound * n, upperBound = upperBound.map(_ * n))
 
-  /** ORs the specified size bound with this size bound, resulting in a new bound which has the minimum lower bound and maximum upper bound. */
+  /** ORs the specified size bound with this size bound, resulting in a new
+    * bound which has the minimum lower bound and maximum upper bound.
+    */
   def |(that: SizeBound): SizeBound = combine(that)(_.min(_), _.max(_))
 
   private def combine(
       that: SizeBound
-  )(lop: (Long, Long) => Long, uop: (Long, Long) => Long): SizeBound = SizeBound(
-    lowerBound = lop(lowerBound, that.lowerBound),
-    upperBound = for
-      x <- upperBound
-      y <- that.upperBound
-    yield uop(x, y)
-  )
+  )(lop: (Long, Long) => Long, uop: (Long, Long) => Long): SizeBound =
+    SizeBound(
+      lowerBound = lop(lowerBound, that.lowerBound),
+      upperBound = for
+        x <- upperBound
+        y <- that.upperBound
+      yield uop(x, y)
+    )
 
   override def toString = upperBound match
     case Some(u) if lowerBound == u => u.toString
@@ -91,11 +98,15 @@ object SizeBound:
   def atMost(size: Long): SizeBound = SizeBound(0, Some(size))
 
   /** Creates a bound with the specified lower and upper bounds. */
-  def bounded(lower: Long, upper: Long): SizeBound = SizeBound(lower, Some(upper))
+  def bounded(lower: Long, upper: Long): SizeBound =
+    SizeBound(lower, Some(upper))
 
-  /** Bound that indicates nothing is known about the size of encoded vectors. */
+  /** Bound that indicates nothing is known about the size of encoded vectors.
+    */
   val unknown: SizeBound = atLeast(0)
 
-  /** Returns the union of all of the specified bounds, or an exact 0 size if the specified collection is empty. */
+  /** Returns the union of all of the specified bounds, or an exact 0 size if
+    * the specified collection is empty.
+    */
   def choice(bounds: Iterable[SizeBound]): SizeBound =
     if bounds.isEmpty then SizeBound.exact(0) else bounds.reduce(_ | _)

@@ -53,7 +53,9 @@ private trait IsoLowPriority:
   inline given productWithUnits[A <: Tuple, B](using
       m: Mirror.ProductOf[B] { type MirroredElemTypes = DropUnits[A] }
   ): Iso[A, B] =
-    instance((a: A) => fromTuple(DropUnits.drop(a)))(b => DropUnits.insert(toTuple(b)))
+    instance((a: A) => fromTuple(DropUnits.drop(a)))(b =>
+      DropUnits.insert(toTuple(b))
+    )
 
   // For bincompat with 2.0.0
   private[scodec] inline def productWithUnits[A <: Tuple, B](using

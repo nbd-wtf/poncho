@@ -73,7 +73,8 @@ private[codecs] class ZlibCodec[A](
               val count = inflater.inflate(buffer)
               loop(acc ++ ByteVector(buffer, 0, count))
           val inflated = loop(ByteVector.empty)
-          if inflater.finished then Right(DecodeResult(inflated, b.drop(inflater.getBytesRead * 8)))
+          if inflater.finished then
+            Right(DecodeResult(inflated, b.drop(inflater.getBytesRead * 8)))
           else
             Left(
               new DataFormatException(

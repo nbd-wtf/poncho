@@ -33,7 +33,8 @@ package codecs
 
 import scodec.bits.BitVector
 
-private[codecs] final class ByteAlignedCodec[A](codec: Codec[A]) extends Codec[A]:
+private[codecs] final class ByteAlignedCodec[A](codec: Codec[A])
+    extends Codec[A]:
 
   private def padAmount(size: Long) =
     val mod = size % 8

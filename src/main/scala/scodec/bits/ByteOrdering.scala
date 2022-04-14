@@ -49,12 +49,14 @@ object ByteOrdering {
     else if (bo == ByteOrder.LITTLE_ENDIAN) ByteOrdering.LittleEndian
     else throw new IllegalArgumentException("unknown byte order " + bo)
 
-  /** Byte ordering where the most significant byte is at the smallest address. */
+  /** Byte ordering where the most significant byte is at the smallest address.
+    */
   case object BigEndian extends ByteOrdering {
     def toJava = ByteOrder.BIG_ENDIAN
   }
 
-  /** Byte ordering where the least significant byte is at the smallest address. */
+  /** Byte ordering where the least significant byte is at the smallest address.
+    */
   case object LittleEndian extends ByteOrdering {
     def toJava = ByteOrder.LITTLE_ENDIAN
   }

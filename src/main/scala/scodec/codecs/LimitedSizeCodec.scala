@@ -33,7 +33,8 @@ package codecs
 
 import scodec.bits.BitVector
 
-private[codecs] final class LimitedSizeCodec[A](limit: Long, codec: Codec[A]) extends Codec[A]:
+private[codecs] final class LimitedSizeCodec[A](limit: Long, codec: Codec[A])
+    extends Codec[A]:
 
   def sizeBound =
     val sz = codec.sizeBound
@@ -43,7 +44,11 @@ private[codecs] final class LimitedSizeCodec[A](limit: Long, codec: Codec[A]) ex
   def encode(a: A) =
     codec.encode(a).flatMap { enc =>
       if enc.size > limit then
-        Attempt.failure(Err(s"[$a] requires ${enc.size} bits but field is limited to $limit bits"))
+        Attempt.failure(
+          Err(
+            s"[$a] requires ${enc.size} bits but field is limited to $limit bits"
+          )
+        )
       else Attempt.successful(enc)
     }
 

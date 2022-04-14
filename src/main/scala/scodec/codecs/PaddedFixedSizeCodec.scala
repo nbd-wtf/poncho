@@ -47,7 +47,9 @@ private[codecs] final class PaddedFixedSizeCodec[A](
       result <-
         if encoded.size > size then
           Attempt.failure(
-            Err(s"[$a] requires ${encoded.size} bits but field is fixed size of $size bits")
+            Err(
+              s"[$a] requires ${encoded.size} bits but field is fixed size of $size bits"
+            )
           )
         else if encoded.size == size then Attempt.successful(encoded)
         else
@@ -59,7 +61,8 @@ private[codecs] final class PaddedFixedSizeCodec[A](
                 else if bits.size < size then pad(bits ++ padding)
                 else
                   Attempt.failure(
-                    Err(s"padding overflows fixed size field of $size bits").pushContext("padding")
+                    Err(s"padding overflows fixed size field of $size bits")
+                      .pushContext("padding")
                   )
               pad(encoded)
 
@@ -76,11 +79,14 @@ private[codecs] final class PaddedFixedSizeCodec[A](
           case Attempt.Successful(DecodeResult(res, rest)) =>
             val pc = padCodec(rest.size)
             @tailrec def validate(bits: BitVector): Attempt[DecodeResult[A]] =
-              if bits.isEmpty then Attempt.successful(DecodeResult(res, buffer.drop(size)))
+              if bits.isEmpty then
+                Attempt.successful(DecodeResult(res, buffer.drop(size)))
               else
                 pc.decode(bits) match
-                  case Attempt.Failure(err) => Attempt.failure(err.pushContext("padding"))
-                  case Attempt.Successful(DecodeResult(_, remain)) => validate(remain)
+                  case Attempt.Failure(err) =>
+                    Attempt.failure(err.pushContext("padding"))
+                  case Attempt.Successful(DecodeResult(_, remain)) =>
+                    validate(remain)
             validate(rest)
 
   override def toString = s"paddedFixedSizeBits($size, $codec)"

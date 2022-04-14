@@ -30,5 +30,6 @@
 
 package scodec
 
-/** Empty object which allows cross building against scodec 1.11 without errors. */
+/** Empty object which allows cross building against scodec 1.11 without errors.
+  */
 object compat

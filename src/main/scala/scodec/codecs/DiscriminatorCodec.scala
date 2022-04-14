@@ -36,46 +36,68 @@ import scala.reflect.ClassTag
 import scodec.bits.BitVector
 import DiscriminatorCodec.{Case, Prism}
 
-/** Codec that supports the binary structure `tag ++ value` where the `tag` identifies the encoding/decoding of
-  * the value.
+/** Codec that supports the binary structure `tag ++ value` where the `tag`
+  * identifies the encoding/decoding of the value.
   *
-  * To build an instance of this codec, call [[discriminated]] and specify the tag type via the `by` method. Then
-  * call one more more of the case combinators on this class.
+  * To build an instance of this codec, call [[discriminated]] and specify the
+  * tag type via the `by` method. Then call one more more of the case
+  * combinators on this class.
   *
-  * The most general case combinators are `caseO` and `caseP`.
-  * In addition to a tag, the `caseO` combinator is defined by providing a mapping from
-  * `A` to `Option[R]`, a mapping from `R` to `A`, and a `Codec[R]`. The case is used for encoding if the
-  * mapping from `A` to `Option[R]` returns a `Some` and it is used for decoding upon matching the tag value.
-  * The `caseP` combinators work the same but take a `PartialFunction[A, R]` instead of an `A => Option[R]`.
+  * The most general case combinators are `caseO` and `caseP`. In addition to a
+  * tag, the `caseO` combinator is defined by providing a mapping from `A` to
+  * `Option[R]`, a mapping from `R` to `A`, and a `Codec[R]`. The case is used
+  * for encoding if the mapping from `A` to `Option[R]` returns a `Some` and it
+  * is used for decoding upon matching the tag value. The `caseP` combinators
+  * work the same but take a `PartialFunction[A, R]` instead of an `A =>
+  * Option[R]`.
   *
-  * If `R` is a subtype of `A`, then the mapping from `R` to `A` can be omitted. Hence, the
-  * `subcaseO` and `subcaseP` constrain `R` to being a subtype of `A` and do not take a `R => A` function.
+  * If `R` is a subtype of `A`, then the mapping from `R` to `A` can be omitted.
+  * Hence, the `subcaseO` and `subcaseP` constrain `R` to being a subtype of `A`
+  * and do not take a `R => A` function.
   *
-  * Finally, the least generic case combinators are the `typecase` combinators which add further constraints
-  * to the `subcase*` combinators. Specifically, the typecase operators omit the `A => Option[R]` or
-  * `PartialFunction[A, R]` in favor of doing subtype checks. For example, the following codec is a `Codec[AnyVal]`
-  * that encodes a 0 if passed a `Boolean` and a 1 if passed an `Int`: {{{
-  *   discriminated[AnyVal].by(uint8).typecase(0, bool).typecase(1, int32)
-  * }}}
+  * Finally, the least generic case combinators are the `typecase` combinators
+  * which add further constraints to the `subcase*` combinators. Specifically,
+  * the typecase operators omit the `A => Option[R]` or `PartialFunction[A, R]`
+  * in favor of doing subtype checks. For example, the following codec is a
+  * `Codec[AnyVal]` that encodes a 0 if passed a `Boolean` and a 1 if passed an
+  * `Int`: {{{ discriminated[AnyVal].by(uint8).typecase(0, bool).typecase(1,
+  * int32) }}}
   *
-  * Often, the values are size-delimited -- that is, there is a `size` field after the `tag` field and before`
-  * the `value` field. To support this, use the `framing` method to provide a transformation to each
-  * value codec. For example, `framing(new CodecTransformation { def apply[X](c: Codec[X]) = variableSizeBytes(uint8, c) })`.
+  * Often, the values are size-delimited -- that is, there is a `size` field
+  * after the `tag` field and before` the `value` field. To support this, use
+  * the `framing` method to provide a transformation to each value codec. For
+  * example, `framing(new CodecTransformation { def apply[X](c: Codec[X]) =
+  * variableSizeBytes(uint8, c) })`.
   *
-  * @see [[discriminated]]
+  * @see
+  *   [[discriminated]]
   *
-  * @param by codec that encodec/decodes the tag value
-  * @param cases cases, ordered from highest priority to lowest priority, that handle subsets of `A`
+  * @param by
+  *   codec that encodec/decodes the tag value
+  * @param cases
+  *   cases, ordered from highest priority to lowest priority, that handle
+  *   subsets of `A`
   *
-  * @define methodCaseCombinator Returns a new discriminator codec with a new case added for the specified tag.
-  * @define typeR representative type that this case handles
-  * @define paramTag tag value for this case
-  * @define paramEncodeTag tag value to use during encoding for this case
-  * @define paramDecodeTag function that determines if this case should be used for decoding given a decoded tag
-  * @define paramToRep function used during encoding that converts an `A` to an `Option[R]`
-  * @define paramToRepPartial partial function from `A` to `R` used during encoding
-  * @define paramFromRep function used during decoding that converts an `R` to an `A`
-  * @define paramCr codec that encodes/decodes `R`s
+  * @define methodCaseCombinator
+  *   Returns a new discriminator codec with a new case added for the specified
+  *   tag.
+  * @define typeR
+  *   representative type that this case handles
+  * @define paramTag
+  *   tag value for this case
+  * @define paramEncodeTag
+  *   tag value to use during encoding for this case
+  * @define paramDecodeTag
+  *   function that determines if this case should be used for decoding given a
+  *   decoded tag
+  * @define paramToRep
+  *   function used during encoding that converts an `A` to an `Option[R]`
+  * @define paramToRepPartial
+  *   partial function from `A` to `R` used during encoding
+  * @define paramFromRep
+  *   function used during decoding that converts an `R` to an `A`
+  * @define paramCr
+  *   codec that encodes/decodes `R`s
   */
 final class DiscriminatorCodec[A, B] private[codecs] (
     by: Codec[B],
@@ -86,46 +108,70 @@ final class DiscriminatorCodec[A, B] private[codecs] (
 
   /** $methodCaseCombinator
     *
-    * @tparam R $typeR
-    * @param tag $paramTag
-    * @param toRep $paramToRep
-    * @param fromRep $paramFromRep
-    * @param cr $paramCr
+    * @tparam R
+    *   $typeR
+    * @param tag
+    *   $paramTag
+    * @param toRep
+    *   $paramToRep
+    * @param fromRep
+    *   $paramFromRep
+    * @param cr
+    *   $paramCr
     */
   def caseO[R](
       tag: B
-  )(toRep: A => Option[R])(fromRep: R => A)(cr: Codec[R]): DiscriminatorCodec[A, B] =
+  )(toRep: A => Option[R])(fromRep: R => A)(
+      cr: Codec[R]
+  ): DiscriminatorCodec[A, B] =
     appendCase(Case(tag, Prism(toRep, fromRep, cr)))
 
   /** $methodCaseCombinator
     *
-    * @tparam R $typeR
-    * @param tag $paramTag
-    * @param toRep $paramToRepPartial
-    * @param fromRep $paramFromRep
-    * @param cr $paramCr
+    * @tparam R
+    *   $typeR
+    * @param tag
+    *   $paramTag
+    * @param toRep
+    *   $paramToRepPartial
+    * @param fromRep
+    *   $paramFromRep
+    * @param cr
+    *   $paramCr
     */
   def caseP[R](
       tag: B
-  )(toRep: PartialFunction[A, R])(fromRep: R => A)(cr: Codec[R]): DiscriminatorCodec[A, B] =
+  )(toRep: PartialFunction[A, R])(fromRep: R => A)(
+      cr: Codec[R]
+  ): DiscriminatorCodec[A, B] =
     appendCase(Case(tag, Prism(toRep.lift, fromRep, cr)))
 
   /** $methodCaseCombinator
     *
-    * @tparam R $typeR
-    * @param tag $paramTag
-    * @param toRep $paramToRep
-    * @param cr $paramCr
+    * @tparam R
+    *   $typeR
+    * @param tag
+    *   $paramTag
+    * @param toRep
+    *   $paramToRep
+    * @param cr
+    *   $paramCr
     */
-  def subcaseO[R <: A](tag: B)(toRep: A => Option[R])(cr: Codec[R]): DiscriminatorCodec[A, B] =
+  def subcaseO[R <: A](tag: B)(toRep: A => Option[R])(
+      cr: Codec[R]
+  ): DiscriminatorCodec[A, B] =
     caseO(tag)(toRep)((r: R) => r)(cr)
 
   /** $methodCaseCombinator
     *
-    * @tparam R $typeR
-    * @param tag $paramTag
-    * @param toRep $paramToRepPartial
-    * @param cr $paramCr
+    * @tparam R
+    *   $typeR
+    * @param tag
+    *   $paramTag
+    * @param toRep
+    *   $paramToRepPartial
+    * @param cr
+    *   $paramCr
     */
   def subcaseP[R <: A](
       tag: B
@@ -134,16 +180,25 @@ final class DiscriminatorCodec[A, B] private[codecs] (
 
   /** $methodCaseCombinator
     *
-    * Note: when encoding a value of `A`, this combinator compares the runtime class of that value to the
-    * runtime class of the supplied `ClassTag[R]`. As such, the *erased* type of `A` is used and hence,
-    * this operation is not safe to use with parameterized representation types.
+    * Note: when encoding a value of `A`, this combinator compares the runtime
+    * class of that value to the runtime class of the supplied `ClassTag[R]`. As
+    * such, the *erased* type of `A` is used and hence, this operation is not
+    * safe to use with parameterized representation types.
     *
-    * @tparam R $typeR
-    * @param tag $paramTag
-    * @param cr $paramCr
+    * @tparam R
+    *   $typeR
+    * @param tag
+    *   $paramTag
+    * @param cr
+    *   $paramCr
     */
-  def typecase[R <: A: ClassTag](tag: B, cr: Codec[R]): DiscriminatorCodec[A, B] =
-    subcaseO(tag)(a => if matchesClass[R](a) then Some(a.asInstanceOf[R]) else None)(cr)
+  def typecase[R <: A: ClassTag](
+      tag: B,
+      cr: Codec[R]
+  ): DiscriminatorCodec[A, B] =
+    subcaseO(tag)(a =>
+      if matchesClass[R](a) then Some(a.asInstanceOf[R]) else None
+    )(cr)
 
   private def matchesClass[R](a: A)(using ctr: ClassTag[R]) =
     val clazz = ctr match
@@ -162,7 +217,11 @@ final class DiscriminatorCodec[A, B] private[codecs] (
     subcaseP(tag) { case v if value == v => v }(codecs.provide(value))
 
   private def appendCase[R](c: Case[A, B, R]): DiscriminatorCodec[A, B] =
-    new DiscriminatorCodec[A, B](by, cases :+ c.asInstanceOf[Case[A, B, Any]], framing)
+    new DiscriminatorCodec[A, B](
+      by,
+      cases :+ c.asInstanceOf[Case[A, B, Any]],
+      framing
+    )
 
   private val matcher: B => Attempt[Case[A, B, Any]] =
     def errOrCase(b: B, opt: Option[Case[A, B, Any]]) =
@@ -171,17 +230,22 @@ final class DiscriminatorCodec[A, B] private[codecs] (
     val tbl = cases.reverse.map(kase => kase.tag -> kase).toMap
     b => errOrCase(b, tbl.get(b))
 
-  /** Replaces the current framing logic with the specified codec transformation.
+  /** Replaces the current framing logic with the specified codec
+    * transformation.
     *
-    * Every representative codec is wrapped with the framing logic when encoding/decoding.
+    * Every representative codec is wrapped with the framing logic when
+    * encoding/decoding.
     *
-    * @param framing new framing logic
+    * @param framing
+    *   new framing logic
     */
   def framing(framing: [x] => Codec[x] => Codec[x]): DiscriminatorCodec[A, B] =
     new DiscriminatorCodec[A, B](by, cases, framing)
 
   def sizeBound =
-    by.sizeBound + SizeBound.choice(cases.map(c => framing(c.prism.repCodec).sizeBound))
+    by.sizeBound + SizeBound.choice(
+      cases.map(c => framing(c.prism.repCodec).sizeBound)
+    )
 
   def encode(a: A) =
     val itr = cases.iterator
@@ -219,6 +283,7 @@ private[codecs] object DiscriminatorCodec:
       repCodec: Codec[R]
   )
 
-  /** Maps a discrimination tag to a prism that supports encoding/decoding a value of type `A`.
+  /** Maps a discrimination tag to a prism that supports encoding/decoding a
+    * value of type `A`.
     */
   private[codecs] case class Case[A, B, R](tag: B, prism: Prism[A, R])

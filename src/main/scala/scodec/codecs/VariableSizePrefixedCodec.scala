@@ -61,4 +61,5 @@ private[codecs] final class VariableSizePrefixedCodec[A, B](
   override def decode(buffer: BitVector) =
     decoder.decode(buffer)
 
-  override def toString = s"variableSizePrefixedBits($sizeCodec, $prefixCodec, $valueCodec)"
+  override def toString =
+    s"variableSizePrefixedBits($sizeCodec, $prefixCodec, $valueCodec)"

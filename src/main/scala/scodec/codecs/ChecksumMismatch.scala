@@ -40,5 +40,6 @@ case class ChecksumMismatch(
     actual: BitVector,
     context: List[String] = Nil
 ) extends Err:
-  def message: String = s"checksum mismatch for bits: $bits, expected: $expected, actual: $actual"
+  def message: String =
+    s"checksum mismatch for bits: $bits, expected: $expected, actual: $actual"
   def pushContext(ctx: String): Err = copy(context = ctx :: context)

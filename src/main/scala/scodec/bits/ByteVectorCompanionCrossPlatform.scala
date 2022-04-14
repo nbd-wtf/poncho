@@ -30,6 +30,7 @@
 
 package scodec.bits
 
-private[bits] trait ByteVectorCompanionCrossPlatform extends ByteVectorPlatform {
+private[bits] trait ByteVectorCompanionCrossPlatform
+    extends ByteVectorPlatform {
   self: ByteVector.type =>
 }

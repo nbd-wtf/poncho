@@ -30,7 +30,9 @@
 
 package scodec.bits
 
-/** Provides types related to base conversion -- e.g., binary, hexadecimal, and base 64. */
+/** Provides types related to base conversion -- e.g., binary, hexadecimal, and
+  * base 64.
+  */
 object Bases {
 
   /** Partial mapping between characters and indices used in base conversions.
@@ -76,7 +78,9 @@ object Bases {
   /** Predefined alphabets for use in base conversions. */
   object Alphabets {
 
-    /** Binary alphabet that uses `{0, 1}` and allows whitespace and underscores for separation. */
+    /** Binary alphabet that uses `{0, 1}` and allows whitespace and underscores
+      * for separation.
+      */
     object Binary extends BinaryAlphabet {
       def toChar(i: Int) = if (i == 0) '0' else '1'
       def toIndex(c: Char) =
@@ -88,7 +92,9 @@ object Bases {
       def ignore(c: Char) = c.isWhitespace || c == '_'
     }
 
-    /** Binary alphabet that uses `{t, f}` and allows whitespace and underscores for separation. */
+    /** Binary alphabet that uses `{t, f}` and allows whitespace and underscores
+      * for separation.
+      */
     object Truthy extends BinaryAlphabet {
       def toChar(i: Int) = if (i == 0) 't' else 'f'
       def toIndex(c: Char) =
@@ -100,7 +106,8 @@ object Bases {
       def ignore(c: Char) = c.isWhitespace || c == '_'
     }
 
-    /** Abstract hex alphabet that supports `{0-9, A-F, a-f}` for looking up an index from a char.
+    /** Abstract hex alphabet that supports `{0-9, A-F, a-f}` for looking up an
+      * index from a char.
       */
     private[bits] abstract class LenientHex extends HexAlphabet {
       def toIndex(c: Char) =
@@ -113,53 +120,71 @@ object Bases {
       def ignore(c: Char) = c.isWhitespace || c == '_'
     }
 
-    /** Base 16 alphabet that uses `{0-9, a-f}`. Whitespace and underscores are ignored. */
+    /** Base 16 alphabet that uses `{0-9, a-f}`. Whitespace and underscores are
+      * ignored.
+      */
     object HexLowercase extends LenientHex {
       private val Chars =
-        Array('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f')
+        Array('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c',
+          'd', 'e', 'f')
       def toChar(i: Int) = Chars(i)
     }
 
-    /** Base 16 alphabet that uses `{0-9, A-F}`. Whitespace and underscores are ignored. */
+    /** Base 16 alphabet that uses `{0-9, A-F}`. Whitespace and underscores are
+      * ignored.
+      */
     object HexUppercase extends LenientHex {
       private val Chars =
-        Array('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F')
+        Array('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C',
+          'D', 'E', 'F')
       def toChar(i: Int) = Chars(i)
     }
 
-    private def charIndicesLookupArray(indicesMap: Map[Char, Int]): (Int, Array[Int]) = {
+    private def charIndicesLookupArray(
+        indicesMap: Map[Char, Int]
+    ): (Int, Array[Int]) = {
       val indicesMin: Int = indicesMap.keys.min.toInt
-      val indices: Array[Int] = Array.tabulate[Int](indicesMap.keys.max - indicesMin + 1) { i =>
-        indicesMap.getOrElse((i + indicesMin).toChar, -1)
-      }
+      val indices: Array[Int] =
+        Array.tabulate[Int](indicesMap.keys.max - indicesMin + 1) { i =>
+          indicesMap.getOrElse((i + indicesMin).toChar, -1)
+        }
       (indicesMin, indices)
     }
 
     /** Base 32 alphabet, with padding, as defined by
-      * [[https://tools.ietf.org/html/rfc4648#section-6 RF4648 section 4]]. Whitespace is ignored.
+      * [[https://tools.ietf.org/html/rfc4648#section-6 RF4648 section 4]].
+      * Whitespace is ignored.
       */
     object Base32 extends Base32Alphabet {
       private val Chars: Array[Char] = (('A' to 'Z') ++ ('2' to '7')).toArray
-      private val (indicesMin, indices) = charIndicesLookupArray(Chars.zipWithIndex.toMap)
+      private val (indicesMin, indices) = charIndicesLookupArray(
+        Chars.zipWithIndex.toMap
+      )
       val pad = '='
       def toChar(i: Int) = Chars(i)
       def toIndex(c: Char) = {
         val lookupIndex = c - indicesMin
-        if (lookupIndex >= 0 && lookupIndex < indices.length && indices(lookupIndex) >= 0)
+        if (
+          lookupIndex >= 0 && lookupIndex < indices.length && indices(
+            lookupIndex
+          ) >= 0
+        )
           indices(lookupIndex)
         else throw new IllegalArgumentException
       }
       def ignore(c: Char) = c.isWhitespace
     }
 
-    /** Base 32 Crockford alphabet as defined by [[https://www.crockford.com/base32.html]].
-      * Whitespace and hyphen is ignored.
+    /** Base 32 Crockford alphabet as defined by
+      * [[https://www.crockford.com/base32.html]]. Whitespace and hyphen is
+      * ignored.
       */
     object Base32Crockford extends Base32Alphabet {
       private val Chars: Array[Char] =
         (('0' to '9') ++ ('A' to 'H') ++ ('J' to 'K') ++ ('M' to 'N') ++ ('P' to 'T') ++ ('V' to 'Z')).toArray
       private val (indicesMin, indices) = charIndicesLookupArray {
-        val map = (Chars.zipWithIndex ++ Chars.map(_.toLower).zipWithIndex).toMap
+        val map =
+          (Chars.zipWithIndex ++ Chars.map(_.toLower).zipWithIndex).toMap
         map ++ Map(
           'O' -> map('0'),
           'o' -> map('0'),
@@ -173,7 +198,11 @@ object Bases {
       def toChar(i: Int) = Chars(i)
       def toIndex(c: Char) = {
         val lookupIndex = c - indicesMin
-        if (lookupIndex >= 0 && lookupIndex < indices.length && indices(lookupIndex) >= 0)
+        if (
+          lookupIndex >= 0 && lookupIndex < indices.length && indices(
+            lookupIndex
+          ) >= 0
+        )
           indices(lookupIndex)
         else throw new IllegalArgumentException
       }
@@ -181,8 +210,8 @@ object Bases {
     }
 
     /** Base 58 alphabet as defined by
-      * [[https://en.bitcoin.it/wiki/Base58Check_encoding#Base58_symbol_chart]]. IPFS hashes uses
-      * the same order.
+      * [[https://en.bitcoin.it/wiki/Base58Check_encoding#Base58_symbol_chart]].
+      * IPFS hashes uses the same order.
       */
     object Base58 extends Alphabet {
       private val Chars = (('1' to '9') ++ ('A' to 'Z') ++ ('a' to 'z'))
@@ -204,7 +233,8 @@ object Bases {
     }
 
     private object Base64Base {
-      private val Chars = (('A' to 'Z') ++ ('a' to 'z') ++ ('0' to '9') :+ '+' :+ '/').toArray
+      private val Chars =
+        (('A' to 'Z') ++ ('a' to 'z') ++ ('0' to '9') :+ '+' :+ '/').toArray
     }
 
     sealed trait Base64Base extends Base64Alphabet {
@@ -223,23 +253,27 @@ object Bases {
     }
 
     /** Base 64 alphabet, with padding, as defined by
-      * [[https://tools.ietf.org/html/rfc4648#section-4 RF4648 section 4]]. Whitespace is ignored.
+      * [[https://tools.ietf.org/html/rfc4648#section-4 RF4648 section 4]].
+      * Whitespace is ignored.
       */
     object Base64 extends Base64Base with PaddedAlphabet
 
     /** Base 64 alphabet, without padding, as defined by
-      * [[https://tools.ietf.org/html/rfc4648#section-4 RF4648 section 4]]. Whitespace is ignored.
+      * [[https://tools.ietf.org/html/rfc4648#section-4 RF4648 section 4]].
+      * Whitespace is ignored.
       */
     object Base64NoPad extends Base64Base {
       override val pad = 0.toChar
     }
 
     private object Base64UrlBase {
-      private val Chars = (('A' to 'Z') ++ ('a' to 'z') ++ ('0' to '9') :+ '-' :+ '_').toArray
+      private val Chars =
+        (('A' to 'Z') ++ ('a' to 'z') ++ ('0' to '9') :+ '-' :+ '_').toArray
     }
 
     /** Base 64 alphabet, with padding, as defined by
-      * [[https://tools.ietf.org/html/rfc4648#section-5 RF4648 section 5]]. Whitespace is ignored.
+      * [[https://tools.ietf.org/html/rfc4648#section-5 RF4648 section 5]].
+      * Whitespace is ignored.
       */
     sealed trait Base64UrlBase extends Base64Alphabet {
       override val pad = '='

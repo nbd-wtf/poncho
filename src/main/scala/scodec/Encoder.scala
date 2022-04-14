@@ -41,8 +41,10 @@ trait Encoder[-A]:
 
   /** Attempts to encode the specified value in to a bit vector.
     *
-    * @param value value to encode
-    * @return error or binary encoding of the value
+    * @param value
+    *   value to encode
+    * @return
+    *   error or binary encoding of the value
     */
   def encode(value: A): Attempt[BitVector]
 
@@ -57,21 +59,25 @@ trait Encoder[-A]:
     def encode(b: B) = self.encode(f(b))
 
   /** Converts this encoder to an `Encoder[B]` using the supplied partial
-    * function from `B` to `A`. The encoding will fail for any `B` that
-    * `f` maps to `None`.
+    * function from `B` to `A`. The encoding will fail for any `B` that `f` maps
+    * to `None`.
     */
   def pcontramap[B](f: B => Option[A]): Encoder[B] = new Encoder[B]:
     def sizeBound = self.sizeBound
     def encode(b: B): Attempt[BitVector] =
-      f(b).map(self.encode).getOrElse(Attempt.failure(Err(s"widening failed: $b")))
+      f(b)
+        .map(self.encode)
+        .getOrElse(Attempt.failure(Err(s"widening failed: $b")))
 
-  /** Converts this encoder to an `Encoder[B]` using the supplied `B => Attempt[A]`.
+  /** Converts this encoder to an `Encoder[B]` using the supplied `B =>
+    * Attempt[A]`.
     */
   def econtramap[B](f: B => Attempt[A]): Encoder[B] = new Encoder[B]:
     def sizeBound = self.sizeBound
     def encode(b: B) = f(b).flatMap(self.encode)
 
-  /** Converts this encoder to a new encoder that compacts the generated bit vector before returning it
+  /** Converts this encoder to a new encoder that compacts the generated bit
+    * vector before returning it
     */
   def compact: Encoder[A] = new Encoder[A]:
     def sizeBound = self.sizeBound
@@ -88,7 +94,8 @@ trait Encoder[-A]:
     def encode(a: A) = self.encode(a)
     def decode(bits: BitVector) = Attempt.failure(Err("decoding not supported"))
 
-  /** Encodes all elements of the specified sequence and concatenates the results, or returns the first encountered error.
+  /** Encodes all elements of the specified sequence and concatenates the
+    * results, or returns the first encountered error.
     */
   def encodeAll(as: Iterable[A]): Attempt[BitVector] =
     val buf = new collection.mutable.ArrayBuffer[BitVector](as.size)
@@ -97,7 +104,8 @@ trait Encoder[-A]:
       if failure == null then
         encode(a) match
           case Attempt.Successful(aa) => buf += aa
-          case Attempt.Failure(err)   => failure = err.pushContext(buf.size.toString)
+          case Attempt.Failure(err) =>
+            failure = err.pushContext(buf.size.toString)
     }
     if failure == null then
       def merge(offset: Int, size: Int): BitVector = size match
@@ -105,7 +113,10 @@ trait Encoder[-A]:
         case 1 => buf(offset)
         case _ =>
           val half = size / 2
-          merge(offset, half) ++ merge(offset + half, half + (if size % 2 == 0 then 0 else 1))
+          merge(offset, half) ++ merge(
+            offset + half,
+            half + (if size % 2 == 0 then 0 else 1)
+          )
       Attempt.successful(merge(0, buf.size))
     else
       Attempt.failure(
@@ -121,29 +132,35 @@ trait EncoderFunctions:
   final def encode[A](a: A)(using encA: Encoder[A]): Attempt[BitVector] =
     encA.encode(a)
 
-  /** Encodes the specified values, one after the other, to a bit vector using the specified encoders.
+  /** Encodes the specified values, one after the other, to a bit vector using
+    * the specified encoders.
     */
-  final def encodeBoth[A, B](encA: Encoder[A], encB: Encoder[B])(a: A, b: B): Attempt[BitVector] =
+  final def encodeBoth[A, B](
+      encA: Encoder[A],
+      encB: Encoder[B]
+  )(a: A, b: B): Attempt[BitVector] =
     for
       encodedA <- encA.encode(a)
       encodedB <- encB.encode(b)
     yield encodedA ++ encodedB
 
-  /** Creates an encoder that encodes with each of the specified encoders, returning
-    * the first successful result.
+  /** Creates an encoder that encodes with each of the specified encoders,
+    * returning the first successful result.
     */
-  final def choiceEncoder[A](encoders: Encoder[A]*): Encoder[A] = new Encoder[A]:
-    def sizeBound = SizeBound.choice(encoders.map(_.sizeBound))
-    def encode(a: A) =
-      @annotation.tailrec
-      def go(rem: List[Encoder[A]], errs: List[Err]): Attempt[BitVector] = rem match
-        case Nil => Attempt.failure(Err(errs.reverse))
-        case hd :: tl =>
-          hd.encode(a) match
-            case res @ Attempt.Successful(_) => res
-            case Attempt.Failure(err)        => go(tl, err :: errs)
-      if encoders.isEmpty then Attempt.failure(Err("no encoders provided"))
-      else go(encoders.toList, Nil)
+  final def choiceEncoder[A](encoders: Encoder[A]*): Encoder[A] =
+    new Encoder[A]:
+      def sizeBound = SizeBound.choice(encoders.map(_.sizeBound))
+      def encode(a: A) =
+        @annotation.tailrec
+        def go(rem: List[Encoder[A]], errs: List[Err]): Attempt[BitVector] =
+          rem match
+            case Nil => Attempt.failure(Err(errs.reverse))
+            case hd :: tl =>
+              hd.encode(a) match
+                case res @ Attempt.Successful(_) => res
+                case Attempt.Failure(err)        => go(tl, err :: errs)
+        if encoders.isEmpty then Attempt.failure(Err("no encoders provided"))
+        else go(encoders.toList, Nil)
 
 /** Companion for [[Encoder]].
   */

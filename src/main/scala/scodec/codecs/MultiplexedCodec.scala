@@ -41,14 +41,21 @@ sealed trait MultiplexedCodec:
 
   def sizeBound: SizeBound = SizeBound.unknown
 
-  /** Encodes all elements of the specified sequence and combines the results using `mux`, or returns the first encountered error.
+  /** Encodes all elements of the specified sequence and combines the results
+    * using `mux`, or returns the first encountered error.
     *
-    * @param enc element encoder
-    * @param mux multiplexing function
-    * @param seq elements to encode
+    * @param enc
+    *   element encoder
+    * @param mux
+    *   multiplexing function
+    * @param seq
+    *   elements to encode
     * @return
     */
-  final def encode[A](enc: Encoder[A], mux: (BitVector, BitVector) => BitVector)(
+  final def encode[A](
+      enc: Encoder[A],
+      mux: (BitVector, BitVector) => BitVector
+  )(
       seq: collection.immutable.Seq[A]
   ): Attempt[BitVector] =
     val buf = new collection.mutable.ArrayBuffer[BitVector](seq.size)
@@ -57,7 +64,8 @@ sealed trait MultiplexedCodec:
       if failure == null then
         enc.encode(a) match
           case Attempt.Successful(aa) => buf += aa
-          case Attempt.Failure(err)   => failure = err.pushContext(buf.size.toString)
+          case Attempt.Failure(err) =>
+            failure = err.pushContext(buf.size.toString)
     }
     if failure == null then
       def merge(offset: Int, size: Int): BitVector = size match
@@ -65,22 +73,34 @@ sealed trait MultiplexedCodec:
         case 1 => buf(offset)
         case _ =>
           val half = size / 2
-          mux(merge(offset, half), merge(offset + half, half + (if size % 2 == 0 then 0 else 1)))
+          mux(
+            merge(offset, half),
+            merge(offset + half, half + (if size % 2 == 0 then 0 else 1))
+          )
       Attempt.successful(merge(0, buf.size))
     else Attempt.failure(failure.nn) // FIXME .nn shouldn't be necessary here
 
-  /** Repeatedly decodes values of type `A` and returns a collection of the specified type.
-    * Uses `deMux` repeatedly to obtain the stream of vectors to decode to a value of type `A`.
-    * Terminates when the next stream to decode is empty or upon first decoding error.
+  /** Repeatedly decodes values of type `A` and returns a collection of the
+    * specified type. Uses `deMux` repeatedly to obtain the stream of vectors to
+    * decode to a value of type `A`. Terminates when the next stream to decode
+    * is empty or upon first decoding error.
     *
     * Note: For large sequences, it may be necessary to compact bits in `deMux`.
     *
-    * @param dec element decoder
-    * @param deMux returns `(next, rest)` tuples where `next` is input to `dec` yielding `(value, remainder)` and `remainder ++ rest` is the next input to `deMux`
-    * @param buffer input bits
+    * @param dec
+    *   element decoder
+    * @param deMux
+    *   returns `(next, rest)` tuples where `next` is input to `dec` yielding
+    *   `(value, remainder)` and `remainder ++ rest` is the next input to
+    *   `deMux`
+    * @param buffer
+    *   input bits
     * @return
     */
-  final def decode[F[_], A](dec: Decoder[A], deMux: BitVector => (BitVector, BitVector))(
+  final def decode[F[_], A](
+      dec: Decoder[A],
+      deMux: BitVector => (BitVector, BitVector)
+  )(
       buffer: BitVector
   )(using cbf: Factory[A, F[A]]): Attempt[DecodeResult[F[A]]] =
     val builder = cbf.newBuilder
@@ -100,12 +120,16 @@ sealed trait MultiplexedCodec:
 
 object DeMultiplexer:
 
-  /** Returns a `(next, rest)` tuple where `next` is the prefix of the input preceding the first occurrence of `delimiter`.
+  /** Returns a `(next, rest)` tuple where `next` is the prefix of the input
+    * preceding the first occurrence of `delimiter`.
     *
-    * Note: The search for `delimiter` is performed at `delimiter` sized intervals.
+    * Note: The search for `delimiter` is performed at `delimiter` sized
+    * intervals.
     *
-    * @param bits the input bits
-    * @param delimiter the separator bits
+    * @param bits
+    *   the input bits
+    * @param delimiter
+    *   the separator bits
     * @return
     */
   def delimited(bits: BitVector, delimiter: BitVector): (BitVector, BitVector) =
@@ -117,9 +141,10 @@ object DeMultiplexer:
       start: Long
   ): (BitVector, BitVector) =
     bits.indexOfSlice(delimiter, start) match
-      case -1                             => (bits, BitVector.empty)
-      case i if (i % delimiter.size) == 0 => (bits.take(i), bits.drop(i + delimiter.size))
-      case i                              => delimited(bits, delimiter, i + delimiter.size)
+      case -1 => (bits, BitVector.empty)
+      case i if (i % delimiter.size) == 0 =>
+        (bits.take(i), bits.drop(i + delimiter.size))
+      case i => delimited(bits, delimiter, i + delimiter.size)
 
 private[codecs] class VectorMultiplexedCodec[A](
     mux: (BitVector, BitVector) => BitVector,
@@ -142,6 +167,7 @@ private[codecs] class ListMultiplexedCodec[A](
     with MultiplexedCodec:
   def encode(value: List[A]): Attempt[BitVector] = encode(codec, mux)(value)
 
-  def decode(bits: BitVector): Attempt[DecodeResult[List[A]]] = decode[List, A](codec, deMux)(bits)
+  def decode(bits: BitVector): Attempt[DecodeResult[List[A]]] =
+    decode[List, A](codec, deMux)(bits)
 
   override def toString: String = s"listMultiplexed($codec, $mux, $deMux)"

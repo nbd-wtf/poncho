@@ -39,7 +39,8 @@ private[codecs] final class VariableSizeCodec[A](
     sizePadding: Long
 ) extends Codec[A]:
 
-  private val decoder = sizeCodec.flatMap(sz => codecs.fixedSizeBits(sz - sizePadding, valueCodec))
+  private val decoder =
+    sizeCodec.flatMap(sz => codecs.fixedSizeBits(sz - sizePadding, valueCodec))
 
   def sizeBound = sizeCodec.sizeBound.atLeast
 

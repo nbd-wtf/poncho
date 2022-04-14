@@ -32,23 +32,23 @@ package scodec.bits
 
 import scala.quoted.*
 
-/** Provides the `hex` string interpolator, which returns `ByteVector` instances from hexadecimal strings.
+/** Provides the `hex` string interpolator, which returns `ByteVector` instances
+  * from hexadecimal strings.
   *
-  * @example {{{
-  * scala> val b = hex"deadbeef"
-  * val b: scodec.bits.ByteVector = ByteVector(4 bytes, 0xdeadbeef)
-  * }}}
+  * @example
+  *   {{{ scala> val b = hex"deadbeef" val b: scodec.bits.ByteVector =
+  *   ByteVector(4 bytes, 0xdeadbeef) }}}
   */
 extension (inline ctx: StringContext)
   inline def hex(inline args: Any*): ByteVector =
     ${ Literals.Hex('ctx, 'args) }
 
-/** Provides the `bin` string interpolator, which returns `BitVector` instances from binary strings.
+/** Provides the `bin` string interpolator, which returns `BitVector` instances
+  * from binary strings.
   *
-  * @example {{{
-  * scala> val b = bin"1010101010"
-  * val b: scodec.bits.BitVector = BitVector(10 bits, 0xaa8)
-  * }}}
+  * @example
+  *   {{{ scala> val b = bin"1010101010" val b: scodec.bits.BitVector =
+  *   BitVector(10 bits, 0xaa8) }}}
   */
 extension (inline ctx: StringContext)
   inline def bin(inline args: Any*): BitVector =
@@ -59,14 +59,20 @@ object Literals:
   trait Validator[A]:
     def validate(s: String)(using Quotes): Either[String, Expr[A]]
 
-    def apply(strCtxExpr: Expr[StringContext], argsExpr: Expr[Seq[Any]])(using Quotes): Expr[A] =
+    def apply(strCtxExpr: Expr[StringContext], argsExpr: Expr[Seq[Any]])(using
+        Quotes
+    ): Expr[A] =
       strCtxExpr.value match
         case Some(sc) => apply(sc.parts, argsExpr)
         case None =>
-          quotes.reflect.report.error("StringContext args must be statically known")
+          quotes.reflect.report.error(
+            "StringContext args must be statically known"
+          )
           ???
 
-    private def apply(parts: Seq[String], argsExpr: Expr[Seq[Any]])(using Quotes): Expr[A] =
+    private def apply(parts: Seq[String], argsExpr: Expr[Seq[Any]])(using
+        Quotes
+    ): Expr[A] =
       if parts.size == 1 then
         val literal = parts.head
         validate(literal) match
@@ -82,11 +88,15 @@ object Literals:
   object Hex extends Validator[ByteVector]:
     def validate(s: String)(using Quotes): Either[String, Expr[ByteVector]] =
       ByteVector.fromHex(s) match
-        case None    => Left("hexadecimal string literal may only contain characters [0-9a-fA-f]")
+        case None =>
+          Left(
+            "hexadecimal string literal may only contain characters [0-9a-fA-f]"
+          )
         case Some(_) => Right('{ ByteVector.fromValidHex(${ Expr(s) }) })
 
   object Bin extends Validator[BitVector]:
     def validate(s: String)(using Quotes): Either[String, Expr[BitVector]] =
       ByteVector.fromBin(s) match
-        case None    => Left("binary string literal may only contain characters [0, 1]")
+        case None =>
+          Left("binary string literal may only contain characters [0, 1]")
         case Some(_) => Right('{ BitVector.fromValidBin(${ Expr(s) }) })

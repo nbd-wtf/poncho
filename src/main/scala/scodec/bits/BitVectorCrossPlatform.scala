@@ -47,8 +47,8 @@ private[bits] trait BitVectorCrossPlatform { self: BitVector =>
     * The last byte is zero padded if the size is not evenly divisible by 8.
     *
     * @param level
-    *   compression level, 0-9, with 0 disabling compression and 9 being highest level of
-    *   compression -- see `java.util.zip.Deflater` for details
+    *   compression level, 0-9, with 0 disabling compression and 9 being highest
+    *   level of compression -- see `java.util.zip.Deflater` for details
     * @param strategy
     *   compression strategy -- see `java.util.zip.Deflater` for details
     * @param nowrap
@@ -73,7 +73,9 @@ private[bits] trait BitVectorCrossPlatform { self: BitVector =>
     *   buffer size, in bytes, to use when compressing
     * @group conversions
     */
-  final def inflate(chunkSize: Int = 4096): Either[DataFormatException, BitVector] =
+  final def inflate(
+      chunkSize: Int = 4096
+  ): Either[DataFormatException, BitVector] =
     bytes.inflate(chunkSize).map(_.bits)
 
   /** Computes a SHA-1 digest of this bit vector.
@@ -116,7 +118,9 @@ private[bits] trait BitVectorCrossPlatform { self: BitVector =>
     *   digest algorithm to use
     * @group crypto
     */
-  final def digest(algorithm: String): BitVector = digest(MessageDigest.getInstance(algorithm))
+  final def digest(algorithm: String): BitVector = digest(
+    MessageDigest.getInstance(algorithm)
+  )
 
   /** Computes a digest of this bit vector.
     *
@@ -128,7 +132,9 @@ private[bits] trait BitVectorCrossPlatform { self: BitVector =>
     *   digest to use
     * @group crypto
     */
-  final def digest(digest: MessageDigest): BitVector = BitVector(bytes.digest(digest))
+  final def digest(digest: MessageDigest): BitVector = BitVector(
+    bytes.digest(digest)
+  )
 
   /** Encrypts this bit vector using the specified cipher and key.
     *
@@ -139,12 +145,17 @@ private[bits] trait BitVectorCrossPlatform { self: BitVector =>
     * @param key
     *   key to encrypt with
     * @param aparams
-    *   optional algorithm paramaters used for encryption (e.g., initialization vector)
+    *   optional algorithm paramaters used for encryption (e.g., initialization
+    *   vector)
     * @param sr
     *   secure random
     * @group crypto
     */
-  final def encrypt(ci: Cipher, key: Key, aparams: Option[AlgorithmParameters] = None)(implicit
+  final def encrypt(
+      ci: Cipher,
+      key: Key,
+      aparams: Option[AlgorithmParameters] = None
+  )(implicit
       sr: SecureRandom
   ): Either[GeneralSecurityException, BitVector] =
     cipher(ci, key, Cipher.ENCRYPT_MODE, aparams)(sr)
@@ -158,12 +169,17 @@ private[bits] trait BitVectorCrossPlatform { self: BitVector =>
     * @param key
     *   key to decrypt with
     * @param aparams
-    *   optional algorithm paramaters used for decryption (e.g., initialization vector)
+    *   optional algorithm paramaters used for decryption (e.g., initialization
+    *   vector)
     * @param sr
     *   secure random
     * @group crypto
     */
-  final def decrypt(ci: Cipher, key: Key, aparams: Option[AlgorithmParameters] = None)(implicit
+  final def decrypt(
+      ci: Cipher,
+      key: Key,
+      aparams: Option[AlgorithmParameters] = None
+  )(implicit
       sr: SecureRandom
   ): Either[GeneralSecurityException, BitVector] =
     cipher(ci, key, Cipher.DECRYPT_MODE, aparams)(sr)

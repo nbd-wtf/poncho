@@ -35,7 +35,8 @@ import java.nio.ByteBuffer
 
 import scodec.bits.{BitVector, ByteOrdering}
 
-private[codecs] final class DoubleCodec(ordering: ByteOrdering) extends Codec[Double]:
+private[codecs] final class DoubleCodec(ordering: ByteOrdering)
+    extends Codec[Double]:
 
   private val byteOrder = ordering.toJava
 
@@ -51,7 +52,10 @@ private[codecs] final class DoubleCodec(ordering: ByteOrdering) extends Codec[Do
       case Left(_) => Attempt.failure(Err.insufficientBits(64, buffer.size))
       case Right(b) =>
         Attempt.successful(
-          DecodeResult(ByteBuffer.wrap(b.toByteArray).order(byteOrder).getDouble, buffer.drop(64))
+          DecodeResult(
+            ByteBuffer.wrap(b.toByteArray).order(byteOrder).getDouble,
+            buffer.drop(64)
+          )
         )
 
   override def toString = "double"

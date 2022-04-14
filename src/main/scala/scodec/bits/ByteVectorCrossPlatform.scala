@@ -46,8 +46,8 @@ private[bits] trait ByteVectorCrossPlatform { self: ByteVector =>
   /** Compresses this vector using ZLIB.
     *
     * @param level
-    *   compression level, 0-9, with 0 disabling compression and 9 being highest level of
-    *   compression -- see `java.util.zip.Deflater` for details
+    *   compression level, 0-9, with 0 disabling compression and 9 being highest
+    *   level of compression -- see `java.util.zip.Deflater` for details
     * @param strategy
     *   compression strategy -- see `java.util.zip.Deflater` for details
     * @param nowrap
@@ -150,7 +150,9 @@ private[bits] trait ByteVectorCrossPlatform { self: ByteVector =>
     *   digest algorithm to use
     * @group conversions
     */
-  final def digest(algorithm: String): ByteVector = digest(MessageDigest.getInstance(algorithm))
+  final def digest(algorithm: String): ByteVector = digest(
+    MessageDigest.getInstance(algorithm)
+  )
 
   /** Computes a digest of this byte vector.
     * @param digest
@@ -171,12 +173,17 @@ private[bits] trait ByteVectorCrossPlatform { self: ByteVector =>
     * @param key
     *   key to encrypt with
     * @param aparams
-    *   optional algorithm paramaters used for encryption (e.g., initialization vector)
+    *   optional algorithm paramaters used for encryption (e.g., initialization
+    *   vector)
     * @param sr
     *   secure random
     * @group crypto
     */
-  final def encrypt(ci: Cipher, key: Key, aparams: Option[AlgorithmParameters] = None)(implicit
+  final def encrypt(
+      ci: Cipher,
+      key: Key,
+      aparams: Option[AlgorithmParameters] = None
+  )(implicit
       sr: SecureRandom
   ): Either[GeneralSecurityException, ByteVector] =
     cipher(ci, key, Cipher.ENCRYPT_MODE, aparams)
@@ -188,12 +195,17 @@ private[bits] trait ByteVectorCrossPlatform { self: ByteVector =>
     * @param key
     *   key to decrypt with
     * @param aparams
-    *   optional algorithm paramaters used for decryption (e.g., initialization vector)
+    *   optional algorithm paramaters used for decryption (e.g., initialization
+    *   vector)
     * @param sr
     *   secure random
     * @group crypto
     */
-  final def decrypt(ci: Cipher, key: Key, aparams: Option[AlgorithmParameters] = None)(implicit
+  final def decrypt(
+      ci: Cipher,
+      key: Key,
+      aparams: Option[AlgorithmParameters] = None
+  )(implicit
       sr: SecureRandom
   ): Either[GeneralSecurityException, ByteVector] =
     cipher(ci, key, Cipher.DECRYPT_MODE, aparams)
@@ -205,7 +217,9 @@ private[bits] trait ByteVectorCrossPlatform { self: ByteVector =>
       aparams: Option[AlgorithmParameters] = None
   )(implicit sr: SecureRandom): Either[GeneralSecurityException, ByteVector] =
     try {
-      aparams.fold(ci.init(opmode, key, sr))(aparams => ci.init(opmode, key, aparams, sr))
+      aparams.fold(ci.init(opmode, key, sr))(aparams =>
+        ci.init(opmode, key, aparams, sr)
+      )
       foreachV { view =>
         ci.update(view.toArrayUnsafe); ()
       }

@@ -33,7 +33,8 @@ package codecs
 
 import scodec.bits.BitVector
 
-private[codecs] final class FailCodec[A](encErr: Err, decErr: Err) extends Codec[A]:
+private[codecs] final class FailCodec[A](encErr: Err, decErr: Err)
+    extends Codec[A]:
 
   override def sizeBound = SizeBound.unknown
 

@@ -42,7 +42,9 @@ object ChecksumFactory:
 
   /** Creates a `java.security.Digest` factory for the specified algorithm. */
   def digest(algorithm: String): SignerFactory = new ChecksumFactory {
-    def newSigner: Signer = new DigestSigner(MessageDigest.getInstance(algorithm).nn)
+    def newSigner: Signer = new DigestSigner(
+      MessageDigest.getInstance(algorithm).nn
+    )
   }
 
   /** Signer factory that does not have a distinct verifier. */
@@ -73,7 +75,8 @@ object ChecksumFactory:
   private class DigestSigner(impl: MessageDigest) extends Signer:
     def update(data: Array[Byte]): Unit = impl.update(data)
     def sign: Array[Byte] = impl.digest.nn
-    def verify(signature: Array[Byte]): Boolean = MessageDigest.isEqual(impl.digest(), signature)
+    def verify(signature: Array[Byte]): Boolean =
+      MessageDigest.isEqual(impl.digest(), signature)
 
   /** http://en.wikipedia.org/wiki/Fletcher's_checksum */
   private class Fletcher16Checksum extends Signer:
@@ -83,14 +86,16 @@ object ChecksumFactory:
         val lsb = (p._2 + (0xff & b)) % 255
         ((p._1 + lsb) % 255, lsb)
       }
-    def sign: Array[Byte] = Array(checksum._1.asInstanceOf[Byte], checksum._2.asInstanceOf[Byte])
+    def sign: Array[Byte] =
+      Array(checksum._1.asInstanceOf[Byte], checksum._2.asInstanceOf[Byte])
     def verify(signature: Array[Byte]): Boolean = Arrays.equals(sign, signature)
 
   /** `java.util.zip.Checksum` implementation of Signer. */
   private class ZipChecksumSigner(impl: Checksum) extends Signer:
     def update(data: Array[Byte]): Unit = impl.update(data, 0, data.length)
     def sign: Array[Byte] = ByteVector.fromLong(impl.getValue()).drop(4).toArray
-    def verify(signature: Array[Byte]): Boolean = MessageDigest.isEqual(sign, signature)
+    def verify(signature: Array[Byte]): Boolean =
+      MessageDigest.isEqual(sign, signature)
 
   private class XorSigner extends Signer:
     var data: Array[Byte] = null

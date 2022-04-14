@@ -38,7 +38,8 @@ import scodec.bits.{BitVector, ByteOrdering}
 
 import scala.annotation.tailrec
 
-private[codecs] final class VarLongCodec(ordering: ByteOrdering) extends Codec[Long]:
+private[codecs] final class VarLongCodec(ordering: ByteOrdering)
+    extends Codec[Long]:
   import VarLongCodec.*
 
   override def sizeBound = SizeBound.bounded(1L, 9L)
@@ -51,7 +52,9 @@ private[codecs] final class VarLongCodec(ordering: ByteOrdering) extends Codec[L
       val written = encoder(i, buffer)
       buffer.flip()
       val relevantBits = BitVector.view(buffer).take(written.toLong)
-      val bits = if ordering == BigEndian then relevantBits else relevantBits.reverseByteOrder
+      val bits =
+        if ordering == BigEndian then relevantBits
+        else relevantBits.reverseByteOrder
       Attempt.successful(bits)
 
   override def decode(buffer: BitVector) =
@@ -60,9 +63,11 @@ private[codecs] final class VarLongCodec(ordering: ByteOrdering) extends Codec[L
 
   override def toString = "variable-length integer"
 
-  private val BEEncoder = (value: Long, buffer: ByteBuffer) => runEncodingBE(value, buffer, 8)
+  private val BEEncoder = (value: Long, buffer: ByteBuffer) =>
+    runEncodingBE(value, buffer, 8)
 
-  private val LEEncoder = (value: Long, buffer: ByteBuffer) => runEncodingLE(value, buffer, 8, 0)
+  private val LEEncoder = (value: Long, buffer: ByteBuffer) =>
+    runEncodingLE(value, buffer, 8, 0)
 
   @tailrec
   private def runEncodingBE(value: Long, buffer: ByteBuffer, size: Int): Int =
@@ -74,7 +79,12 @@ private[codecs] final class VarLongCodec(ordering: ByteOrdering) extends Codec[L
       size
 
   @tailrec
-  private def runEncodingLE(value: Long, buffer: ByteBuffer, size: Int, msbMask: Int): Int =
+  private def runEncodingLE(
+      value: Long,
+      buffer: ByteBuffer,
+      size: Int,
+      msbMask: Int
+  ): Int =
     if (value & MoreBytesMask) != 0 then
       buffer.put((value & RelevantDataBits | msbMask).toByte)
       runEncodingLE(value >>> BitsPerByte, buffer, size + 8, MostSignificantBit)
@@ -96,7 +106,8 @@ private[codecs] final class VarLongCodec(ordering: ByteOrdering) extends Codec[L
       shift: Int
   ): Attempt[DecodeResult[Long]] =
     if (byte & MostSignificantBit) != 0 then
-      if buffer.sizeLessThan(8L) then Attempt.failure(Err.InsufficientBits(8L, buffer.size, Nil))
+      if buffer.sizeLessThan(8L) then
+        Attempt.failure(Err.InsufficientBits(8L, buffer.size, Nil))
       else
         val nextByte = buffer.take(8L).toByte(false)
         val nextValue = value | (nextByte & RelevantDataBits) << shift
@@ -110,7 +121,8 @@ private[codecs] final class VarLongCodec(ordering: ByteOrdering) extends Codec[L
       value: Long
   ): Attempt[DecodeResult[Long]] =
     if (byte & MostSignificantBit) != 0 then
-      if buffer.sizeLessThan(8L) then Attempt.failure(Err.InsufficientBits(8L, buffer.size, Nil))
+      if buffer.sizeLessThan(8L) then
+        Attempt.failure(Err.InsufficientBits(8L, buffer.size, Nil))
       else
         val nextByte = buffer.take(8L).toByte(false)
         val nextValue = (value << BitsPerByte) | (nextByte & RelevantDataBits)

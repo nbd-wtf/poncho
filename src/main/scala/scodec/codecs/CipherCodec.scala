@@ -53,17 +53,23 @@ trait CipherFactory:
   */
 object CipherFactory:
 
-  /** Creates a cipher factory for the specified transformation (via `Cipher.getInstance(transformation)`)
-    * and using the specified functions for initializing for encryption and decryption respectively.
+  /** Creates a cipher factory for the specified transformation (via
+    * `Cipher.getInstance(transformation)`) and using the specified functions
+    * for initializing for encryption and decryption respectively.
     */
   def apply(
       transformation: String,
       initForEncryption: Cipher => Unit,
       initForDecryption: Cipher => Unit
   ): CipherFactory =
-    new SimpleCipherFactory(transformation, initForEncryption, initForDecryption)
+    new SimpleCipherFactory(
+      transformation,
+      initForEncryption,
+      initForDecryption
+    )
 
-  /** Creates a cipher factory for the specified transformation (via `Cipher.getInstance(transformation)`).
+  /** Creates a cipher factory for the specified transformation (via
+    * `Cipher.getInstance(transformation)`).
     *
     * Ciphers are initialized with the specified key only.
     */
@@ -74,11 +80,17 @@ object CipherFactory:
       _.init(Cipher.DECRYPT_MODE, key)
     )
 
-  /** Creates a cipher factory for the specified transformation (via `Cipher.getInstance(transformation)`).
+  /** Creates a cipher factory for the specified transformation (via
+    * `Cipher.getInstance(transformation)`).
     *
-    * Ciphers are initialized with the specified key and algorithm parameter specification.
+    * Ciphers are initialized with the specified key and algorithm parameter
+    * specification.
     */
-  def apply(transformation: String, key: Key, spec: AlgorithmParameterSpec): CipherFactory =
+  def apply(
+      transformation: String,
+      key: Key,
+      spec: AlgorithmParameterSpec
+  ): CipherFactory =
     new SimpleCipherFactory(
       transformation,
       _.init(Cipher.ENCRYPT_MODE, key, spec),
@@ -104,8 +116,10 @@ object CipherFactory:
       cipher
 
 /** @see [[encrypted]] */
-private[codecs] final class CipherCodec[A](codec: Codec[A], cipherFactory: CipherFactory)
-    extends Codec[A]:
+private[codecs] final class CipherCodec[A](
+    codec: Codec[A],
+    cipherFactory: CipherFactory
+) extends Codec[A]:
 
   override def sizeBound = SizeBound.unknown
 
@@ -119,7 +133,9 @@ private[codecs] final class CipherCodec[A](codec: Codec[A], cipherFactory: Ciphe
       Attempt.successful(BitVector(encrypted))
     catch
       case _: IllegalBlockSizeException =>
-        Attempt.failure(Err(s"Failed to encrypt: invalid block size ${blocks.size}"))
+        Attempt.failure(
+          Err(s"Failed to encrypt: invalid block size ${blocks.size}")
+        )
 
   override def decode(buffer: BitVector) =
     decrypt(buffer).flatMap { result =>
