@@ -87,7 +87,10 @@ object CLN {
             ),
             "rpcmethods" -> ujson.Arr(),
             "notifications" -> ujson.Arr(),
-            "featurebits" -> ujson.Obj()
+            "featurebits" -> ujson.Obj(
+              "init" -> 32972 /* hosted_channels */ .toHexString,
+              "node" -> 32972 /* hosted_channels */ .toHexString
+            )
           )
         )
       case "init" => {
@@ -112,11 +115,11 @@ object CLN {
       }
       case "custommsg" => {
         val peerId = data("peer_id").str
-        val typ = ByteVector.fromHex(data("payload").str.take(4))
+        val tag = ByteVector.fromHex(data("payload").str.take(4))
         val payload = data("payload").str.drop(4)
 
         // TODO
-        val action = typ match {
+        val action = tag match {
           case _ => ReceivedHTLC()
         }
 
