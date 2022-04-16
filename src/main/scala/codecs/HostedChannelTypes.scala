@@ -1,7 +1,11 @@
 package codecs
 
-import scodec.codecs.ByteVector
-import java.nio.ByteOrder
+import java.nio.{ByteBuffer, ByteOrder}
+import scala.scalanative.unsigned._
+import scodec.bits._
+import scodec.codecs._
+
+import crypto.Crypto
 
 sealed trait HostedChannelMessage
 
@@ -14,7 +18,7 @@ case class InvokeHostedChannel(
 }
 
 case class InitHostedChannel(
-    maxHtlcValueInFlightMsat: UInt64,
+    maxHtlcValueInFlightMsat: ULong,
     htlcMinimumMsat: MilliSatoshi,
     maxAcceptedHtlcs: Int,
     channelCapacityMsat: MilliSatoshi,
@@ -72,19 +76,19 @@ case class LastCrossSignedState(
 
     Crypto.sha256(
       refundScriptPubKey ++
-        Protocol.writeUInt64(
+        Protocol.writeULong(
           initHostedChannel.channelCapacityMsat.toLong,
           ByteOrder.LITTLE_ENDIAN
         ) ++
-        Protocol.writeUInt64(
+        Protocol.writeULong(
           initHostedChannel.initialClientBalanceMsat.toLong,
           ByteOrder.LITTLE_ENDIAN
         ) ++
         Protocol.writeUInt32(blockDay, ByteOrder.LITTLE_ENDIAN) ++
         Protocol
-          .writeUInt64(localBalanceMsat.toLong, ByteOrder.LITTLE_ENDIAN) ++
+          .writeULong(localBalanceMsat.toLong, ByteOrder.LITTLE_ENDIAN) ++
         Protocol
-          .writeUInt64(remoteBalanceMsat.toLong, ByteOrder.LITTLE_ENDIAN) ++
+          .writeULong(remoteBalanceMsat.toLong, ByteOrder.LITTLE_ENDIAN) ++
         Protocol.writeUInt32(localUpdates, ByteOrder.LITTLE_ENDIAN) ++
         Protocol.writeUInt32(remoteUpdates, ByteOrder.LITTLE_ENDIAN) ++
         inPayments.foldLeft(ByteVector.empty) { case (acc, htlc) =>
@@ -100,10 +104,10 @@ case class LastCrossSignedState(
   def stateUpdate: StateUpdate =
     StateUpdate(blockDay, localUpdates, remoteUpdates, localSigOfRemote)
 
-  def verifyRemoteSig(pubKey: PublicKey): Boolean =
+  def verifyRemoteSig(pubKey: ByteVector): Boolean =
     Crypto.verifySignature(hostedSigHash, remoteSigOfLocal, pubKey)
 
-  def withLocalSigOfRemote(priv: PrivateKey): LastCrossSignedState = {
+  def withLocalSigOfRemote(priv: ByteVector32): LastCrossSignedState = {
     val localSignature = Crypto.sign(reverse.hostedSigHash, priv)
     copy(localSigOfRemote = localSignature)
   }
@@ -135,17 +139,19 @@ case class ResizeChannel(
 ) extends HostedChannelMessage {
   def isRemoteResized(remote: LastCrossSignedState): Boolean =
     newCapacity.toMilliSatoshi == remote.initHostedChannel.channelCapacityMsat
-  def sign(priv: PrivateKey): ResizeChannel = ResizeChannel(
+  def sign(priv: ByteVector32): ResizeChannel = ResizeChannel(
     clientSig = Crypto.sign(Crypto.sha256(sigMaterial), priv),
     newCapacity = newCapacity
   )
-  def verifyClientSig(pubKey: PublicKey): Boolean =
+  def verifyClientSig(pubKey: ByteVector): Boolean =
     Crypto.verifySignature(Crypto.sha256(sigMaterial), clientSig, pubKey)
-  lazy val sigMaterial: ByteVector =
-    Protocol.writeUInt64(newCapacity.toLong, ByteOrder.LITTLE_ENDIAN)
-  lazy val newCapacityMsatU64: UInt64 = UInt64(
-    newCapacity.toMilliSatoshi.toLong
-  )
+  lazy val sigMaterial: ByteVector = {
+    val bin = new Array[Byte](8)
+    val buffer = ByteBuffer.wrap(bin).order(ByteOrder.LITTLE_ENDIAN)
+    buffer.putLong(newCapacity.toLong)
+    ByteVector.view(bin)
+  }
+  lazy val newCapacityMsatU64: ULong = newCapacity.toMilliSatoshi.toLong.toULong
 }
 
 case class AskBrandingInfo(chainHash: ByteVector32) extends HostedChannelMessage

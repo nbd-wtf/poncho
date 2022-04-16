@@ -1,7 +1,10 @@
 package codecs
 
 import scodec.codecs._
+import scodec.bits._
 import scodec.{Attempt, Err}
+import codecs.CommonCodecs._
+import codecs.LightningMessageCodecs._
 
 object HostedChannelMessages {
   final val HC_INVOKE_HOSTED_CHANNEL_TAG = 65535
@@ -146,7 +149,7 @@ object HostedChannelMessages {
 
   def decodeHostedMessage(
       tag: Int,
-      data: List[Byte]
+      data: ByteVector
   ): Attempt[HostedChannelMessage] = {
     val bitVector = data.toBitVector
 

@@ -28,6 +28,7 @@ case class Satoshi(private val underlying: Long) extends Ordered[Satoshi] {
   def *(m: Double) = Satoshi((underlying * m).toLong)
   def /(d: Long) = Satoshi(underlying / d)
   def compare(other: Satoshi): Int = underlying.compare(other.underlying)
+  def toMilliSatoshi: MilliSatoshi = MilliSatoshi(underlying * 1000L)
   def toLong = underlying
   override def toString = s"$underlying sat"
 }
@@ -49,12 +50,6 @@ case class MilliSatoshi(private val underlying: Long)
   def truncateToSatoshi: Satoshi = Satoshi(underlying / 1000)
   def toLong: Long = underlying
   override def toString = s"$underlying msat"
-}
-
-object MilliSatoshi {
-  private def satoshi2millisatoshi(input: Satoshi): MilliSatoshi = MilliSatoshi(
-    input.toLong * 1000L
-  )
 }
 
 case class CltvExpiry(private val underlying: BlockHeight)
