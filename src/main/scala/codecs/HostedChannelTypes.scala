@@ -6,6 +6,7 @@ import scodec.bits._
 import scodec.codecs._
 
 import crypto.Crypto
+import codecs.Protocol
 
 sealed trait HostedChannelMessage
 
@@ -76,19 +77,19 @@ case class LastCrossSignedState(
 
     Crypto.sha256(
       refundScriptPubKey ++
-        Protocol.writeULong(
+        Protocol.writeUInt64(
           initHostedChannel.channelCapacityMsat.toLong,
           ByteOrder.LITTLE_ENDIAN
         ) ++
-        Protocol.writeULong(
+        Protocol.writeUInt64(
           initHostedChannel.initialClientBalanceMsat.toLong,
           ByteOrder.LITTLE_ENDIAN
         ) ++
         Protocol.writeUInt32(blockDay, ByteOrder.LITTLE_ENDIAN) ++
         Protocol
-          .writeULong(localBalanceMsat.toLong, ByteOrder.LITTLE_ENDIAN) ++
+          .writeUInt64(localBalanceMsat.toLong, ByteOrder.LITTLE_ENDIAN) ++
         Protocol
-          .writeULong(remoteBalanceMsat.toLong, ByteOrder.LITTLE_ENDIAN) ++
+          .writeUInt64(remoteBalanceMsat.toLong, ByteOrder.LITTLE_ENDIAN) ++
         Protocol.writeUInt32(localUpdates, ByteOrder.LITTLE_ENDIAN) ++
         Protocol.writeUInt32(remoteUpdates, ByteOrder.LITTLE_ENDIAN) ++
         inPayments.foldLeft(ByteVector.empty) { case (acc, htlc) =>

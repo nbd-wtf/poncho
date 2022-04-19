@@ -2,6 +2,7 @@ package codecs
 
 import java.net.{Inet4Address, Inet6Address, InetAddress}
 import java.nio.charset.StandardCharsets
+import scala.scalanative.unsigned._
 import scala.util.Try
 import scodec.codecs._
 import scodec.Codec
@@ -30,7 +31,7 @@ sealed trait HasChainHash extends LightningMessage {
 } // <- not in the spec
 sealed trait UpdateMessage extends HtlcMessage // <- not in the spec
 sealed trait HtlcSettlementMessage extends UpdateMessage {
-  def id: Long
+  def id: ULong
 } // <- not in the spec
 
 case class Error(
@@ -59,7 +60,7 @@ object ErrorTlv {
 
 case class UpdateAddHtlc(
     channelId: ByteVector32,
-    id: Long,
+    id: ULong,
     amountMsat: MilliSatoshi,
     paymentHash: ByteVector32,
     cltvExpiry: CltvExpiry,
@@ -71,7 +72,7 @@ case class UpdateAddHtlc(
 
 case class UpdateFulfillHtlc(
     channelId: ByteVector32,
-    id: Long,
+    id: ULong,
     paymentPreimage: ByteVector32,
     tlvStream: TlvStream[UpdateFulfillHtlcTlv] = TlvStream.empty
 ) extends HtlcMessage
@@ -81,7 +82,7 @@ case class UpdateFulfillHtlc(
 
 case class UpdateFailHtlc(
     channelId: ByteVector32,
-    id: Long,
+    id: ULong,
     reason: ByteVector,
     tlvStream: TlvStream[UpdateFailHtlcTlv] = TlvStream.empty
 ) extends HtlcMessage
@@ -91,7 +92,7 @@ case class UpdateFailHtlc(
 
 case class UpdateFailMalformedHtlc(
     channelId: ByteVector32,
-    id: Long,
+    id: ULong,
     onionHash: ByteVector32,
     failureCode: Int,
     tlvStream: TlvStream[UpdateFailMalformedHtlcTlv] = TlvStream.empty
@@ -139,7 +140,8 @@ case class Color(r: Byte, g: Byte, b: Byte) {
 }
 
 sealed trait NodeAddress {
-  def host: String; def port: Int;
+  def host: String;
+  def port: Int;
   override def toString: String = s"$host:$port"
 }
 sealed trait OnionAddress extends NodeAddress
@@ -185,8 +187,12 @@ object IPAddress {
     }
 }
 
-case class IPv4(ipv4: Inet4Address, port: Int) extends IPAddress
-case class IPv6(ipv6: Inet6Address, port: Int) extends IPAddress
+case class IPv4(ipv4: Inet4Address, port: Int) extends IPAddress {
+  override def host: String = s"${ipv4.getHostAddress()}:${port}"
+}
+case class IPv6(ipv6: Inet6Address, port: Int) extends IPAddress {
+  override def host: String = s"${ipv6.getHostAddress()}:${port}"
+}
 case class Tor2(tor2: String, port: Int) extends OnionAddress {
   override def host: String = tor2 + ".onion"
 }

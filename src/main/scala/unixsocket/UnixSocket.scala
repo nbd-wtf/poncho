@@ -26,8 +26,6 @@ object LibUVMissing {
       cb: ConnectCB
   ): Unit = extern
 
-  def uv_buf_init(base: CString, len: Int): Buffer = extern
-  def uv_strerror(err: CInt): CString = extern
   def uv_read_start(
       handle: PipeHandle,
       alloc_cb: PipeAllocCB,

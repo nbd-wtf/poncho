@@ -2,7 +2,7 @@ package codecs
 
 import java.nio.{ByteBuffer, ByteOrder}
 import scala.concurrent.duration.{DurationLong, FiniteDuration}
-import scodec.bits.{ByteVector, HexStringSyntax}
+import scodec.bits.{ByteVector}
 import scodec.bits._
 
 case class CltvExpiryDelta(private val underlying: Int)
