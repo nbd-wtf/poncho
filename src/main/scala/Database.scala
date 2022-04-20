@@ -8,7 +8,7 @@ object Data {
   val initial: Data = Data(channels = Map.empty)
 }
 object Database {
-  val path: Path = Paths.get("pokemon.db").toAbsolutePath()
+  val path: Path = Paths.get("poncho.db").toAbsolutePath()
   if (!Files.exists(path)) {
     Files.createFile(path)
     Files.write(path, write(Data.initial).getBytes)

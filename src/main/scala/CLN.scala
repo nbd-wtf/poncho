@@ -49,7 +49,7 @@ object CLN {
     if (Main.isDev) {
       System.err.println(
         Console.BOLD + "> " +
-          Console.BLUE + "pokemon" + Console.RESET +
+          Console.BLUE + "poncho" + Console.RESET +
           Console.BOLD + ": " + Console.RESET +
           Console.GREEN + message + Console.RESET
       )
