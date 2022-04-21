@@ -96,19 +96,3 @@ object UpdateFailMalformedHtlcTlv {
     discriminated[UpdateFailMalformedHtlcTlv].by(varint)
   )
 }
-
-sealed trait CommitSigTlv extends Tlv
-
-object CommitSigTlv {
-  val commitSigTlvCodec: Codec[TlvStream[CommitSigTlv]] = tlvStream(
-    discriminated[CommitSigTlv].by(varint)
-  )
-}
-
-sealed trait RevokeAndAckTlv extends Tlv
-
-object RevokeAndAckTlv {
-  val revokeAndAckTlvCodec: Codec[TlvStream[RevokeAndAckTlv]] = tlvStream(
-    discriminated[RevokeAndAckTlv].by(varint)
-  )
-}

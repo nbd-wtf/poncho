@@ -81,24 +81,6 @@ object LightningMessageCodecs {
     // @formatter:on
   ).as[UpdateFailMalformedHtlc]
 
-  val commitSigCodec: Codec[CommitSig] = (
-    // @formatter:off
-    ("channelId" | bytes32) ::
-    ("signature" | bytes64) ::
-    ("htlcSignatures" | listofsignatures) ::
-    ("tlvStream" | CommitSigTlv.commitSigTlvCodec)
-    // @formatter:on
-  ).as[CommitSig]
-
-  val revokeAndAckCodec: Codec[RevokeAndAck] = (
-    // @formatter:off
-    ("channelId" | bytes32) ::
-    ("perCommitmentSecret" | bytes32) ::
-    ("nextPerCommitmentPoint" | bytes) ::
-    ("tlvStream" | RevokeAndAckTlv.revokeAndAckTlvCodec)
-    // @formatter:on
-  ).as[RevokeAndAck]
-
   val channelAnnouncementWitnessCodec =
     // @formatter:off
     ("features" | featuresCodec) ::

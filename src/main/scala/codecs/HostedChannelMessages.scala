@@ -1,181 +1,280 @@
 package codecs
 
-import scodec.codecs._
+import java.nio.{ByteBuffer, ByteOrder}
+import java.nio.charset.StandardCharsets
+import scala.scalanative.unsigned._
 import scodec.bits._
-import scodec.{Attempt, Err}
+import scodec.codecs._
+import scodec.Codec
+
+import crypto.Crypto
+import codecs.Protocol
 import codecs.CommonCodecs._
-import codecs.LightningMessageCodecs._
+import codecs.TlvCodecs._
 
-object HostedChannelMessages {
-  final val HC_INVOKE_HOSTED_CHANNEL_TAG = 65535
-  final val HC_INIT_HOSTED_CHANNEL_TAG = 65533
-  final val HC_LAST_CROSS_SIGNED_STATE_TAG = 65531
-  final val HC_STATE_UPDATE_TAG = 65529
-  final val HC_STATE_OVERRIDE_TAG = 65527
-  final val HC_HOSTED_CHANNEL_BRANDING_TAG = 65525
-  final val HC_ANNOUNCEMENT_SIGNATURE_TAG = 65523
-  final val HC_RESIZE_CHANNEL_TAG = 65521
-  final val HC_QUERY_PUBLIC_HOSTED_CHANNELS_TAG = 65519
-  final val HC_REPLY_PUBLIC_HOSTED_CHANNELS_END_TAG = 65517
-  final val HC_QUERY_PREIMAGES_TAG = 65515
-  final val HC_REPLY_PREIMAGES_TAG = 65513
-  final val HC_ASK_BRANDING_INFO = 65511
+sealed trait HostedClientMessage
+sealed trait HostedServerMessage
+sealed trait HostedGossipMessage
+sealed trait HostedPreimageMessage
 
-  final val PHC_ANNOUNCE_GOSSIP_TAG = 64513
-  final val PHC_ANNOUNCE_SYNC_TAG = 64511
-  final val PHC_UPDATE_GOSSIP_TAG = 64509
-  final val PHC_UPDATE_SYNC_TAG = 64507
+case class InvokeHostedChannel(
+    chainHash: ByteVector32,
+    refundScriptPubKey: ByteVector,
+    secret: ByteVector = ByteVector.empty
+) extends HostedClientMessage {
+  val finalSecret: ByteVector = secret.take(128)
+}
 
-  final val HC_UPDATE_ADD_HTLC_TAG = 63505
-  final val HC_UPDATE_FULFILL_HTLC_TAG = 63503
-  final val HC_UPDATE_FAIL_HTLC_TAG = 63501
-  final val HC_UPDATE_FAIL_MALFORMED_HTLC_TAG = 63499
-  final val HC_ERROR_TAG = 63497
+case class InitHostedChannel(
+    maxHtlcValueInFlightMsat: ULong,
+    htlcMinimumMsat: MilliSatoshi,
+    maxAcceptedHtlcs: Int,
+    channelCapacityMsat: MilliSatoshi,
+    initialClientBalanceMsat: MilliSatoshi,
+    features: List[Int] = Nil
+) extends HostedServerMessage
 
-  val hostedMessageTags: Set[Int] =
-    Set(
-      HC_INVOKE_HOSTED_CHANNEL_TAG,
-      HC_INIT_HOSTED_CHANNEL_TAG,
-      HC_LAST_CROSS_SIGNED_STATE_TAG,
-      HC_STATE_UPDATE_TAG,
-      HC_STATE_OVERRIDE_TAG,
-      HC_HOSTED_CHANNEL_BRANDING_TAG,
-      HC_ANNOUNCEMENT_SIGNATURE_TAG,
-      HC_RESIZE_CHANNEL_TAG,
-      HC_QUERY_PUBLIC_HOSTED_CHANNELS_TAG,
-      HC_REPLY_PUBLIC_HOSTED_CHANNELS_END_TAG,
-      HC_ASK_BRANDING_INFO
+case class HostedChannelBranding(
+    rgbColor: Color,
+    pngIcon: Option[ByteVector],
+    contactInfo: String
+) extends HostedServerMessage
+
+case class LastCrossSignedState(
+    isHost: Boolean,
+    refundScriptPubKey: ByteVector,
+    initHostedChannel: InitHostedChannel,
+    blockDay: Long,
+    localBalanceMsat: MilliSatoshi,
+    remoteBalanceMsat: MilliSatoshi,
+    localUpdates: Long,
+    remoteUpdates: Long,
+    incomingHtlcs: List[UpdateAddHtlc],
+    outgoingHtlcs: List[UpdateAddHtlc],
+    remoteSigOfLocal: ByteVector64,
+    localSigOfRemote: ByteVector64
+) extends HostedServerMessage
+    with HostedClientMessage {
+  lazy val reverse: LastCrossSignedState =
+    copy(
+      isHost = !isHost,
+      localUpdates = remoteUpdates,
+      remoteUpdates = localUpdates,
+      localBalanceMsat = remoteBalanceMsat,
+      remoteBalanceMsat = localBalanceMsat,
+      remoteSigOfLocal = localSigOfRemote,
+      localSigOfRemote = remoteSigOfLocal,
+      incomingHtlcs = outgoingHtlcs,
+      outgoingHtlcs = incomingHtlcs
     )
 
-  val preimageQueryTags: Set[Int] =
-    Set(HC_QUERY_PREIMAGES_TAG, HC_REPLY_PREIMAGES_TAG)
-  val announceTags: Set[Int] = Set(
-    PHC_ANNOUNCE_GOSSIP_TAG,
-    PHC_ANNOUNCE_SYNC_TAG,
-    PHC_UPDATE_GOSSIP_TAG,
-    PHC_UPDATE_SYNC_TAG
-  )
-  val chanIdMessageTags: Set[Int] = Set(
-    HC_UPDATE_ADD_HTLC_TAG,
-    HC_UPDATE_FULFILL_HTLC_TAG,
-    HC_UPDATE_FAIL_HTLC_TAG,
-    HC_UPDATE_FAIL_MALFORMED_HTLC_TAG,
-    HC_ERROR_TAG
-  )
+  lazy val hostedSigHash: ByteVector32 = {
+    val inPayments = incomingHtlcs.map(add =>
+      LightningMessageCodecs.updateAddHtlcCodec
+        .encode(add)
+        .require
+        .toByteVector
+    )
+    val outPayments = outgoingHtlcs.map(add =>
+      LightningMessageCodecs.updateAddHtlcCodec
+        .encode(add)
+        .require
+        .toByteVector
+    )
+    val hostFlag = if (isHost) 1 else 0
 
-  val invokeHostedChannelCodec = {
-    (bytes32 withContext "chainHash") ::
-      (varsizebinarydata withContext "refundScriptPubKey") ::
-      (varsizebinarydata withContext "secret")
-  }.as[InvokeHostedChannel]
-
-  val initHostedChannelCodec = {
-    (uint64 withContext "maxHtlcValueInFlightMsat") ::
-      (millisatoshi withContext "htlcMinimumMsat") ::
-      (uint16 withContext "maxAcceptedHtlcs") ::
-      (millisatoshi withContext "channelCapacityMsat") ::
-      (millisatoshi withContext "initialClientBalanceMsat") ::
-      (listOfN(uint16, uint16) withContext "features")
-  }.as[InitHostedChannel]
-
-  val hostedChannelBrandingCodec = {
-    (rgb withContext "rgbColor") ::
-      (optional(bool8, varsizebinarydata) withContext "pngIcon") ::
-      (variableSizeBytes(uint16, utf8) withContext "contactInfo")
-  }.as[HostedChannelBranding]
-
-  lazy val lastCrossSignedStateCodec = {
-    (bool8 withContext "isHost") ::
-      (varsizebinarydata withContext "refundScriptPubKey") ::
-      (lengthDelimited(
-        initHostedChannelCodec
-      ) withContext "initHostedChannel") ::
-      (uint32 withContext "blockDay") ::
-      (millisatoshi withContext "localBalanceMsat") ::
-      (millisatoshi withContext "remoteBalanceMsat") ::
-      (uint32 withContext "localUpdates") ::
-      (uint32 withContext "remoteUpdates") ::
-      (listOfN(
-        uint16,
-        lengthDelimited(updateAddHtlcCodec)
-      ) withContext "incomingHtlcs") ::
-      (listOfN(
-        uint16,
-        lengthDelimited(updateAddHtlcCodec)
-      ) withContext "outgoingHtlcs") ::
-      (bytes64 withContext "remoteSigOfLocal") ::
-      (bytes64 withContext "localSigOfRemote")
-  }.as[LastCrossSignedState]
-
-  val stateUpdateCodec = {
-    (uint32 withContext "blockDay") ::
-      (uint32 withContext "localUpdates") ::
-      (uint32 withContext "remoteUpdates") ::
-      (bytes64 withContext "localSigOfRemoteLCSS")
-  }.as[StateUpdate]
-
-  val stateOverrideCodec = {
-    (uint32 withContext "blockDay") ::
-      (millisatoshi withContext "localBalanceMsat") ::
-      (uint32 withContext "localUpdates") ::
-      (uint32 withContext "remoteUpdates") ::
-      (bytes64 withContext "localSigOfRemoteLCSS")
-  }.as[StateOverride]
-
-  val announcementSignatureCodec = {
-    (bytes64 withContext "nodeSignature") ::
-      (bool8 withContext "wantsReply")
-  }.as[AnnouncementSignature]
-
-  val resizeChannelCodec = {
-    (satoshi withContext "newCapacity") ::
-      (bytes64 withContext "clientSig")
-  }.as[ResizeChannel]
-
-  val askBrandingInfoCodec =
-    (bytes32 withContext "chainHash").as[AskBrandingInfo]
-
-  val queryPublicHostedChannelsCodec =
-    (bytes32 withContext "chainHash").as[QueryPublicHostedChannels]
-
-  val replyPublicHostedChannelsEndCodec =
-    (bytes32 withContext "chainHash").as[ReplyPublicHostedChannelsEnd]
-
-  val queryPreimagesCodec =
-    (listOfN(uint16, bytes32) withContext "hashes").as[QueryPreimages]
-
-  val replyPreimagesCodec =
-    (listOfN(uint16, bytes32) withContext "preimages").as[ReplyPreimages]
-
-  def decodeHostedMessage(
-      tag: Int,
-      data: ByteVector
-  ): Attempt[HostedChannelMessage] = {
-    val bitVector = data.toBitVector
-
-    val decodeAttempt = tag match {
-      case HC_STATE_UPDATE_TAG   => stateUpdateCodec.decode(bitVector)
-      case HC_STATE_OVERRIDE_TAG => stateOverrideCodec.decode(bitVector)
-      case HC_RESIZE_CHANNEL_TAG => resizeChannelCodec.decode(bitVector)
-      case HC_ASK_BRANDING_INFO  => askBrandingInfoCodec.decode(bitVector)
-      case HC_INIT_HOSTED_CHANNEL_TAG =>
-        initHostedChannelCodec.decode(bitVector)
-      case HC_INVOKE_HOSTED_CHANNEL_TAG =>
-        invokeHostedChannelCodec.decode(bitVector)
-      case HC_LAST_CROSS_SIGNED_STATE_TAG =>
-        lastCrossSignedStateCodec.decode(bitVector)
-      case HC_ANNOUNCEMENT_SIGNATURE_TAG =>
-        announcementSignatureCodec.decode(bitVector)
-      case HC_HOSTED_CHANNEL_BRANDING_TAG =>
-        hostedChannelBrandingCodec.decode(bitVector)
-      case HC_QUERY_PUBLIC_HOSTED_CHANNELS_TAG =>
-        queryPublicHostedChannelsCodec.decode(bitVector)
-      case HC_REPLY_PUBLIC_HOSTED_CHANNELS_END_TAG =>
-        replyPublicHostedChannelsEndCodec.decode(bitVector)
-      case HC_QUERY_PREIMAGES_TAG => queryPreimagesCodec.decode(bitVector)
-      case HC_REPLY_PREIMAGES_TAG => replyPreimagesCodec.decode(bitVector)
-    }
-
-    decodeAttempt.map(_.value)
+    Crypto.sha256(
+      refundScriptPubKey ++
+        Protocol.writeUInt64(
+          initHostedChannel.channelCapacityMsat.toLong,
+          ByteOrder.LITTLE_ENDIAN
+        ) ++
+        Protocol.writeUInt64(
+          initHostedChannel.initialClientBalanceMsat.toLong,
+          ByteOrder.LITTLE_ENDIAN
+        ) ++
+        Protocol.writeUInt32(blockDay, ByteOrder.LITTLE_ENDIAN) ++
+        Protocol
+          .writeUInt64(localBalanceMsat.toLong, ByteOrder.LITTLE_ENDIAN) ++
+        Protocol
+          .writeUInt64(remoteBalanceMsat.toLong, ByteOrder.LITTLE_ENDIAN) ++
+        Protocol.writeUInt32(localUpdates, ByteOrder.LITTLE_ENDIAN) ++
+        Protocol.writeUInt32(remoteUpdates, ByteOrder.LITTLE_ENDIAN) ++
+        inPayments.foldLeft(ByteVector.empty) { case (acc, htlc) =>
+          acc ++ htlc
+        } ++
+        outPayments.foldLeft(ByteVector.empty) { case (acc, htlc) =>
+          acc ++ htlc
+        } :+
+        hostFlag.toByte
+    )
   }
+
+  def stateUpdate: StateUpdate =
+    StateUpdate(blockDay, localUpdates, remoteUpdates, localSigOfRemote)
+
+  def verifyRemoteSig(pubKey: ByteVector): Boolean =
+    Crypto.verifySignature(hostedSigHash, remoteSigOfLocal, pubKey)
+
+  def withLocalSigOfRemote(priv: ByteVector32): LastCrossSignedState = {
+    val localSignature = Crypto.sign(reverse.hostedSigHash, priv)
+    copy(localSigOfRemote = localSignature)
+  }
+}
+
+case class StateUpdate(
+    blockDay: Long,
+    localUpdates: Long,
+    remoteUpdates: Long,
+    localSigOfRemoteLCSS: ByteVector64
+) extends HostedServerMessage
+    with HostedClientMessage
+
+case class StateOverride(
+    blockDay: Long,
+    localBalanceMsat: MilliSatoshi,
+    localUpdates: Long,
+    remoteUpdates: Long,
+    localSigOfRemoteLCSS: ByteVector64
+) extends HostedServerMessage
+
+case class AnnouncementSignature(
+    nodeSignature: ByteVector64,
+    wantsReply: Boolean
+) extends HostedGossipMessage
+
+case class ResizeChannel(
+    newCapacity: Satoshi,
+    clientSig: ByteVector64 = ByteVector64.Zeroes
+) extends HostedClientMessage {
+  def isRemoteResized(remote: LastCrossSignedState): Boolean =
+    newCapacity.toMilliSatoshi == remote.initHostedChannel.channelCapacityMsat
+  def sign(priv: ByteVector32): ResizeChannel = ResizeChannel(
+    clientSig = Crypto.sign(Crypto.sha256(sigMaterial), priv),
+    newCapacity = newCapacity
+  )
+  def verifyClientSig(pubKey: ByteVector): Boolean =
+    Crypto.verifySignature(Crypto.sha256(sigMaterial), clientSig, pubKey)
+  lazy val sigMaterial: ByteVector = {
+    val bin = new Array[Byte](8)
+    val buffer = ByteBuffer.wrap(bin).order(ByteOrder.LITTLE_ENDIAN)
+    buffer.putLong(newCapacity.toLong)
+    ByteVector.view(bin)
+  }
+  lazy val newCapacityMsatU64: ULong = newCapacity.toMilliSatoshi.toLong.toULong
+}
+
+case class AskBrandingInfo(chainHash: ByteVector32) extends HostedClientMessage
+
+// PHC
+case class QueryPublicHostedChannels(chainHash: ByteVector32)
+    extends HostedGossipMessage
+
+case class ReplyPublicHostedChannelsEnd(chainHash: ByteVector32)
+    extends HostedGossipMessage
+
+// Queries
+case class QueryPreimages(hashes: List[ByteVector32] = Nil)
+    extends HostedPreimageMessage
+
+case class ReplyPreimages(preimages: List[ByteVector32] = Nil)
+    extends HostedPreimageMessage
+
+// BOLT messages (used with nonstandard tag numbers)
+case class Error(
+    channelId: ByteVector32,
+    data: ByteVector,
+    tlvStream: TlvStream[ErrorTlv] = TlvStream.empty
+) extends HostedClientMessage
+    with HostedServerMessage {
+  def toAscii: String = if (data.toArray.forall(ch => ch >= 32 && ch < 127))
+    new String(data.toArray, StandardCharsets.US_ASCII)
+  else "n/a"
+}
+
+object Error {
+  def apply(channelId: ByteVector32, msg: String): Error =
+    Error(channelId, ByteVector.view(msg.getBytes(StandardCharsets.US_ASCII)))
+}
+
+sealed trait ErrorTlv extends Tlv
+
+object ErrorTlv {
+  val errorTlvCodec: Codec[TlvStream[ErrorTlv]] = tlvStream(
+    discriminated[ErrorTlv].by(varint)
+  )
+}
+
+case class UpdateAddHtlc(
+    channelId: ByteVector32,
+    id: ULong,
+    amountMsat: MilliSatoshi,
+    paymentHash: ByteVector32,
+    cltvExpiry: CltvExpiry,
+    onionRoutingPacket: ByteVector,
+    tlvStream: TlvStream[UpdateAddHtlcTlv] = TlvStream.empty
+) extends HostedClientMessage
+    with HostedServerMessage
+
+case class UpdateFulfillHtlc(
+    channelId: ByteVector32,
+    id: ULong,
+    paymentPreimage: ByteVector32,
+    tlvStream: TlvStream[UpdateFulfillHtlcTlv] = TlvStream.empty
+) extends HostedClientMessage
+    with HostedServerMessage
+
+case class UpdateFailHtlc(
+    channelId: ByteVector32,
+    id: ULong,
+    reason: ByteVector,
+    tlvStream: TlvStream[UpdateFailHtlcTlv] = TlvStream.empty
+) extends HostedClientMessage
+    with HostedServerMessage
+
+case class UpdateFailMalformedHtlc(
+    channelId: ByteVector32,
+    id: ULong,
+    onionHash: ByteVector32,
+    failureCode: Int,
+    tlvStream: TlvStream[UpdateFailMalformedHtlcTlv] = TlvStream.empty
+) extends HostedClientMessage
+    with HostedServerMessage
+
+case class ChannelAnnouncement(
+    nodeSignature1: ByteVector64,
+    nodeSignature2: ByteVector64,
+    bitcoinSignature1: ByteVector64,
+    bitcoinSignature2: ByteVector64,
+    features: Features[Feature],
+    chainHash: ByteVector32,
+    shortChannelId: ShortChannelId,
+    nodeId1: ByteVector,
+    nodeId2: ByteVector,
+    bitcoinKey1: ByteVector,
+    bitcoinKey2: ByteVector,
+    tlvStream: TlvStream[ChannelAnnouncementTlv] = TlvStream.empty
+) extends HostedGossipMessage
+
+case class ChannelUpdate(
+    signature: ByteVector64,
+    chainHash: ByteVector32,
+    shortChannelId: ShortChannelId,
+    timestamp: TimestampSecond,
+    channelFlags: ChannelUpdate.ChannelFlags,
+    cltvExpiryDelta: CltvExpiryDelta,
+    htlcMinimumMsat: MilliSatoshi,
+    feeBaseMsat: MilliSatoshi,
+    feeProportionalMillionths: Long,
+    htlcMaximumMsat: Option[MilliSatoshi],
+    tlvStream: TlvStream[ChannelUpdateTlv] = TlvStream.empty
+) extends HostedGossipMessage {
+  def messageFlags: Byte = if (htlcMaximumMsat.isDefined) 1 else 0
+  def toStringShort: String =
+    s"cltvExpiryDelta=$cltvExpiryDelta,feeBase=$feeBaseMsat,feeProportionalMillionths=$feeProportionalMillionths"
+}
+
+object ChannelUpdate {
+  case class ChannelFlags(isEnabled: Boolean, isNode1: Boolean)
+  object ChannelFlags {}
 }
