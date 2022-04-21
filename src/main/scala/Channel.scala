@@ -2,7 +2,7 @@ import scala.scalanative.loop.EventLoop.loop
 import scala.scalanative.loop.Poll
 import com.softwaremill.quicklens
 import castor.Context
-import upickle.default._
+import upickle.default.{ReadWriter, macroRW}
 
 import codecs.*
 import codecs.{HostedClientMessage}

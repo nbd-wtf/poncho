@@ -112,16 +112,19 @@ object CLN {
           s"${data("configuration")("lightning-dir").str}/${data("configuration")("rpc-file").str}"
       }
       case "htlc_accepted" => {
+        val htlc = data("htlc")
+        val onion = data("onion")
+
         (for {
           chandata <- Database.data.channels.values
-            .find(_.shortChannelId == data("onion")("short_channel_id").str)
+            .find(_.shortChannelId == onion("short_channel_id").str)
           peer <- ChannelMaster.getChannelActor(chandata.peerId)
 
-          paymentHash <- ByteVector32.fromHex(data("htlc")("payment_hash").str)
+          paymentHash <- ByteVector32.fromHex(htlc("payment_hash").str)
           onionRoutingPacket <- ByteVector.fromHex(
-            data("onion")("next_onion").str
+            onion("next_onion").str
           )
-          amount <- Try(data("htlc")("amount").str.dropRight(4).toInt).toOption
+          amount <- Try(htlc("amount").str.dropRight(4).toInt).toOption
 
           msg = UpdateAddHtlc(
             channelId = chandata.channelId,
@@ -129,14 +132,16 @@ object CLN {
             amountMsat = MilliSatoshi(amount),
             paymentHash = paymentHash,
             cltvExpiry =
-              CltvExpiry(BlockHeight(data("htlc")("cltv_expiry").num.toLong)),
+              CltvExpiry(BlockHeight(htlc("cltv_expiry").num.toLong)),
             onionRoutingPacket = onionRoutingPacket
           )
         } yield (peer, msg)) match {
           case Some((peer, msg)) => peer.send(Send(msg))
           case _ => {
+            val hash = htlc("payment_hash").str
+            val scid = onion("short_channel_id").str
             log(
-              s"not handling this htlc: ${data("htlc")("payment_hash")}=>${data("onion")("short_channel_id")}"
+              s"not handling this htlc: $hash=>scid"
             )
             reply(ujson.Obj("result" -> "continue"))
           }
@@ -144,9 +149,10 @@ object CLN {
       }
       case "custommsg" => {
         val peerId = data("peer_id").str
+        val tagH = data("payload").str.take(4)
 
         (for {
-          tagV <- ByteVector.fromHex(data("payload").str.take(4))
+          tagV <- ByteVector.fromHex(tagH)
           tag = tagV.toInt(signed = false)
           payload <- ByteVector.fromHex(data("payload").str.drop(4))
           msg <- decodeClientMessage(tag, payload).toOption
@@ -154,7 +160,7 @@ object CLN {
         } yield (peer, msg)) match {
           case Some((peer, msg)) => peer.send(Recv(msg))
           case _ => {
-            log(s"unhandled custommsg []")
+            log(s"unhandled custommsg [$tagH] from $peerId")
           }
         }
       }

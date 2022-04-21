@@ -4,6 +4,7 @@ import java.nio.{ByteBuffer, ByteOrder}
 import scala.concurrent.duration.{DurationLong, FiniteDuration}
 import scodec.bits.{ByteVector}
 import scodec.bits._
+import upickle.default.{ReadWriter, readwriter}
 
 case class CltvExpiryDelta(private val underlying: Int)
     extends Ordered[CltvExpiryDelta] {
@@ -86,6 +87,13 @@ object ByteVector32 {
   def fromHex(str: String) = ByteVector.fromHex(str).map(ByteVector32(_))
   def fromValidHex(str: String) = ByteVector32(ByteVector.fromValidHex(str))
   implicit def byteVector32toByteVector(h: ByteVector32): ByteVector = h.bytes
+
+  implicit val rw: ReadWriter[ByteVector32] = upickle.default
+    .readwriter[String]
+    .bimap[ByteVector32](
+      bytes => bytes.toHex,
+      str => ByteVector32.fromValidHex(str)
+    )
 }
 
 case class ByteVector64(bytes: ByteVector) {
