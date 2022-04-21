@@ -4,30 +4,42 @@ import com.softwaremill.quicklens
 import castor.Context
 import upickle.default._
 
-case class ChannelData(peerId: String, shortChannelId: String)
+import codecs.*
+import codecs.{HostedClientMessage}
+
+case class ChannelData(
+    peerId: String,
+    channelId: ByteVector32,
+    shortChannelId: String,
+    isActive: Boolean
+)
 object ChannelData { implicit val rw: ReadWriter[ChannelData] = macroRW }
 
 sealed trait Msg
-case class Connect() extends Msg
-case class ReceivedHTLC() extends Msg
-case class SendHTLC() extends Msg
-case class ReceivedPreimage() extends Msg
-case class SendPreimage() extends Msg
+case class Send(msg: HostedServerMessage) extends Msg
+case class Recv(msg: HostedClientMessage) extends Msg
 
 class Channel(data: ChannelData)(implicit ac: castor.Context)
     extends castor.StateMachineActor[Msg] {
 
-  def initialState = Offline()
+  def initialState = if (data.isActive) Active() else Inactive()
 
-  case class Offline()
-      extends State({ case Connect() =>
-        Online()
-      })
-  case class Online()
+  case class Inactive()
       extends State({
-        case ReceivedHTLC()     => Online()
-        case SendHTLC()         => Online()
-        case ReceivedPreimage() => Online()
-        case SendPreimage()     => Online()
+        case Recv(msg: InvokeHostedChannel) => {
+          Inactive()
+        }
+        case _ => Inactive()
+      })
+  case class Active()
+      extends State({
+        case Send(msg: UpdateAddHtlc)           => Active()
+        case Recv(msg: AskBrandingInfo)         => Active()
+        case Recv(msg: ResizeChannel)           => Active()
+        case Recv(msg: UpdateAddHtlc)           => Active()
+        case Recv(msg: UpdateFailHtlc)          => Active()
+        case Recv(msg: UpdateFulfillHtlc)       => Active()
+        case Recv(msg: UpdateFailMalformedHtlc) => Active()
+        case _                                  => Active()
       })
 }

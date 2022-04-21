@@ -1,4 +1,6 @@
+import scala.util.Try
 import scala.concurrent.ExecutionContext.Implicits.global
+import scala.scalanative.unsigned._
 import scala.scalanative.loop.EventLoop.loop
 import scala.concurrent.{Future}
 import scala.util.{Failure, Success}
@@ -6,6 +8,8 @@ import ujson._
 
 import UnixSocket.UnixSocket
 import scodec.bits.ByteVector
+import codecs.HostedChannelCodecs._
+import codecs._
 
 object CLN {
   var rpcAddr: String = ""
@@ -33,7 +37,7 @@ object CLN {
       )
   }
 
-  def answer(req: ujson.Value, result: ujson.Value): Unit = {
+  def answer(req: ujson.Value)(result: ujson.Value): Unit = {
     System.out.println(
       ujson.write(
         ujson.Obj(
@@ -69,17 +73,19 @@ object CLN {
   def handleRPC(line: String): Unit = {
     val req = ujson.read(line)
     val data = req("params")
+    val reply = answer(req)
 
     req("method").str match {
       case "getmanifest" =>
-        answer(
-          req,
+        reply(
           ujson.Obj(
             "dynamic" -> false,
             "options" -> ujson.Arr(),
             "subscriptions" -> ujson.Arr(
               "sendpay_success",
-              "sendpay_failure"
+              "sendpay_failure",
+              "connect",
+              "disconnect"
             ),
             "hooks" -> ujson.Arr(
               ujson.Obj("name" -> "custommsg"),
@@ -94,8 +100,7 @@ object CLN {
           )
         )
       case "init" => {
-        answer(
-          req,
+        reply(
           ujson.Obj(
             "jsonrpc" -> "2.0",
             "id" -> req("id").num,
@@ -107,28 +112,67 @@ object CLN {
           s"${data("configuration")("lightning-dir").str}/${data("configuration")("rpc-file").str}"
       }
       case "htlc_accepted" => {
-        Database.data.channels.values
-          .find(_.shortChannelId == data("onion")("short_channel_id").str)
-          .map(_.peerId)
-          .flatMap(ChannelMaster.getChannelActor(_))
-          .map(_.send(SendHTLC())) // TODO
+        (for {
+          chandata <- Database.data.channels.values
+            .find(_.shortChannelId == data("onion")("short_channel_id").str)
+          peer <- ChannelMaster.getChannelActor(chandata.peerId)
+
+          paymentHash <- ByteVector32.fromHex(data("htlc")("payment_hash").str)
+          onionRoutingPacket <- ByteVector.fromHex(
+            data("onion")("next_onion").str
+          )
+          amount <- Try(data("htlc")("amount").str.dropRight(4).toInt).toOption
+
+          msg = UpdateAddHtlc(
+            channelId = chandata.channelId,
+            id = 0L.toULong,
+            amountMsat = MilliSatoshi(amount),
+            paymentHash = paymentHash,
+            cltvExpiry =
+              CltvExpiry(BlockHeight(data("htlc")("cltv_expiry").num.toLong)),
+            onionRoutingPacket = onionRoutingPacket
+          )
+        } yield (peer, msg)) match {
+          case Some((peer, msg)) => peer.send(Send(msg))
+          case _ => {
+            log(
+              s"not handling this htlc: ${data("htlc")("payment_hash")}=>${data("onion")("short_channel_id")}"
+            )
+            reply(ujson.Obj("result" -> "continue"))
+          }
+        }
       }
       case "custommsg" => {
         val peerId = data("peer_id").str
-        val tag = ByteVector.fromHex(data("payload").str.take(4))
-        val payload = data("payload").str.drop(4)
 
-        // TODO
-        val action = tag match {
-          case _ => ReceivedHTLC()
+        (for {
+          tagV <- ByteVector.fromHex(data("payload").str.take(4))
+          tag = tagV.toInt(signed = false)
+          payload <- ByteVector.fromHex(data("payload").str.drop(4))
+          msg <- decodeClientMessage(tag, payload).toOption
+          peer <- ChannelMaster.getChannelActor(peerId)
+        } yield (peer, msg)) match {
+          case Some((peer, msg)) => peer.send(Recv(msg))
+          case _ => {
+            log(s"unhandled custommsg []")
+          }
         }
-
-        ChannelMaster
-          .getChannelActor(peerId)
-          .map(_.send(action))
       }
-      case "sendpay_success" => {}
-      case "sendpay_failure" => {}
+      case "sendpay_success" => {
+        log(s"sendpay_success: $data")
+      }
+      case "sendpay_failure" => {
+        log(s"sendpay_failure: $data")
+      }
+      case "connect" => {
+        val id = data("id").str
+        val address = data("address").str
+        log(s"$id connected: $address")
+      }
+      case "disconnect" => {
+        val id = data("id").str
+        log(s"$id disconnected")
+      }
     }
   }
 }

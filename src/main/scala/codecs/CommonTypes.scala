@@ -83,6 +83,7 @@ object ByteVector32 {
   val One = ByteVector32(
     hex"0100000000000000000000000000000000000000000000000000000000000000"
   )
+  def fromHex(str: String) = ByteVector.fromHex(str).map(ByteVector32(_))
   def fromValidHex(str: String) = ByteVector32(ByteVector.fromValidHex(str))
   implicit def byteVector32toByteVector(h: ByteVector32): ByteVector = h.bytes
 }
