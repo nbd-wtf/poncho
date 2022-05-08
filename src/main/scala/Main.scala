@@ -3,6 +3,7 @@ import scala.scalanative.loop.Poll
 import upickle.default._
 
 object Main {
+  import Picklers.given
   val isDev = true
 
   CLN.log(s"database is at: ${Database.path}")

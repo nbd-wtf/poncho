@@ -6,14 +6,7 @@ import upickle.default.{ReadWriter, macroRW}
 
 import codecs.*
 import codecs.{HostedClientMessage}
-
-case class ChannelData(
-    peerId: String,
-    channelId: ByteVector32,
-    shortChannelId: String,
-    isActive: Boolean
-)
-object ChannelData { implicit val rw: ReadWriter[ChannelData] = macroRW }
+import scodec.bits.ByteVector
 
 sealed trait Msg
 case class Send(msg: HostedServerMessage) extends Msg
@@ -27,13 +20,16 @@ class Channel(data: ChannelData)(implicit ac: castor.Context)
   case class Inactive()
       extends State({
         case Recv(msg: InvokeHostedChannel) => {
+
           Inactive()
         }
         case _ => Inactive()
       })
   case class Active()
       extends State({
-        case Send(msg: UpdateAddHtlc)           => Active()
+        case Send(msg: UpdateAddHtlc) => {
+          Active()
+        }
         case Recv(msg: AskBrandingInfo)         => Active()
         case Recv(msg: ResizeChannel)           => Active()
         case Recv(msg: UpdateAddHtlc)           => Active()

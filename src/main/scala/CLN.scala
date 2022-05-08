@@ -94,8 +94,8 @@ object CLN {
             "rpcmethods" -> ujson.Arr(),
             "notifications" -> ujson.Arr(),
             "featurebits" -> ujson.Obj(
-              "init" -> 32972 /* hosted_channels */ .toHexString,
-              "node" -> 32972 /* hosted_channels */ .toHexString
+              // "init" -> 32972 /* hosted_channels */ .toHexString,
+              // "node" -> 32972 /* hosted_channels */ .toHexString
             )
           )
         )
@@ -118,7 +118,9 @@ object CLN {
         (for {
           chandata <- Database.data.channels.values
             .find(_.shortChannelId == onion("short_channel_id").str)
-          peer <- ChannelMaster.getChannelActor(chandata.peerId)
+          peer <- ChannelMaster.getChannelActor(
+            chandata.remoteNodeId.toString
+          )
 
           paymentHash <- ByteVector32.fromHex(htlc("payment_hash").str)
           onionRoutingPacket <- ByteVector.fromHex(
