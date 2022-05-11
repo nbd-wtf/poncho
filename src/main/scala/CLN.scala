@@ -1,9 +1,11 @@
+import java.nio.file.{Files, Path, Paths}
 import scala.util.Try
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.scalanative.unsigned._
 import scala.scalanative.loop.EventLoop.loop
 import scala.concurrent.Future
 import scala.util.{Failure, Success}
+import sha256.Hkdf
 import ujson._
 
 import UnixSocket.UnixSocket
@@ -14,6 +16,8 @@ import codecs._
 
 object CLN {
   var rpcAddr: String = ""
+  var hsmSecret: Path = Paths.get("")
+
   def rpc(method: String, params: ujson.Obj): Future[ujson.Value] = {
     val payload =
       ujson.write(
@@ -38,10 +42,14 @@ object CLN {
       )
   }
 
-  def getPrivateKey(): ByteVector32 = ByteVector32.fromValidHex(
-    // TODO actually get CLN private key here
-    "7777777777777777777777777777777777777777777777777777777777777777"
-  )
+  def getPrivateKey(): ByteVector32 = {
+    val salt = Array[UByte](0.toByte.toUByte)
+    val info = "nodeid".getBytes().map(_.toUByte)
+    val secret = Files.readAllBytes(hsmSecret).map(_.toUByte)
+
+    val sk = Hkdf.hkdf(salt, secret, info, 32)
+    ByteVector32(ByteVector(sk.map(_.toByte)))
+  }
 
   def answer(req: ujson.Value)(result: ujson.Value): Unit = {
     System.out.println(
@@ -78,8 +86,9 @@ object CLN {
         "msg" -> msg
       )
     )
-      .onComplete { case Failure(err) =>
-        CLN.log(s"failed to send custom message: $err")
+      .onComplete {
+        case Failure(err) => CLN.log(s"failed to send custom message: $err")
+        case _            => {}
       }
   }
 
@@ -142,8 +151,9 @@ object CLN {
           )
         )
 
-        rpcAddr =
-          s"${data("configuration")("lightning-dir").str}/${data("configuration")("rpc-file").str}"
+        val lightningDir = data("configuration")("lightning-dir").str
+        rpcAddr = lightningDir + data("configuration")("rpc-file").str
+        hsmSecret = Paths.get(lightningDir + "/hsm_secret")
       }
       case "custommsg" => {
         reply(ujson.Obj("result" -> "continue"))

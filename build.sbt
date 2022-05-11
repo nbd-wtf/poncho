@@ -12,6 +12,6 @@ libraryDependencies   ++= Seq(
   "com.lihaoyi" %%% "castor" % "0.2.1",
   "com.lihaoyi" %%% "upickle" % "1.6.0",
   "com.lihaoyi" %%% "ujson" % "1.6.0",
-  "com.fiatjaf" %%% "sn-sha256" % "0.2.0",
+  "com.fiatjaf" %%% "sn-sha256" % "0.3.0",
   "com.fiatjaf" %%% "sn-secp256k1" % "0.1.0"
 )
