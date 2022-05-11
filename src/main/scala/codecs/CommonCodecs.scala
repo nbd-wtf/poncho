@@ -26,10 +26,16 @@ object CommonCodecs {
   }
 
   val bool8: Codec[Boolean] = bool(8)
-  val uint64: Codec[ULong] = long(8).xmap(_.toULong, _.toLong)
-  val satoshi: Codec[Satoshi] = long(8).xmapc(l => Satoshi(l))(_.toLong)
+  val uint64: Codec[ULong] = int64.xmap(_.toULong, _.toLong)
+  val uint64overflow: Codec[Long] = int64.narrow(
+    l =>
+      if (l >= 0) Attempt.Successful(l)
+      else Attempt.failure(Err(s"overflow for value $l")),
+    l => l
+  )
+  val satoshi: Codec[Satoshi] = uint64overflow.xmapc(l => Satoshi(l))(_.toLong)
   val millisatoshi: Codec[MilliSatoshi] =
-    long(8).xmapc(l => MilliSatoshi(l))(_.toLong)
+    uint64overflow.xmapc(l => MilliSatoshi(l))(_.toLong)
   val millisatoshi32: Codec[MilliSatoshi] =
     uint32.xmapc(l => MilliSatoshi(l))(_.toLong)
   val timestampSecond: Codec[TimestampSecond] =

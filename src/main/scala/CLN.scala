@@ -2,12 +2,13 @@ import scala.util.Try
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.scalanative.unsigned._
 import scala.scalanative.loop.EventLoop.loop
-import scala.concurrent.{Future}
+import scala.concurrent.Future
 import scala.util.{Failure, Success}
 import ujson._
 
 import UnixSocket.UnixSocket
 import scodec.bits.ByteVector
+import scodec.codecs.uint16
 import codecs.HostedChannelCodecs._
 import codecs._
 
@@ -29,13 +30,18 @@ object CLN {
       .future
       .map(ujson.read(_))
       .flatMap(read =>
-        if (read("error").objOpt.isDefined) {
+        if (read.obj.contains("error")) {
           Future.failed(Exception(read("error")("message").str))
         } else {
-          Future.successful(("result"))
+          Future.successful(read("result"))
         }
       )
   }
+
+  def getPrivateKey(): ByteVector32 = ByteVector32.fromValidHex(
+    // TODO actually get CLN private key here
+    "7777777777777777777777777777777777777777777777777777777777777777"
+  )
 
   def answer(req: ujson.Value)(result: ujson.Value): Unit = {
     System.out.println(
@@ -47,6 +53,34 @@ object CLN {
         )
       )
     )
+  }
+
+  def sendCustomMessage(
+      peerId: String,
+      tag: Int,
+      message: ByteVector
+  ): Unit = {
+    val tagHex = uint16.encode(tag).toOption.get.toByteVector.toHex
+    val lengthHex = uint16
+      .encode(message.size.toInt)
+      .toOption
+      .get
+      .toByteVector
+      .toHex
+    val msg = tagHex + lengthHex + message.toHex
+
+    log(s"sending [$tag] $msg to $peerId")
+
+    rpc(
+      "sendcustommsg",
+      ujson.Obj(
+        "node_id" -> peerId,
+        "msg" -> msg
+      )
+    )
+      .onComplete { case Failure(err) =>
+        CLN.log(s"failed to send custom message: $err")
+      }
   }
 
   def log(message: String): Unit = {
@@ -111,23 +145,37 @@ object CLN {
         rpcAddr =
           s"${data("configuration")("lightning-dir").str}/${data("configuration")("rpc-file").str}"
       }
+      case "custommsg" => {
+        reply(ujson.Obj("result" -> "continue"))
+
+        val peerId = data("peer_id").str
+        val tag = ByteVector
+          .fromValidHex(data("payload").str.take(4))
+          .toInt(signed = false)
+        val payload = ByteVector.fromValidHex(data("payload").str.drop(4))
+
+        log(s"got custommsg [$tag] from $peerId")
+
+        decodeClientMessage(tag, payload).toEither match {
+          case Left(err) => log(s"$err")
+          case Right(msg) => {
+            val peer = ChannelMaster.getChannelActor(peerId)
+            peer.send(Recv(msg))
+          }
+        }
+      }
       case "htlc_accepted" => {
         val htlc = data("htlc")
         val onion = data("onion")
+        val paymentHash = ByteVector32.fromValidHex(htlc("payment_hash").str)
+        val amount = htlc("amount").str.dropRight(4).toInt
+        val onionRoutingPacket =
+          ByteVector.fromValidHex(onion("next_onion").str)
 
         (for {
           chandata <- Database.data.channels.values
             .find(_.shortChannelId == onion("short_channel_id").str)
-          peer <- ChannelMaster.getChannelActor(
-            chandata.remoteNodeId.toString
-          )
-
-          paymentHash <- ByteVector32.fromHex(htlc("payment_hash").str)
-          onionRoutingPacket <- ByteVector.fromHex(
-            onion("next_onion").str
-          )
-          amount <- Try(htlc("amount").str.dropRight(4).toInt).toOption
-
+          peer = ChannelMaster.getChannelActor(chandata.peerId.toString)
           msg = UpdateAddHtlc(
             channelId = chandata.channelId,
             id = 0L.toULong,
@@ -149,23 +197,6 @@ object CLN {
           }
         }
       }
-      case "custommsg" => {
-        val peerId = data("peer_id").str
-        val tagH = data("payload").str.take(4)
-
-        (for {
-          tagV <- ByteVector.fromHex(tagH)
-          tag = tagV.toInt(signed = false)
-          payload <- ByteVector.fromHex(data("payload").str.drop(4))
-          msg <- decodeClientMessage(tag, payload).toOption
-          peer <- ChannelMaster.getChannelActor(peerId)
-        } yield (peer, msg)) match {
-          case Some((peer, msg)) => peer.send(Recv(msg))
-          case _ => {
-            log(s"unhandled custommsg [$tagH] from $peerId")
-          }
-        }
-      }
       case "sendpay_success" => {
         log(s"sendpay_success: $data")
       }
@@ -174,7 +205,7 @@ object CLN {
       }
       case "connect" => {
         val id = data("id").str
-        val address = data("address").str
+        val address = data("address")("address").str
         log(s"$id connected: $address")
       }
       case "disconnect" => {

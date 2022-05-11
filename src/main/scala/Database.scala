@@ -57,10 +57,9 @@ object Database {
 }
 
 case class ChannelData(
+    peerId: ByteVector,
     channelId: ByteVector32,
     shortChannelId: String,
     isActive: Boolean,
-    localNodeId: ByteVector,
-    remoteNodeId: ByteVector,
     lastCrossSignedState: LastCrossSignedState
 )
