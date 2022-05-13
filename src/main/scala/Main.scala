@@ -9,6 +9,12 @@ import codecs.ByteVector32
 import codecs.{InitHostedChannel, MilliSatoshi}
 import codecs.CltvExpiryDelta
 
+case class Config(
+    cltvExpiryDelta: CltvExpiryDelta,
+    feeBase: MilliSatoshi,
+    feeProportionalMillionths: Long
+)
+
 object Main {
   import Picklers.given
   val isDev = true
@@ -63,14 +69,7 @@ object Main {
     }
 
   def log(message: String): Unit = {
-    if (Main.isDev && node.isInstanceOf[CLN]) {
-      System.err.println(
-        Console.BOLD + "> " +
-          Console.BLUE + "poncho" + Console.RESET +
-          Console.BOLD + ": " + Console.RESET +
-          Console.GREEN + message + Console.RESET
-      )
-    } else {
+    if (node.isInstanceOf[CLN] && !Main.isDev) {
       System.out.println(
         ujson.Obj(
           "jsonrpc" -> "2.0",
@@ -80,12 +79,13 @@ object Main {
           )
         )
       )
+    } else {
+      System.err.println(
+        Console.BOLD + "> " +
+          Console.BLUE + "poncho" + Console.RESET +
+          Console.BOLD + ": " + Console.RESET +
+          Console.GREEN + message + Console.RESET
+      )
     }
   }
 }
-
-case class Config(
-    cltvExpiryDelta: CltvExpiryDelta,
-    feeBase: MilliSatoshi,
-    feeProportionalMillionths: Long
-)
