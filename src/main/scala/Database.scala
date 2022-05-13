@@ -1,7 +1,6 @@
 import java.io.ByteArrayInputStream
 import java.nio.ByteOrder
 import java.nio.file.{Files, Path, Paths}
-import scala.annotation.tailrec
 import scala.collection.immutable.Map
 import scala.scalanative.unsigned._
 import scodec.bits.ByteVector
@@ -20,31 +19,28 @@ case class ChannelData(
     isActive: Boolean,
     lcss: LastCrossSignedState
 ) {
-  def shortChannelId(ourPubkey: ByteVector): ShortChannelId = ShortChannelId(
+  lazy val shortChannelId: ShortChannelId = ShortChannelId(
     List
       .fill(8)(
         Protocol.uint64(
-          new ByteArrayInputStream(pubkeysCombined(ourPubkey, peerId).toArray),
+          new ByteArrayInputStream(
+            pubkeysCombined(Main.node.ourPubKey, peerId).toArray
+          ),
           ByteOrder.BIG_ENDIAN
         )
       )
       .sum
   )
 
-  def channelId(ourPubkey: ByteVector): ByteVector32 =
-    Crypto.sha256(pubkeysCombined(ourPubkey, peerId))
+  lazy val channelId: ByteVector32 =
+    Crypto.sha256(pubkeysCombined(Main.node.ourPubKey, peerId))
 
-  def pubkeysCombined(pubkey1: ByteVector, pubkey2: ByteVector): ByteVector =
-    if (isLessThan(pubkey1, pubkey2)) pubkey1 ++ pubkey2 else pubkey2 ++ pubkey1
-
-  @tailrec
-  def isLessThan(a: ByteVector, b: ByteVector): Boolean = {
-    if (a.isEmpty && b.isEmpty) false
-    else if (a.isEmpty) true
-    else if (b.isEmpty) false
-    else if (a.head == b.head) isLessThan(a.tail, b.tail)
-    else (a.head & 0xff) < (b.head & 0xff)
-  }
+  private def pubkeysCombined(
+      pubkey1: ByteVector,
+      pubkey2: ByteVector
+  ): ByteVector =
+    if (Utils.isLessThan(pubkey1, pubkey2)) pubkey1 ++ pubkey2
+    else pubkey2 ++ pubkey1
 }
 
 object Database {

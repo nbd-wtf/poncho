@@ -110,9 +110,6 @@ case class LastCrossSignedState(
     )
   }
 
-  def stateUpdate: StateUpdate =
-    StateUpdate(blockDay, localUpdates, remoteUpdates, localSigOfRemote)
-
   def verifyRemoteSig(pubKey: ByteVector): Boolean =
     Crypto.verifySignature(hostedSigHash, remoteSigOfLocal, pubKey)
 
@@ -120,6 +117,9 @@ case class LastCrossSignedState(
     val localSignature = Crypto.sign(reverse.hostedSigHash, priv)
     copy(localSigOfRemote = localSignature)
   }
+
+  def stateUpdate: StateUpdate =
+    StateUpdate(blockDay, localUpdates, remoteUpdates, localSigOfRemote)
 }
 
 case class StateUpdate(

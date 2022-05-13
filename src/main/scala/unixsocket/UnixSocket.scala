@@ -46,12 +46,15 @@ object UnixSocket {
   val connect: ConnectReq =
     stdlib.malloc(uv_req_size(UV_CONNECT_REQUEST)).asInstanceOf[ConnectReq]
   val write = stdlib.malloc(uv_req_size(UV_WRITE_REQ_T)).asInstanceOf[WriteReq]
+
+  var socketPath = ""
   var p = ""
   var result = ""
   val resultPromise = Promise[String]()
 
   def call(path: String, payload: String): Promise[String] = {
-    p = payload // store this as a global like an animal
+    socketPath = path
+    p = payload // store these as globals like an animal
 
     // libuv magic
     uv_pipe_init(loop, pipe, 0)
@@ -100,7 +103,7 @@ object UnixSocket {
         // fail the promise
         resultPromise.failure(
           UnixDomainSocketException(
-            s"failed to connect ($status): ${fromCString(uv_strerror(status))}"
+            s"failed to connect [$socketPath] ($status): ${fromCString(uv_strerror(status))}"
           )
         )
         ()

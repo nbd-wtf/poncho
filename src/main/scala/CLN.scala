@@ -3,8 +3,10 @@ import scala.util.Try
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.scalanative.unsigned._
 import scala.scalanative.loop.EventLoop.loop
+import scala.scalanative.loop.Poll
 import scala.concurrent.Future
 import scala.util.{Failure, Success}
+import secp256k1.Keys
 import sha256.Hkdf
 import ujson._
 
@@ -13,8 +15,9 @@ import scodec.bits.ByteVector
 import scodec.codecs.uint16
 import codecs.HostedChannelCodecs._
 import codecs._
+import secp256k1.Secp256k1
 
-object CLN {
+class CLN {
   var rpcAddr: String = ""
   var hsmSecret: Path = Paths.get("")
 
@@ -42,15 +45,6 @@ object CLN {
       )
   }
 
-  def getPrivateKey(): ByteVector32 = {
-    val salt = Array[UByte](0.toByte.toUByte)
-    val info = "nodeid".getBytes().map(_.toUByte)
-    val secret = Files.readAllBytes(hsmSecret).map(_.toUByte)
-
-    val sk = Hkdf.hkdf(salt, secret, info, 32)
-    ByteVector32(ByteVector(sk.map(_.toByte)))
-  }
-
   def answer(req: ujson.Value)(result: ujson.Value): Unit = {
     System.out.println(
       ujson.write(
@@ -61,6 +55,55 @@ object CLN {
         )
       )
     )
+  }
+
+  def getPrivateKey(): ByteVector32 = {
+    val salt = Array[UByte](0.toByte.toUByte)
+    val info = "nodeid".getBytes().map(_.toUByte)
+    val secret = Files.readAllBytes(hsmSecret).map(_.toUByte)
+
+    val sk = Hkdf.hkdf(salt, secret, info, 32)
+    ByteVector32(ByteVector(sk.map(_.toByte)))
+  }
+
+  lazy val ourPubKey: ByteVector = ByteVector(
+    Keys
+      .loadPrivateKey(getPrivateKey().bytes.toArray.map(_.toUByte))
+      .toOption
+      .get
+      .publicKey()
+      ._1
+      .map(_.toByte)
+  )
+
+  def getChainHash(): Future[ByteVector32] =
+    rpc("getchaininfo", ujson.Obj())
+      .map(info => {
+        println(s"getchaininfo: ${info.toString}")
+        info
+      })
+      .map(_("chain").str)
+      .map({
+        case "main" =>
+          "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000"
+        case "test" =>
+          "43497fd7f826957108f4a30fd9cec3aeba79972084e90ead01ea330900000000"
+        case "signet" =>
+          "06226e46111a0b59caaf126043eb5bbf28c34f3a5e332a1fc7b2b73cf188910f"
+        case "regtest" =>
+          "b291211d4bb2b7e1b7a4758225e69e50104091a637213d033295c010f55ffb18"
+        case chain =>
+          throw IllegalArgumentException(s"unknown chain name '$chain'")
+      })
+      .map(ByteVector32.fromValidHex(_))
+
+  def getCurrentBlockDay(): Future[Long] = {
+    rpc("getchaininfo", ujson.Obj())
+      .map(info => {
+        println(s"getchaininfo: ${info.toString}")
+        info
+      })
+      .map(_("headercount").num.toLong / 144)
   }
 
   def sendCustomMessage(
@@ -77,7 +120,7 @@ object CLN {
       .toHex
     val msg = tagHex + lengthHex + message.toHex
 
-    log(s"sending [$tag] $msg to $peerId")
+    Main.log(s"sending [$tag] $msg to $peerId")
 
     rpc(
       "sendcustommsg",
@@ -87,30 +130,9 @@ object CLN {
       )
     )
       .onComplete {
-        case Failure(err) => CLN.log(s"failed to send custom message: $err")
+        case Failure(err) => Main.log(s"failed to send custom message: $err")
         case _            => {}
       }
-  }
-
-  def log(message: String): Unit = {
-    if (Main.isDev) {
-      System.err.println(
-        Console.BOLD + "> " +
-          Console.BLUE + "poncho" + Console.RESET +
-          Console.BOLD + ": " + Console.RESET +
-          Console.GREEN + message + Console.RESET
-      )
-    } else {
-      System.out.println(
-        ujson.Obj(
-          "jsonrpc" -> "2.0",
-          "method" -> "log",
-          "params" -> ujson.Obj(
-            "message" -> message
-          )
-        )
-      )
-    }
   }
 
   def handleRPC(line: String): Unit = {
@@ -152,7 +174,7 @@ object CLN {
         )
 
         val lightningDir = data("configuration")("lightning-dir").str
-        rpcAddr = lightningDir + data("configuration")("rpc-file").str
+        rpcAddr = lightningDir + "/" + data("configuration")("rpc-file").str
         hsmSecret = Paths.get(lightningDir + "/hsm_secret")
       }
       case "custommsg" => {
@@ -164,10 +186,10 @@ object CLN {
           .toInt(signed = false)
         val payload = ByteVector.fromValidHex(data("payload").str.drop(4))
 
-        log(s"got custommsg [$tag] from $peerId")
+        Main.log(s"got custommsg [$tag] from $peerId")
 
         decodeClientMessage(tag, payload).toEither match {
-          case Left(err) => log(s"$err")
+          case Left(err) => Main.log(s"$err")
           case Right(msg) => {
             val peer = ChannelMaster.getChannelActor(peerId)
             peer.send(Recv(msg))
@@ -184,7 +206,7 @@ object CLN {
 
         (for {
           chandata <- Database.data.channels.values
-            .find(_.shortChannelId == onion("short_channel_id").str)
+            .find(_.shortChannelId.toString == onion("short_channel_id").str)
           peer = ChannelMaster.getChannelActor(chandata.peerId.toString)
           msg = UpdateAddHtlc(
             channelId = chandata.channelId,
@@ -200,7 +222,7 @@ object CLN {
           case _ => {
             val hash = htlc("payment_hash").str
             val scid = onion("short_channel_id").str
-            log(
+            Main.log(
               s"not handling this htlc: $hash=>scid"
             )
             reply(ujson.Obj("result" -> "continue"))
@@ -208,19 +230,29 @@ object CLN {
         }
       }
       case "sendpay_success" => {
-        log(s"sendpay_success: $data")
+        Main.log(s"sendpay_success: $data")
       }
       case "sendpay_failure" => {
-        log(s"sendpay_failure: $data")
+        Main.log(s"sendpay_failure: $data")
       }
       case "connect" => {
         val id = data("id").str
         val address = data("address")("address").str
-        log(s"$id connected: $address")
+        Main.log(s"$id connected: $address")
       }
       case "disconnect" => {
         val id = data("id").str
-        log(s"$id disconnected")
+        Main.log(s"$id disconnected")
+      }
+    }
+  }
+
+  def main(): Unit = {
+    Poll(0).startRead { _ =>
+      val line = scala.io.StdIn.readLine().trim
+      if (line.size > 0) {
+        System.err.println(Console.BOLD + s"line: ${line}" + Console.RESET)
+        handleRPC(line)
       }
     }
   }

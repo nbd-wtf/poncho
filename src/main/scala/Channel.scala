@@ -10,9 +10,11 @@ import castor.Context
 import upickle.default.{ReadWriter, macroRW}
 
 import codecs._
+import crypto.Crypto
 import codecs.HostedChannelTags._
 import codecs.HostedChannelCodecs._
 import scodec.bits.ByteVector
+import scodec.codecs._
 
 sealed trait Msg
 case class Send(msg: HostedServerMessage) extends Msg
@@ -21,13 +23,6 @@ case class Recv(msg: HostedClientMessage) extends Msg
 class Channel(peerId: String)(implicit
     ac: castor.Context
 ) extends castor.StateMachineActor[Msg] {
-  def ourInit = InitHostedChannel(
-    maxHtlcValueInFlightMsat = 100000000L.toULong,
-    htlcMinimumMsat = MilliSatoshi(1000L),
-    maxAcceptedHtlcs = 12,
-    channelCapacityMsat = MilliSatoshi(100000000L),
-    initialClientBalanceMsat = MilliSatoshi(0)
-  )
 
   def initialState =
     Database.data.channels.get(peerId).map(_.isActive) match {
@@ -47,18 +42,18 @@ class Channel(peerId: String)(implicit
               val lcss = LastCrossSignedState(
                 isHost = true,
                 refundScriptPubKey = msg.refundScriptPubKey,
-                initHostedChannel = ourInit,
-                blockDay = ChannelMaster.currentBlockDay,
-                localBalanceMsat = ourInit.initialClientBalanceMsat,
+                initHostedChannel = Main.ourInit,
+                blockDay = Main.currentBlockDay,
+                localBalanceMsat = Main.ourInit.initialClientBalanceMsat,
                 remoteBalanceMsat =
-                  ourInit.channelCapacityMsat - ourInit.initialClientBalanceMsat,
+                  Main.ourInit.channelCapacityMsat - Main.ourInit.initialClientBalanceMsat,
                 localUpdates = 0L,
                 remoteUpdates = 0L,
                 incomingHtlcs = Nil,
                 outgoingHtlcs = Nil,
                 localSigOfRemote = ByteVector64.Zeroes,
                 remoteSigOfLocal = ByteVector64.Zeroes
-              ).withLocalSigOfRemote(CLN.getPrivateKey())
+              )
 
               // save channel with lcss
               Database.data
@@ -73,11 +68,11 @@ class Channel(peerId: String)(implicit
                 )
               Database.save()
 
-              CLN.sendCustomMessage(
+              Main.node.sendCustomMessage(
                 peerId,
                 HC_INIT_HOSTED_CHANNEL_TAG,
                 initHostedChannelCodec
-                  .encode(ourInit)
+                  .encode(Main.ourInit)
                   .require
                   .toByteVector
               )
@@ -97,25 +92,41 @@ class Channel(peerId: String)(implicit
               Database.data
                 .modify(_.channels.at(peerId).lcss)
                 .setTo(
-                  chandata.lcss.copy(
-                    blockDay = msg.blockDay,
-                    remoteSigOfLocal = msg.localSigOfRemoteLCSS
-                  )
+                  chandata.lcss
+                    .copy(
+                      blockDay = msg.blockDay,
+                      remoteSigOfLocal = msg.localSigOfRemoteLCSS
+                    )
+                    .withLocalSigOfRemote(Main.node.getPrivateKey())
                 )
 
               // check if everything is ok
-              if ((msg.blockDay - ChannelMaster.currentBlockDay).abs > 1)
-                // TODO error
+              if ((msg.blockDay - Main.currentBlockDay).abs > 1)
+                // TODO send error?
                 Inactive()
               else if (!chandata.lcss.verifyRemoteSig(chandata.peerId))
-                // TODO error
+                // TODO send error?
                 Inactive()
               else {
+                // all good, save lcss
                 Database.save()
-                Opening()
+
+                // and send our state update
+                Main.node.sendCustomMessage(
+                  peerId,
+                  HC_STATE_UPDATE_TAG,
+                  stateUpdateCodec
+                    .encode(chandata.lcss.stateUpdate)
+                    .require
+                    .toByteVector
+                )
+
+                Active()
               }
             case None =>
-              CLN.log("failed to find channel data. this should never happen.")
+              Main.log(
+                s"failed to find channel data for $peerId when Opening. this should never happen."
+              )
               Inactive()
           }
         }
@@ -134,4 +145,52 @@ class Channel(peerId: String)(implicit
         case Recv(msg: UpdateFailMalformedHtlc) => Active()
         case _                                  => Active()
       })
+
+  def makeChannelUpdate(
+      lcss: LastCrossSignedState,
+      remoteNodeId: ByteVector,
+      shortChannelId: ShortChannelId
+  ): ChannelUpdate = {
+    val flags = ChannelUpdate.ChannelFlags(
+      isNode1 = Utils.isLessThan(Main.node.ourPubKey, remoteNodeId),
+      isEnabled = true
+    )
+    val timestamp: TimestampSecond = TimestampSecond.now()
+    val witness: ByteVector = Crypto.sha256(
+      Crypto.sha256(
+        LightningMessageCodecs.channelUpdateWitnessCodec
+          .encode(
+            (
+              Main.chainHash,
+              shortChannelId,
+              timestamp,
+              flags,
+              Main.config.cltvExpiryDelta,
+              Main.ourInit.htlcMinimumMsat,
+              Main.config.feeBase,
+              Main.config.feeProportionalMillionths,
+              Some(Main.ourInit.channelCapacityMsat),
+              TlvStream.empty[ChannelUpdateTlv]
+            )
+          )
+          .toOption
+          .get
+          .toByteVector
+      )
+    )
+
+    val sig = Crypto.sign(witness, Main.node.getPrivateKey())
+    ChannelUpdate(
+      signature = sig,
+      chainHash = Main.chainHash,
+      shortChannelId = shortChannelId,
+      timestamp = timestamp,
+      channelFlags = flags,
+      cltvExpiryDelta = Main.config.cltvExpiryDelta,
+      htlcMinimumMsat = Main.ourInit.htlcMinimumMsat,
+      feeBaseMsat = Main.config.feeBase,
+      feeProportionalMillionths = Main.config.feeProportionalMillionths,
+      htlcMaximumMsat = Some(Main.ourInit.channelCapacityMsat)
+    )
+  }
 }
