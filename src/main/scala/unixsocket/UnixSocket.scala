@@ -1,4 +1,4 @@
-package UnixSocket
+package unixsocket
 
 import scala.Byte.byte2int
 import scala.concurrent.{Promise}
@@ -38,8 +38,8 @@ object UnixSocket {
 
   case class UnixDomainSocketException(s: String) extends Exception(s)
 
-  val UV_CONNECT_REQUEST = 2
-  val UV_EOF = -4095
+  final val UV_CONNECT_REQUEST = 2
+  final val UV_EOF = -4095
 
   val pipe: PipeHandle =
     stdlib.malloc(uv_handle_size(UV_PIPE_T)).asInstanceOf[PipeHandle]
@@ -80,13 +80,14 @@ object UnixSocket {
       case 0 => {
         // we have connected successfully
         val buffer = stdlib.malloc(sizeof[Buffer]).asInstanceOf[Ptr[Buffer]]
+        var temp_payload = c""
         Zone { implicit z =>
-          val temp_payload = toCString(p)
-          val payload_len = string.strlen(temp_payload) + 1L.toULong
-          buffer._1 = stdlib.malloc(payload_len)
-          buffer._2 = payload_len
-          string.strncpy(buffer._1, temp_payload, payload_len)
+          temp_payload = toCString(p)
         }
+        val payload_len = string.strlen(temp_payload) + 1L.toULong
+        buffer._1 = stdlib.malloc(payload_len)
+        buffer._2 = payload_len
+        string.strncpy(buffer._1, temp_payload, payload_len)
 
         // ask libuv: "can you please let us write this payload into the pipe?"
         val r = uv_write(write, pipe, buffer, 1, onWrite)
@@ -128,7 +129,7 @@ object UnixSocket {
   val onAlloc: PipeAllocCB =
     (_: PipeHandle, suggested_size: CSize, buf: Ptr[Buffer]) => {
       // this is called in a loop with an empty buffer, we must allocate some bytes for it
-      buf._1 = stdlib.malloc(64L.toULong)
+      buf._1 = stdlib.malloc(65L.toULong)
       buf._2 = 64L.toULong
     }
 
@@ -140,26 +141,31 @@ object UnixSocket {
         uv_close(pipe, onClose)
       }
       case n if n > 0 => {
-        // success reading
-        val bytesRead: Ptr[Byte] = stdlib.malloc(nread.toULong + 1L.toULong)
-        string.strncpy(bytesRead, buf._1, nread.toULong)
-        !(bytesRead + nread - 1) = 0 // set a null byte at the end
-        val part = fromCString(bytesRead)
+        System.err.println(s"read $n")
+        Zone { implicit z =>
+          {
+            // success reading
+            val bytesRead: Ptr[Byte] = alloc[Byte](nread.toULong + 1L.toULong)
+            string.strncpy(bytesRead, buf._1, nread.toULong)
+            !(bytesRead + nread - 1) = 0 // set a null byte at the end
+            val part = fromCString(bytesRead)
 
-        // append this part to the full payload we're storing globally like animals
-        result += part
+            // append this part to the full payload we're storing globally like animals
+            result += part
 
-        if (!(buf._1 + buf._2 - 1L.toULong) == 0) {
-          // there is a null byte at the end, we're done reading
-          uv_read_stop(pipe)
-          uv_close(pipe, onClose)
-        } else if (nread.toULong != buf._2) {
-          // less chars than the actual buffer size, we're done reading
-          uv_read_stop(pipe)
-          uv_close(pipe, onClose)
+            if (!(buf._1 + buf._2 + 1L) == 0) {
+              // there is a null byte at the end, we're done reading
+              uv_read_stop(pipe)
+              uv_close(pipe, onClose)
+            } else if (nread.toULong != buf._2) {
+              // less chars than the actual buffer size, we're done reading
+              uv_read_stop(pipe)
+              uv_close(pipe, onClose)
+            } else {
+              // otherwise there is more stuff to be read, we'll be called again
+            }
+          }
         }
-
-        // otherwise there is more stuff to be read, we'll be called again
       }
       case 0 => {
         // this means the read is still happening, we'll be called again, do nothing

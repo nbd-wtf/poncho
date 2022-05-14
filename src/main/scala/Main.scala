@@ -24,7 +24,18 @@ object Main {
   log(s"starting with data: ${write(Database.data)}")
 
   def main(args: Array[String]): Unit = {
-    node.main()
+    node.main(() => {
+      // wait for this callback so we know the RPC is ready and we can call these things
+      Timer.repeat(FiniteDuration(1, scala.concurrent.duration.HOURS))(
+        getCurrentBlockDay
+      )
+      Timer.timeout(FiniteDuration(2, scala.concurrent.duration.SECONDS))(
+        getCurrentBlockDay
+      )
+      Timer.timeout(FiniteDuration(1, scala.concurrent.duration.SECONDS))(
+        getChainHash
+      )
+    })
   }
 
   val ourInit = InitHostedChannel(
@@ -46,27 +57,25 @@ object Main {
       .getCurrentBlockDay()
       .onComplete {
         case Success(blockday) => {
-          currentBlockDay = blockday
+          Main.currentBlockDay = blockday
           log(s"got current blockday: $blockday")
         }
         case Failure(err) => log(s"failed to get current blockday: $err")
       }
   }
-  getCurrentBlockDay()
-  Timer.repeat(FiniteDuration(1, scala.concurrent.duration.HOURS))(
-    getCurrentBlockDay
-  )
 
   var chainHash = ByteVector32.Zeroes
-  node
-    .getChainHash()
-    .onComplete {
-      case Success(chainHash) => {
-        Main.chainHash = chainHash
-        log(s"got chain hash: $chainHash")
+  def getChainHash() = {
+    node
+      .getChainHash()
+      .onComplete {
+        case Success(chainHash) => {
+          Main.chainHash = chainHash
+          log(s"got chain hash: $chainHash")
+        }
+        case Failure(err) => log(s"failed to get chainhash: $err")
       }
-      case Failure(err) => log(s"failed to get chainhash: $err")
-    }
+  }
 
   def log(message: String): Unit = {
     if (node.isInstanceOf[CLN] && !Main.isDev) {

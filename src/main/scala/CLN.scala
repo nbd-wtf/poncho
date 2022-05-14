@@ -10,7 +10,7 @@ import secp256k1.Keys
 import sha256.Hkdf
 import ujson._
 
-import UnixSocket.UnixSocket
+import unixsocket.UnixSocket
 import scodec.bits.ByteVector
 import scodec.codecs.uint16
 import codecs.HostedChannelCodecs._
@@ -18,19 +18,23 @@ import codecs._
 import secp256k1.Secp256k1
 
 class CLN {
-  var rpcAddr: String = ""
-  var hsmSecret: Path = Paths.get("")
+  private var initCallback = () => {}
+  private var rpcAddr: String = ""
+  private var hsmSecret: Path = Paths.get("")
+  private var nextId = 0
 
   def rpc(method: String, params: ujson.Obj): Future[ujson.Value] = {
     if (rpcAddr == "") {
       return Future.failed(Exception("rpc address is not known yet"))
     }
 
+    nextId += 1
+
     val payload =
       ujson.write(
         ujson.Obj(
           "jsonrpc" -> "2.0",
-          "id" -> 0,
+          "id" -> nextId,
           "method" -> method,
           "params" -> params
         )
@@ -81,16 +85,12 @@ class CLN {
   )
 
   def getChainHash(): Future[ByteVector32] =
-    rpc("getchaininfo", ujson.Obj())
-      .map(info => {
-        println(s"getchaininfo: ${info.toString}")
-        info
-      })
-      .map(_("chain").str)
+    rpc("getinfo", ujson.Obj())
+      .map(_("network").str)
       .map({
-        case "main" =>
+        case "bitcoin" =>
           "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000"
-        case "test" =>
+        case "testnet" =>
           "43497fd7f826957108f4a30fd9cec3aeba79972084e90ead01ea330900000000"
         case "signet" =>
           "06226e46111a0b59caaf126043eb5bbf28c34f3a5e332a1fc7b2b73cf188910f"
@@ -101,14 +101,9 @@ class CLN {
       })
       .map(ByteVector32.fromValidHex(_))
 
-  def getCurrentBlockDay(): Future[Long] = {
+  def getCurrentBlockDay(): Future[Long] =
     rpc("getchaininfo", ujson.Obj())
-      .map(info => {
-        println(s"getchaininfo: ${info.toString}")
-        info
-      })
       .map(_("headercount").num.toLong / 144)
-  }
 
   def sendCustomMessage(
       peerId: String,
@@ -180,6 +175,8 @@ class CLN {
         val lightningDir = data("configuration")("lightning-dir").str
         rpcAddr = lightningDir + "/" + data("configuration")("rpc-file").str
         hsmSecret = Paths.get(lightningDir + "/hsm_secret")
+
+        initCallback()
       }
       case "custommsg" => {
         reply(ujson.Obj("result" -> "continue"))
@@ -251,7 +248,9 @@ class CLN {
     }
   }
 
-  def main(): Unit = {
+  def main(onInit: () => Unit): Unit = {
+    initCallback = onInit
+
     Poll(0).startRead { _ =>
       val line = scala.io.StdIn.readLine().trim
       if (line.size > 0) {
