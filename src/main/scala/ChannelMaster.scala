@@ -6,5 +6,7 @@ import castor.Context.Simple.global
 object ChannelMaster {
   val actors = mutable.Map.empty[String, Channel]
 
-  def getChannelActor(peerId: String): Channel = new Channel(peerId)
+  def getChannelActor(peerId: String): Channel = {
+    actors.getOrElseUpdate(peerId, { new Channel(peerId) })
+  }
 }
