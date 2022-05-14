@@ -7,8 +7,10 @@ import scala.scalanative.libc.stdlib
 import scala.scalanative.libc.string
 import scalanative.unsigned.UnsignedRichLong
 import scala.scalanative.loop.EventLoop.loop
-import scala.scalanative.loop.LibUV._
+
+import scala.scalanative.loop.LibUV.{uv_read_start as _, _}
 import scala.scalanative.loop.LibUVConstants._
+import LibUVMissing._
 
 // stuff that is missing from the libuv interface exposed by scala-native-loop
 @link("uv")
@@ -33,11 +35,9 @@ object LibUVMissing {
   ): CInt = extern
 }
 
-object UnixSocket {
-  import LibUVMissing._
+case class UnixDomainSocketException(s: String) extends Exception(s)
 
-  case class UnixDomainSocketException(s: String) extends Exception(s)
-
+class UnixSocket(path: String, payload: String) {
   final val UV_CONNECT_REQUEST = 2
   final val UV_EOF = -4095
 
@@ -47,68 +47,56 @@ object UnixSocket {
     stdlib.malloc(uv_req_size(UV_CONNECT_REQUEST)).asInstanceOf[ConnectReq]
   val write = stdlib.malloc(uv_req_size(UV_WRITE_REQ_T)).asInstanceOf[WriteReq]
 
-  var socketPath = ""
-  var p = ""
-  var result = ""
-  val resultPromise = Promise[String]()
+  var readResponse = ""
+  val result = Promise[String]()
 
-  def call(path: String, payload: String): Promise[String] = {
-    socketPath = path
-    p = payload // store these as globals like an animal
-
-    // libuv magic
-    uv_pipe_init(loop, pipe, 0)
-    var pathC: CString = c""
-    Zone { implicit z =>
-      pathC = toCString(path)
-    }
-
-    // ask libuv: "hey we want to open a connection to this thing, please"
-    uv_pipe_connect(
-      connect,
-      pipe,
-      pathC,
-      onConnect
-    )
-
-    // return this global promise like we're javascript programmers
-    resultPromise
+  // libuv magic
+  uv_pipe_init(loop, pipe, 0)
+  var pathC: CString = c""
+  Zone { implicit z =>
+    pathC = toCString(path)
   }
 
-  val onConnect: ConnectCB = (_: ConnectReq, status: CInt) =>
+  // ask libuv: "hey we want to open a connection to this thing, please"
+  uv_pipe_connect(
+    connect,
+    pipe,
+    pathC,
+    onConnect
+  )
+
+  val onConnect: ConnectCB = (_: ConnectReq, status: CInt) => {
     status match {
       case 0 => {
         // we have connected successfully
-        val buffer = stdlib.malloc(sizeof[Buffer]).asInstanceOf[Ptr[Buffer]]
-        var temp_payload = c""
         Zone { implicit z =>
-          temp_payload = toCString(p)
-        }
-        val payload_len = string.strlen(temp_payload) + 1L.toULong
-        buffer._1 = stdlib.malloc(payload_len)
-        buffer._2 = payload_len
-        string.strncpy(buffer._1, temp_payload, payload_len)
+          val buffer = alloc[Byte](sizeof[Buffer]).asInstanceOf[Ptr[Buffer]]
+          val temp_payload = toCString(payload)
+          val payload_len = string.strlen(temp_payload) + 1L.toULong
+          buffer._1 = alloc[Byte](payload_len)
+          buffer._2 = payload_len
+          string.strncpy(buffer._1, temp_payload, payload_len)
 
-        // ask libuv: "can you please let us write this payload into the pipe?"
-        val r = uv_write(write, pipe, buffer, 1, onWrite)
-        if (r != 0) {
-          resultPromise.failure(
+          // ask libuv: "can you please let us write this payload into the pipe?"
+          val r = uv_write(write, pipe, buffer, 1, onWrite)
+          if (r != 0) {
+            // result.failure(
             UnixDomainSocketException(
               s"couldn't even try to write ($r): ${fromCString(uv_strerror(r))}"
             )
-          )
-          ()
+          }
         }
       }
       case _ =>
         // fail the promise
-        resultPromise.failure(
+        result.failure(
           UnixDomainSocketException(
-            s"failed to connect [$socketPath] ($status): ${fromCString(uv_strerror(status))}"
+            s"failed to connect [$path] ($status): ${fromCString(uv_strerror(status))}"
           )
         )
-        ()
     }
+    ()
+  }
 
   val onWrite: WriteCB = (_: WriteReq, status: CInt) =>
     status match {
@@ -118,7 +106,7 @@ object UnixSocket {
         ()
       case _ =>
         // fail the promise
-        resultPromise.failure(
+        result.failure(
           UnixDomainSocketException(
             s"failed to write ($status): ${fromCString(uv_strerror(status))}"
           )
@@ -141,7 +129,6 @@ object UnixSocket {
         uv_close(pipe, onClose)
       }
       case n if n > 0 => {
-        System.err.println(s"read $n")
         Zone { implicit z =>
           {
             // success reading
@@ -151,7 +138,7 @@ object UnixSocket {
             val part = fromCString(bytesRead)
 
             // append this part to the full payload we're storing globally like animals
-            result += part
+            readResponse += part
 
             if (!(buf._1 + buf._2 + 1L) == 0) {
               // there is a null byte at the end, we're done reading
@@ -172,7 +159,7 @@ object UnixSocket {
       }
       case n if n < 0 && n != UV_EOF => {
         // error reading
-        resultPromise.failure(
+        result.failure(
           UnixDomainSocketException(s"failed to read ($nread)}")
         )
         uv_read_stop(pipe)
@@ -192,8 +179,8 @@ object UnixSocket {
     stdlib.free(connect.asInstanceOf[Ptr[Byte]])
     stdlib.free(write.asInstanceOf[Ptr[Byte]])
 
-    if (!resultPromise.isCompleted) {
-      resultPromise.success(result)
+    if (!result.isCompleted) {
+      result.success(readResponse)
     }
     ()
   }

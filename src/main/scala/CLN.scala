@@ -40,9 +40,7 @@ class CLN {
         )
       )
 
-    UnixSocket
-      .call(rpcAddr, payload)
-      .future
+    new UnixSocket(rpcAddr, payload).result.future
       .map(ujson.read(_))
       .flatMap(read =>
         if (read.obj.contains("error")) {
