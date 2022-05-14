@@ -13,6 +13,7 @@ import codecs._
 import crypto.Crypto
 import codecs.HostedChannelTags._
 import codecs.HostedChannelCodecs._
+import codecs.LightningMessageCodecs._
 import scodec.bits.ByteVector
 import scodec.codecs._
 
@@ -87,7 +88,7 @@ class Channel(peerId: String)(implicit
       extends State({
         case Recv(msg: StateUpdate) => {
           Database.data.channels.get(peerId) match {
-            case Some(chandata) =>
+            case Some(chandata) => {
               // update our lcss with this, then send our own stateupdate
               Database.data
                 .modify(_.channels.at(peerId).lcss)
@@ -102,10 +103,38 @@ class Channel(peerId: String)(implicit
 
               // check if everything is ok
               if ((msg.blockDay - Main.currentBlockDay).abs > 1)
-                // TODO send error?
+                Main.log(
+                  s"[${peerId}] sent StateUpdate with wrong blockday: ${msg.blockDay} (current: ${Main.currentBlockDay})"
+                )
+                Main.node.sendCustomMessage(
+                  peerId,
+                  HC_ERROR_TAG,
+                  errorCodec
+                    .encode(
+                      Error(
+                        chandata.channelId,
+                        ErrorCodes.ERR_HOSTED_WRONG_BLOCKDAY
+                      )
+                    )
+                    .require
+                    .toByteVector
+                )
                 Inactive()
               else if (!chandata.lcss.verifyRemoteSig(chandata.peerId))
-                // TODO send error?
+                Main.log(s"[${peerId}] sent StateUpdate with wrong signature.")
+                Main.node.sendCustomMessage(
+                  peerId,
+                  HC_ERROR_TAG,
+                  errorCodec
+                    .encode(
+                      Error(
+                        chandata.channelId,
+                        ErrorCodes.ERR_HOSTED_WRONG_REMOTE_SIG
+                      )
+                    )
+                    .require
+                    .toByteVector
+                )
                 Inactive()
               else {
                 // all good, save lcss
@@ -123,11 +152,13 @@ class Channel(peerId: String)(implicit
 
                 Active()
               }
-            case None =>
+            }
+            case None => {
               Main.log(
                 s"failed to find channel data for $peerId when Opening. this should never happen."
               )
               Inactive()
+            }
           }
         }
         case _ => Opening()
