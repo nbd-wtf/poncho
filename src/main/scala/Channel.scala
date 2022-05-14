@@ -24,6 +24,7 @@ case class Recv(msg: HostedClientMessage) extends Msg
 class Channel(peerId: String)(implicit
     ac: castor.Context
 ) extends castor.StateMachineActor[Msg] {
+  def stay = state
 
   def initialState =
     Database.data.channels.get(peerId).map(_.isActive) match {
@@ -36,41 +37,27 @@ class Channel(peerId: String)(implicit
         case Recv(msg: InvokeHostedChannel) => {
           Database.data.channels.get(peerId) match {
             case Some(chandata) => { /* TODO channel exists, do something */
-              Opening()
+              Opening(invoke = msg)
             }
             case None => {
-              // channel doesn't exist, we're creating a new one now
-              val lcss = LastCrossSignedState(
-                isHost = true,
-                refundScriptPubKey = msg.refundScriptPubKey,
-                initHostedChannel = Main.ourInit,
-                blockDay = Main.currentBlockDay,
-                localBalanceMsat = Main.ourInit.initialClientBalanceMsat,
-                remoteBalanceMsat =
-                  Main.ourInit.channelCapacityMsat - Main.ourInit.initialClientBalanceMsat,
-                localUpdates = 0L,
-                remoteUpdates = 0L,
-                incomingHtlcs = Nil,
-                outgoingHtlcs = Nil,
-                localSigOfRemote = ByteVector64.Zeroes,
-                remoteSigOfLocal = ByteVector64.Zeroes
-              )
-
-              // save channel with lcss
+              // save channel with no lcss
               Database.update { data =>
-                data
-                  .modify(_.channels)
-                  .using(
-                    _ +
-                      (peerId -> ChannelData(
-                        peerId = ByteVector.fromValidHex(peerId),
-                        isActive = false,
-                        lcss = lcss
-                      ))
-                  )
+                {
+                  data
+                    .modify(_.channels)
+                    .using(
+                      _ +
+                        (peerId -> ChannelData(
+                          peerId = ByteVector.fromValidHex(peerId),
+                          isActive = false,
+                          lcss = None
+                        ))
+                    )
+                }
               }
               Database.save()
 
+              // reply saying we accept the invoke
               Main.node.sendCustomMessage(
                 peerId,
                 HC_INIT_HOSTED_CHANNEL_TAG,
@@ -80,13 +67,13 @@ class Channel(peerId: String)(implicit
                   .toByteVector
               )
 
-              Opening()
+              Opening(invoke = msg)
             }
           }
         }
-        case _ => Inactive()
+        case _ => stay
       })
-  case class Opening()
+  case class Opening(invoke: InvokeHostedChannel)
       extends State({
         case Recv(msg: StateUpdate) => {
           Database.data.channels.get(peerId) match {
@@ -96,12 +83,25 @@ class Channel(peerId: String)(implicit
                 data
                   .modify(_.channels.at(peerId).lcss)
                   .setTo(
-                    chandata.lcss
-                      .copy(
+                    Some(
+                      LastCrossSignedState(
+                        isHost = true,
+                        refundScriptPubKey = invoke.refundScriptPubKey,
+                        initHostedChannel = Main.ourInit,
                         blockDay = msg.blockDay,
+                        localBalanceMsat =
+                          Main.ourInit.initialClientBalanceMsat,
+                        remoteBalanceMsat =
+                          Main.ourInit.channelCapacityMsat - Main.ourInit.initialClientBalanceMsat,
+                        localUpdates = 0L,
+                        remoteUpdates = 0L,
+                        incomingHtlcs = Nil,
+                        outgoingHtlcs = Nil,
+                        localSigOfRemote = ByteVector64.Zeroes,
                         remoteSigOfLocal = msg.localSigOfRemoteLCSS
                       )
-                      .withLocalSigOfRemote(Main.node.getPrivateKey())
+                        .withLocalSigOfRemote(Main.node.getPrivateKey())
+                    )
                   )
               }
 
@@ -124,7 +124,7 @@ class Channel(peerId: String)(implicit
                     .toByteVector
                 )
                 Inactive()
-              else if (!chandata.lcss.verifyRemoteSig(chandata.peerId))
+              else if (!chandata.lcss.get.verifyRemoteSig(chandata.peerId))
                 Main.log(s"[${peerId}] sent StateUpdate with wrong signature.")
                 Main.node.sendCustomMessage(
                   peerId,
@@ -149,7 +149,7 @@ class Channel(peerId: String)(implicit
                   peerId,
                   HC_STATE_UPDATE_TAG,
                   stateUpdateCodec
-                    .encode(chandata.lcss.stateUpdate)
+                    .encode(chandata.lcss.get.stateUpdate)
                     .require
                     .toByteVector
                 )
@@ -165,7 +165,7 @@ class Channel(peerId: String)(implicit
             }
           }
         }
-        case _ => Opening()
+        case _ => stay
       })
   case class Active()
       extends State({
@@ -173,17 +173,17 @@ class Channel(peerId: String)(implicit
           Active()
         }
 
-        case Recv(msg: AskBrandingInfo)         => Active()
-        case Recv(msg: ResizeChannel)           => Active()
-        case Recv(msg: UpdateAddHtlc)           => Active()
-        case Recv(msg: UpdateFailHtlc)          => Active()
-        case Recv(msg: UpdateFulfillHtlc)       => Active()
-        case Recv(msg: UpdateFailMalformedHtlc) => Active()
+        case Recv(msg: AskBrandingInfo)         => stay
+        case Recv(msg: ResizeChannel)           => stay
+        case Recv(msg: UpdateAddHtlc)           => stay
+        case Recv(msg: UpdateFailHtlc)          => stay
+        case Recv(msg: UpdateFulfillHtlc)       => stay
+        case Recv(msg: UpdateFailMalformedHtlc) => stay
 
         // these are only for PHC
-        case Recv(msg: ChannelUpdate)       => Active()
-        case Recv(msg: ChannelAnnouncement) => Active()
+        case Recv(msg: ChannelUpdate)       => stay
+        case Recv(msg: ChannelAnnouncement) => stay
 
-        case _ => Active()
+        case _ => stay
       })
 }

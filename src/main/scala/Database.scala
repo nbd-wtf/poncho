@@ -17,7 +17,7 @@ case class Data(
 case class ChannelData(
     peerId: ByteVector,
     isActive: Boolean,
-    lcss: LastCrossSignedState
+    lcss: Option[LastCrossSignedState]
 ) {
   lazy val shortChannelId: ShortChannelId = ShortChannelId(
     List
