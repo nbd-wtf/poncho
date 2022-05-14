@@ -22,6 +22,10 @@ class CLN {
   var hsmSecret: Path = Paths.get("")
 
   def rpc(method: String, params: ujson.Obj): Future[ujson.Value] = {
+    if (rpcAddr == "") {
+      return Future.failed(Exception("rpc address is not known yet"))
+    }
+
     val payload =
       ujson.write(
         ujson.Obj(
