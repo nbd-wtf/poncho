@@ -53,6 +53,10 @@ object Database {
   }
   var data: Data = read[Data](path)
 
+  def update(change: Data => Data) = {
+    data = change(data)
+  }
+
   def save(): Unit = {
     writeToOutputStream(data, Files.newOutputStream(path))
   }

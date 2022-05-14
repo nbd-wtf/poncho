@@ -57,16 +57,18 @@ class Channel(peerId: String)(implicit
               )
 
               // save channel with lcss
-              Database.data
-                .modify(_.channels)
-                .using(
-                  _ +
-                    (peerId -> ChannelData(
-                      peerId = ByteVector.fromValidHex(peerId),
-                      isActive = false,
-                      lcss = lcss
-                    ))
-                )
+              Database.update { data =>
+                data
+                  .modify(_.channels)
+                  .using(
+                    _ +
+                      (peerId -> ChannelData(
+                        peerId = ByteVector.fromValidHex(peerId),
+                        isActive = false,
+                        lcss = lcss
+                      ))
+                  )
+              }
               Database.save()
 
               Main.node.sendCustomMessage(
@@ -90,16 +92,18 @@ class Channel(peerId: String)(implicit
           Database.data.channels.get(peerId) match {
             case Some(chandata) => {
               // update our lcss with this, then send our own stateupdate
-              Database.data
-                .modify(_.channels.at(peerId).lcss)
-                .setTo(
-                  chandata.lcss
-                    .copy(
-                      blockDay = msg.blockDay,
-                      remoteSigOfLocal = msg.localSigOfRemoteLCSS
-                    )
-                    .withLocalSigOfRemote(Main.node.getPrivateKey())
-                )
+              Database.update { data =>
+                data
+                  .modify(_.channels.at(peerId).lcss)
+                  .setTo(
+                    chandata.lcss
+                      .copy(
+                        blockDay = msg.blockDay,
+                        remoteSigOfLocal = msg.localSigOfRemoteLCSS
+                      )
+                      .withLocalSigOfRemote(Main.node.getPrivateKey())
+                  )
+              }
 
               // check if everything is ok
               if ((msg.blockDay - Main.currentBlockDay).abs > 1)
