@@ -182,12 +182,16 @@ class CLN {
         reply(ujson.Obj("result" -> "continue"))
 
         val peerId = data("peer_id").str
+        val body = data("payload").str
         val tag = ByteVector
-          .fromValidHex(data("payload").str.take(4))
+          .fromValidHex(body.take(4))
           .toInt(signed = false)
-        val payload = ByteVector.fromValidHex(data("payload").str.drop(4))
-
-        Main.log(s"got custommsg [$tag] from $peerId")
+        val payload =
+          ByteVector.fromValidHex(
+            body
+              .drop(4 /* tag */ )
+              .drop(4 /* length */ )
+          )
 
         decodeClientMessage(tag, payload).toEither match {
           case Left(err) => Main.log(s"$err")
