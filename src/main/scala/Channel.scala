@@ -40,31 +40,52 @@ class Channel(peerId: String)(implicit
   case class Inactive()
       extends State({
         case Recv(msg: InvokeHostedChannel) => {
-          Database.data.channels.get(peerId) match {
-            case Some(chandata) => {
-              // channel already exists, so send last cross-signed-state
-              Main.node.sendCustomMessage(
-                peerId,
-                HC_LAST_CROSS_SIGNED_STATE_TAG,
-                lastCrossSignedStateCodec
-                  .encode(chandata.lcss)
-                  .require
-                  .toByteVector
-              )
-              Opening(refundScriptPubKey = msg.refundScriptPubKey)
-            }
-            case None => {
-              // reply saying we accept the invoke
-              Main.node.sendCustomMessage(
-                peerId,
-                HC_INIT_HOSTED_CHANNEL_TAG,
-                initHostedChannelCodec
-                  .encode(Main.ourInit)
-                  .require
-                  .toByteVector
-              )
+          if (msg.chainHash != Main.chainHash) {
+            Main.log(
+              s"[${peerId}] sent InvokeHostedChannel for wrong chain: ${msg.chainHash} (current: ${Main.chainHash})"
+            )
+            Main.node.sendCustomMessage(
+              peerId,
+              HC_ERROR_TAG,
+              errorCodec
+                .encode(
+                  Error(
+                    ChannelMaster.getChannelId(peerId),
+                    s"invalid chainHash (local=${Main.chainHash} remote=${msg.chainHash})"
+                  )
+                )
+                .require
+                .toByteVector
+            )
+            stay
 
-              Opening(refundScriptPubKey = msg.refundScriptPubKey)
+          } else {
+            Database.data.channels.get(peerId) match {
+              case Some(chandata) => {
+                // channel already exists, so send last cross-signed-state
+                Main.node.sendCustomMessage(
+                  peerId,
+                  HC_LAST_CROSS_SIGNED_STATE_TAG,
+                  lastCrossSignedStateCodec
+                    .encode(chandata.lcss)
+                    .require
+                    .toByteVector
+                )
+                Opening(refundScriptPubKey = msg.refundScriptPubKey)
+              }
+              case None => {
+                // reply saying we accept the invoke
+                Main.node.sendCustomMessage(
+                  peerId,
+                  HC_INIT_HOSTED_CHANNEL_TAG,
+                  initHostedChannelCodec
+                    .encode(Main.ourInit)
+                    .require
+                    .toByteVector
+                )
+
+                Opening(refundScriptPubKey = msg.refundScriptPubKey)
+              }
             }
           }
         }
