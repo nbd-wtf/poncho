@@ -140,7 +140,7 @@ object UnixSocket {
   val onAlloc: PipeAllocCB =
     (_: PipeHandle, suggested_size: CSize, buf: Ptr[Buffer]) => {
       // this is called in a loop with an empty buffer, we must allocate some bytes for it
-      buf._1 = stdlib.malloc(65L.toULong)
+      buf._1 = stdlib.malloc(64L.toULong)
       buf._2 = 64L.toULong
     }
 
@@ -161,13 +161,13 @@ object UnixSocket {
                   val bytesRead: Ptr[Byte] =
                     alloc[Byte](nread.toULong + 1L.toULong)
                   string.strncpy(bytesRead, buf._1, nread.toULong)
-                  !(bytesRead + nread - 1) = 0 // set a null byte at the end
+                  !(bytesRead + nread) = 0 // set a null byte at the end
                   val part = fromCString(bytesRead)
 
                   // append this part to the full payload we're storing globally like animals
                   call.readResponse += part
 
-                  if (!(buf._1 + buf._2 + 1L) == 0) {
+                  if (!(buf._1 + buf._2 - 1L) == 0) {
                     // there is a null byte at the end, we're done reading
                     uv_read_stop(pipe)
                     uv_close(pipe, onClose)
@@ -212,7 +212,6 @@ object UnixSocket {
         stdlib.free(call.write.asInstanceOf[Ptr[Byte]])
 
         if (!call.result.isCompleted) {
-          System.err.println(call.readResponse)
           call.result.success(call.readResponse)
         }
 
