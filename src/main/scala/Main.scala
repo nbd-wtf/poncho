@@ -26,14 +26,10 @@ object Main {
   def main(args: Array[String]): Unit = {
     node.main(() => {
       // wait for this callback so we know the RPC is ready and we can call these things
+      getChainHash()
+      getCurrentBlockDay()
       Timer.repeat(FiniteDuration(1, scala.concurrent.duration.HOURS))(
         getCurrentBlockDay
-      )
-      Timer.timeout(FiniteDuration(2, scala.concurrent.duration.SECONDS))(
-        getCurrentBlockDay
-      )
-      Timer.timeout(FiniteDuration(1, scala.concurrent.duration.SECONDS))(
-        getChainHash
       )
     })
   }
@@ -69,11 +65,8 @@ object Main {
     node
       .getChainHash()
       .onComplete {
-        case Success(chainHash) => {
-          Main.chainHash = chainHash
-          log(s"got chain hash: $chainHash")
-        }
-        case Failure(err) => log(s"failed to get chainhash: $err")
+        case Success(chainHash) => Main.chainHash = chainHash
+        case Failure(err)       => log(s"failed to get chainhash: $err")
       }
   }
 

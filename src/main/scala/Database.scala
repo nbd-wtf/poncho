@@ -1,5 +1,3 @@
-import java.io.ByteArrayInputStream
-import java.nio.ByteOrder
 import java.nio.file.{Files, Path, Paths}
 import scala.collection.immutable.Map
 import scala.scalanative.unsigned._
@@ -15,33 +13,9 @@ case class Data(
 )
 
 case class ChannelData(
-    peerId: ByteVector,
     isActive: Boolean,
-    lcss: Option[LastCrossSignedState]
-) {
-  lazy val shortChannelId: ShortChannelId = ShortChannelId(
-    List
-      .fill(8)(
-        Protocol.uint64(
-          new ByteArrayInputStream(
-            pubkeysCombined(Main.node.ourPubKey, peerId).toArray
-          ),
-          ByteOrder.BIG_ENDIAN
-        )
-      )
-      .sum
-  )
-
-  lazy val channelId: ByteVector32 =
-    Crypto.sha256(pubkeysCombined(Main.node.ourPubKey, peerId))
-
-  private def pubkeysCombined(
-      pubkey1: ByteVector,
-      pubkey2: ByteVector
-  ): ByteVector =
-    if (Utils.isLessThan(pubkey1, pubkey2)) pubkey1 ++ pubkey2
-    else pubkey2 ++ pubkey1
-}
+    lcss: LastCrossSignedState
+)
 
 object Database {
   import Picklers.given
@@ -54,11 +28,9 @@ object Database {
   var data: Data = read[Data](path)
 
   def update(change: Data => Data) = {
-    data = change(data)
-  }
-
-  def save(): Unit = {
-    writeToOutputStream(data, Files.newOutputStream(path))
+    val newData = change(data)
+    writeToOutputStream(newData, Files.newOutputStream(path))
+    data = newData
   }
 }
 

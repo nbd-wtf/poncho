@@ -32,31 +32,28 @@ class Channel(peerId: String)(implicit
       case _          => Inactive()
     }
 
+  override def run(msg: Msg): Unit = {
+    Main.log(s"[$this] at $state <-- $msg")
+    super.run(msg)
+  }
+
   case class Inactive()
       extends State({
         case Recv(msg: InvokeHostedChannel) => {
           Database.data.channels.get(peerId) match {
-            case Some(chandata) => { /* TODO channel exists, do something */
+            case Some(chandata) => {
+              // channel already exists, so send last cross-signed-state
+              Main.node.sendCustomMessage(
+                peerId,
+                HC_LAST_CROSS_SIGNED_STATE_TAG,
+                lastCrossSignedStateCodec
+                  .encode(chandata.lcss)
+                  .require
+                  .toByteVector
+              )
               Opening(invoke = msg)
             }
             case None => {
-              // save channel with no lcss
-              Database.update { data =>
-                {
-                  data
-                    .modify(_.channels)
-                    .using(
-                      _ +
-                        (peerId -> ChannelData(
-                          peerId = ByteVector.fromValidHex(peerId),
-                          isActive = false,
-                          lcss = None
-                        ))
-                    )
-                }
-              }
-              Database.save()
-
               // reply saying we accept the invoke
               Main.node.sendCustomMessage(
                 peerId,
@@ -76,93 +73,88 @@ class Channel(peerId: String)(implicit
   case class Opening(invoke: InvokeHostedChannel)
       extends State({
         case Recv(msg: StateUpdate) => {
-          Database.data.channels.get(peerId) match {
-            case Some(chandata) => {
-              // update our lcss with this, then send our own stateupdate
-              Database.update { data =>
+          // build last cross-signed state
+          val lcss = LastCrossSignedState(
+            isHost = true,
+            refundScriptPubKey = invoke.refundScriptPubKey,
+            initHostedChannel = Main.ourInit,
+            blockDay = msg.blockDay,
+            localBalanceMsat = Main.ourInit.initialClientBalanceMsat,
+            remoteBalanceMsat =
+              Main.ourInit.channelCapacityMsat - Main.ourInit.initialClientBalanceMsat,
+            localUpdates = 0L,
+            remoteUpdates = 0L,
+            incomingHtlcs = Nil,
+            outgoingHtlcs = Nil,
+            localSigOfRemote = ByteVector64.Zeroes,
+            remoteSigOfLocal = msg.localSigOfRemoteLCSS
+          )
+            .withLocalSigOfRemote(Main.node.getPrivateKey())
+
+          // check if everything is ok
+          if ((msg.blockDay - Main.currentBlockDay).abs > 1)
+            Main.log(
+              s"[${peerId}] sent StateUpdate with wrong blockday: ${msg.blockDay} (current: ${Main.currentBlockDay})"
+            )
+            Main.node.sendCustomMessage(
+              peerId,
+              HC_ERROR_TAG,
+              errorCodec
+                .encode(
+                  Error(
+                    ChannelMaster.getChannelId(peerId),
+                    ErrorCodes.ERR_HOSTED_WRONG_BLOCKDAY
+                  )
+                )
+                .require
+                .toByteVector
+            )
+            Inactive()
+          else if (!lcss.verifyRemoteSig(ByteVector.fromValidHex(peerId)))
+            Main.log(s"[${peerId}] sent StateUpdate with wrong signature.")
+            Main.node.sendCustomMessage(
+              peerId,
+              HC_ERROR_TAG,
+              errorCodec
+                .encode(
+                  Error(
+                    ChannelMaster.getChannelId(peerId),
+                    ErrorCodes.ERR_HOSTED_WRONG_REMOTE_SIG
+                  )
+                )
+                .require
+                .toByteVector
+            )
+            Inactive()
+          else {
+            // all good, save this channel to the database and consider it opened
+            Database.update { data =>
+              {
                 data
-                  .modify(_.channels.at(peerId).lcss)
-                  .setTo(
-                    Some(
-                      LastCrossSignedState(
-                        isHost = true,
-                        refundScriptPubKey = invoke.refundScriptPubKey,
-                        initHostedChannel = Main.ourInit,
-                        blockDay = msg.blockDay,
-                        localBalanceMsat =
-                          Main.ourInit.initialClientBalanceMsat,
-                        remoteBalanceMsat =
-                          Main.ourInit.channelCapacityMsat - Main.ourInit.initialClientBalanceMsat,
-                        localUpdates = 0L,
-                        remoteUpdates = 0L,
-                        incomingHtlcs = Nil,
-                        outgoingHtlcs = Nil,
-                        localSigOfRemote = ByteVector64.Zeroes,
-                        remoteSigOfLocal = msg.localSigOfRemoteLCSS
+                  .modify(_.channels)
+                  .using(
+                    _ +
+                      (
+                        peerId -> ChannelData(
+                          isActive = true,
+                          lcss = lcss
+                        )
                       )
-                        .withLocalSigOfRemote(Main.node.getPrivateKey())
-                    )
                   )
               }
-
-              // check if everything is ok
-              if ((msg.blockDay - Main.currentBlockDay).abs > 1)
-                Main.log(
-                  s"[${peerId}] sent StateUpdate with wrong blockday: ${msg.blockDay} (current: ${Main.currentBlockDay})"
-                )
-                Main.node.sendCustomMessage(
-                  peerId,
-                  HC_ERROR_TAG,
-                  errorCodec
-                    .encode(
-                      Error(
-                        chandata.channelId,
-                        ErrorCodes.ERR_HOSTED_WRONG_BLOCKDAY
-                      )
-                    )
-                    .require
-                    .toByteVector
-                )
-                Inactive()
-              else if (!chandata.lcss.get.verifyRemoteSig(chandata.peerId))
-                Main.log(s"[${peerId}] sent StateUpdate with wrong signature.")
-                Main.node.sendCustomMessage(
-                  peerId,
-                  HC_ERROR_TAG,
-                  errorCodec
-                    .encode(
-                      Error(
-                        chandata.channelId,
-                        ErrorCodes.ERR_HOSTED_WRONG_REMOTE_SIG
-                      )
-                    )
-                    .require
-                    .toByteVector
-                )
-                Inactive()
-              else {
-                // all good, save lcss
-                Database.save()
-
-                // and send our state update
-                Main.node.sendCustomMessage(
-                  peerId,
-                  HC_STATE_UPDATE_TAG,
-                  stateUpdateCodec
-                    .encode(chandata.lcss.get.stateUpdate)
-                    .require
-                    .toByteVector
-                )
-
-                Active()
-              }
             }
-            case None => {
-              Main.log(
-                s"failed to find channel data for $peerId when Opening. this should never happen."
-              )
-              Inactive()
-            }
+
+            // and send our state update
+            Main.node.sendCustomMessage(
+              peerId,
+              HC_STATE_UPDATE_TAG,
+              stateUpdateCodec
+                .encode(lcss.stateUpdate)
+                .require
+                .toByteVector
+            )
+
+            Active()
           }
         }
         case _ => stay

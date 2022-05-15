@@ -206,11 +206,15 @@ class CLN {
           ByteVector.fromValidHex(onion("next_onion").str)
 
         (for {
-          chandata <- Database.data.channels.values
-            .find(_.shortChannelId.toString == onion("short_channel_id").str)
-          peer = ChannelMaster.getChannelActor(chandata.peerId.toString)
+          (peerId, chandata) <- Database.data.channels
+            .find((peerId: String, _: ChannelData) =>
+              ChannelMaster.getChannelId(peerId).toString == onion(
+                "short_channel_id"
+              ).str
+            )
+          peer = ChannelMaster.getChannelActor(peerId)
           msg = UpdateAddHtlc(
-            channelId = chandata.channelId,
+            channelId = ChannelMaster.getChannelId(peerId),
             id = 0L.toULong,
             amountMsat = MilliSatoshi(amount),
             paymentHash = paymentHash,

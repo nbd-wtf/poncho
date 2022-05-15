@@ -1,3 +1,5 @@
+import java.io.ByteArrayInputStream
+import java.nio.ByteOrder
 import scala.annotation.tailrec
 import scodec.bits.ByteVector
 
@@ -61,4 +63,28 @@ object Utils {
       htlcMaximumMsat = Some(Main.ourInit.channelCapacityMsat)
     )
   }
+
+  def getShortChannelId(peer1: ByteVector, peer2: ByteVector): ShortChannelId =
+    ShortChannelId(
+      List
+        .fill(8)(
+          Protocol.uint64(
+            new ByteArrayInputStream(
+              pubkeysCombined(peer1, peer2).toArray
+            ),
+            ByteOrder.BIG_ENDIAN
+          )
+        )
+        .sum
+    )
+
+  def getChannelId(peer1: ByteVector, peer2: ByteVector): ByteVector32 =
+    Crypto.sha256(pubkeysCombined(peer1, peer2))
+
+  def pubkeysCombined(
+      pubkey1: ByteVector,
+      pubkey2: ByteVector
+  ): ByteVector =
+    if (Utils.isLessThan(pubkey1, pubkey2)) pubkey1 ++ pubkey2
+    else pubkey2 ++ pubkey1
 }
