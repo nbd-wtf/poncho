@@ -79,9 +79,9 @@ class Channel(peerId: String)(implicit
             refundScriptPubKey = invoke.refundScriptPubKey,
             initHostedChannel = Main.ourInit,
             blockDay = msg.blockDay,
-            localBalanceMsat = Main.ourInit.initialClientBalanceMsat,
-            remoteBalanceMsat =
+            localBalanceMsat =
               Main.ourInit.channelCapacityMsat - Main.ourInit.initialClientBalanceMsat,
+            remoteBalanceMsat = Main.ourInit.initialClientBalanceMsat,
             localUpdates = 0L,
             remoteUpdates = 0L,
             incomingHtlcs = Nil,
