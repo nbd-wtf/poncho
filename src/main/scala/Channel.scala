@@ -51,7 +51,7 @@ class Channel(peerId: String)(implicit
                   .require
                   .toByteVector
               )
-              Opening(invoke = msg)
+              Opening(refundScriptPubKey = msg.refundScriptPubKey)
             }
             case None => {
               // reply saying we accept the invoke
@@ -64,19 +64,19 @@ class Channel(peerId: String)(implicit
                   .toByteVector
               )
 
-              Opening(invoke = msg)
+              Opening(refundScriptPubKey = msg.refundScriptPubKey)
             }
           }
         }
         case _ => stay
       })
-  case class Opening(invoke: InvokeHostedChannel)
+  case class Opening(refundScriptPubKey: ByteVector)
       extends State({
         case Recv(msg: StateUpdate) => {
           // build last cross-signed state
           val lcss = LastCrossSignedState(
             isHost = true,
-            refundScriptPubKey = invoke.refundScriptPubKey,
+            refundScriptPubKey = refundScriptPubKey,
             initHostedChannel = Main.ourInit,
             blockDay = msg.blockDay,
             localBalanceMsat =
