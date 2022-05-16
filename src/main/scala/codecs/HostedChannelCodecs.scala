@@ -4,8 +4,8 @@ import scodec.codecs._
 import scodec.bits._
 import scodec.{Attempt, Err}
 import codecs.CommonCodecs._
-import codecs.LightningMessageCodecs._
 import codecs.HostedChannelTags._
+import codecs.LightningMessageCodecs._
 
 object HostedChannelCodecs {
   val invokeHostedChannelCodec = (
@@ -109,7 +109,7 @@ object HostedChannelCodecs {
   def decodeServerMessage(
       tag: Int,
       data: ByteVector
-  ): Attempt[HostedServerMessage] = {
+  ): Attempt[HostedServerMessage[_]] = {
     val bitVector = data.toBitVector
     val decodeAttempt = tag match {
       case HC_STATE_UPDATE_TAG   => stateUpdateCodec.decode(bitVector)
@@ -137,12 +137,12 @@ object HostedChannelCodecs {
   def decodeClientMessage(
       tag: Int,
       data: ByteVector
-  ): Attempt[HostedClientMessage] = {
+  ): Attempt[HostedClientMessage[_]] = {
     val bitVector = data.toBitVector
     val decodeAttempt = tag match {
-      case HC_STATE_UPDATE_TAG   => stateUpdateCodec.decode(bitVector)
-      case HC_RESIZE_CHANNEL_TAG => resizeChannelCodec.decode(bitVector)
-      case HC_ASK_BRANDING_INFO  => askBrandingInfoCodec.decode(bitVector)
+      case HC_STATE_UPDATE_TAG      => stateUpdateCodec.decode(bitVector)
+      case HC_RESIZE_CHANNEL_TAG    => resizeChannelCodec.decode(bitVector)
+      case HC_ASK_BRANDING_INFO_TAG => askBrandingInfoCodec.decode(bitVector)
       case HC_INVOKE_HOSTED_CHANNEL_TAG =>
         invokeHostedChannelCodec.decode(bitVector)
       case HC_LAST_CROSS_SIGNED_STATE_TAG =>

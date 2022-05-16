@@ -11,15 +11,14 @@ import upickle.default.{ReadWriter, macroRW}
 
 import codecs._
 import crypto.Crypto
-import codecs.HostedChannelTags._
 import codecs.HostedChannelCodecs._
 import codecs.LightningMessageCodecs._
 import scodec.bits.ByteVector
 import scodec.codecs._
 
 sealed trait Msg
-case class Send(msg: HostedServerMessage) extends Msg
-case class Recv(msg: HostedClientMessage) extends Msg
+case class Send(msg: HostedServerMessage[_]) extends Msg
+case class Recv(msg: HostedClientMessage[_]) extends Msg
 
 class Channel(peerId: String)(implicit
     ac: castor.Context
@@ -40,33 +39,31 @@ class Channel(peerId: String)(implicit
   case class Inactive()
       extends State({
         case Recv(msg: InvokeHostedChannel) => {
+          // check chain hash
           if (msg.chainHash != Main.chainHash) {
             Main.log(
               s"[${peerId}] sent InvokeHostedChannel for wrong chain: ${msg.chainHash} (current: ${Main.chainHash})"
             )
+
+            val err = Error(
+              ChannelMaster.getChannelId(peerId),
+              s"invalid chainHash (local=${Main.chainHash} remote=${msg.chainHash})"
+            )
             Main.node.sendCustomMessage(
               peerId,
-              HC_ERROR_TAG,
-              errorCodec
-                .encode(
-                  Error(
-                    ChannelMaster.getChannelId(peerId),
-                    s"invalid chainHash (local=${Main.chainHash} remote=${msg.chainHash})"
-                  )
-                )
-                .require
-                .toByteVector
+              err.tag,
+              err.codec.encode(err).require.toByteVector
             )
             stay
-
           } else {
+            // chain hash is ok, proceed
             Database.data.channels.get(peerId) match {
               case Some(chandata) => {
                 // channel already exists, so send last cross-signed-state
                 Main.node.sendCustomMessage(
                   peerId,
-                  HC_LAST_CROSS_SIGNED_STATE_TAG,
-                  lastCrossSignedStateCodec
+                  chandata.lcss.tag,
+                  chandata.lcss.codec
                     .encode(chandata.lcss)
                     .require
                     .toByteVector
@@ -77,8 +74,8 @@ class Channel(peerId: String)(implicit
                 // reply saying we accept the invoke
                 Main.node.sendCustomMessage(
                   peerId,
-                  HC_INIT_HOSTED_CHANNEL_TAG,
-                  initHostedChannelCodec
+                  Main.ourInit.tag,
+                  Main.ourInit.codec
                     .encode(Main.ourInit)
                     .require
                     .toByteVector
@@ -113,41 +110,41 @@ class Channel(peerId: String)(implicit
             .withLocalSigOfRemote(Main.node.getPrivateKey())
 
           // check if everything is ok
-          if ((msg.blockDay - Main.currentBlockDay).abs > 1)
+          if ((msg.blockDay - Main.currentBlockDay).abs > 1) {
             Main.log(
               s"[${peerId}] sent StateUpdate with wrong blockday: ${msg.blockDay} (current: ${Main.currentBlockDay})"
             )
+            val err =
+              Error(
+                ChannelMaster.getChannelId(peerId),
+                ErrorCodes.ERR_HOSTED_WRONG_BLOCKDAY
+              )
             Main.node.sendCustomMessage(
               peerId,
-              HC_ERROR_TAG,
-              errorCodec
-                .encode(
-                  Error(
-                    ChannelMaster.getChannelId(peerId),
-                    ErrorCodes.ERR_HOSTED_WRONG_BLOCKDAY
-                  )
-                )
+              err.tag,
+              err.codec
+                .encode(err)
                 .require
                 .toByteVector
             )
             Inactive()
-          else if (!lcss.verifyRemoteSig(ByteVector.fromValidHex(peerId)))
+          } else if (!lcss.verifyRemoteSig(ByteVector.fromValidHex(peerId))) {
             Main.log(s"[${peerId}] sent StateUpdate with wrong signature.")
+            val err =
+              Error(
+                ChannelMaster.getChannelId(peerId),
+                ErrorCodes.ERR_HOSTED_WRONG_REMOTE_SIG
+              )
             Main.node.sendCustomMessage(
               peerId,
-              HC_ERROR_TAG,
-              errorCodec
-                .encode(
-                  Error(
-                    ChannelMaster.getChannelId(peerId),
-                    ErrorCodes.ERR_HOSTED_WRONG_REMOTE_SIG
-                  )
-                )
+              err.tag,
+              err.codec
+                .encode(err)
                 .require
                 .toByteVector
             )
             Inactive()
-          else {
+          } else {
             // all good, save this channel to the database and consider it opened
             Database.update { data =>
               {
@@ -168,8 +165,8 @@ class Channel(peerId: String)(implicit
             // and send our state update
             Main.node.sendCustomMessage(
               peerId,
-              HC_STATE_UPDATE_TAG,
-              stateUpdateCodec
+              lcss.stateUpdate.tag,
+              lcss.stateUpdate.codec
                 .encode(lcss.stateUpdate)
                 .require
                 .toByteVector
