@@ -178,22 +178,41 @@ class Channel(peerId: String)(implicit
         case _ => stay
       })
   case class Active()
-      extends State({
-        case Send(msg: UpdateAddHtlc) => {
-          Active()
+      extends State({ input =>
+        // channel is active, which means we must have a database entry necessarily
+        {
+          val chandata = Database.data.channels.get(peerId).get
+          input match {
+            case Recv(msg: InvokeHostedChannel) => {
+              // channel already exists, so send last cross-signed-state
+              Main.node.sendCustomMessage(
+                peerId,
+                chandata.lcss.tag,
+                chandata.lcss.codec
+                  .encode(chandata.lcss)
+                  .require
+                  .toByteVector
+              )
+              stay
+            }
+
+            case Send(msg: UpdateAddHtlc) => {
+              Active()
+            }
+
+            case Recv(msg: AskBrandingInfo)         => stay
+            case Recv(msg: ResizeChannel)           => stay
+            case Recv(msg: UpdateAddHtlc)           => stay
+            case Recv(msg: UpdateFailHtlc)          => stay
+            case Recv(msg: UpdateFulfillHtlc)       => stay
+            case Recv(msg: UpdateFailMalformedHtlc) => stay
+
+            // these are only for PHC
+            case Recv(msg: ChannelUpdate)       => stay
+            case Recv(msg: ChannelAnnouncement) => stay
+
+            case _ => stay
+          }
         }
-
-        case Recv(msg: AskBrandingInfo)         => stay
-        case Recv(msg: ResizeChannel)           => stay
-        case Recv(msg: UpdateAddHtlc)           => stay
-        case Recv(msg: UpdateFailHtlc)          => stay
-        case Recv(msg: UpdateFulfillHtlc)       => stay
-        case Recv(msg: UpdateFailMalformedHtlc) => stay
-
-        // these are only for PHC
-        case Recv(msg: ChannelUpdate)       => stay
-        case Recv(msg: ChannelAnnouncement) => stay
-
-        case _ => stay
       })
 }
