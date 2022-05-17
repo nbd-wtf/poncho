@@ -159,6 +159,75 @@ class Channel(peerId: String)(implicit
               stay
             }
 
+            case Recv(msg: LastCrossSignedState) => {
+              val isLocalSigOk = msg.verifyRemoteSig(Main.node.ourPubKey)
+              val isRemoteSigOk =
+                msg.reverse.verifyRemoteSig(ByteVector.fromValidHex(peerId))
+
+              if (!isLocalSigOk || !isRemoteSigOk) {
+                val err = if (!isLocalSigOk) {
+                  Main.log(
+                    s"[${peerId}] sent LastCrossSignedState with a signature that isn't ours"
+                  )
+                  Error(
+                    ChannelMaster.getChannelId(peerId),
+                    ErrorCodes.ERR_HOSTED_WRONG_LOCAL_SIG
+                  )
+                } else {
+                  Main.log(
+                    s"[${peerId}] sent LastCrossSignedState with an invalid signature"
+                  )
+                  Error(
+                    ChannelMaster.getChannelId(peerId),
+                    ErrorCodes.ERR_HOSTED_WRONG_REMOTE_SIG
+                  )
+                }
+                Main.node.sendCustomMessage(peerId, err)
+                Database.update { data =>
+                  {
+                    data
+                      .modify(_.channels.at(peerId).isActive)
+                      .setTo(false)
+                  }
+                }
+                Inactive()
+              } else {
+                val lcssMostRecent = if (
+                  (chandata.lcss.localUpdates + chandata.lcss.remoteUpdates) >=
+                    (msg.remoteUpdates + msg.localUpdates)
+                ) {
+                  // we are even or ahead
+                  chandata.lcss
+                } else {
+                  // we are behind
+                  Main.log(
+                    s"[${peerId}] sent LastCrossSignedState showing that we are behind: " +
+                      s"local=${chandata.lcss.localUpdates}/${chandata.lcss.remoteUpdates} " +
+                      s"remote=${msg.remoteUpdates}/${msg.localUpdates}"
+                  )
+
+                  // save their lcss here
+                  Database.update { data =>
+                    {
+                      data
+                        .modify(_.channels.at(peerId).lcss)
+                        .setTo(msg)
+                    }
+                  }
+
+                  msg
+                }
+
+                // all good, send the most recent lcss again and then the channel update
+                Main.node.sendCustomMessage(peerId, lcssMostRecent)
+                Main.node.sendCustomMessage(
+                  peerId,
+                  ChannelMaster.makeChannelUpdate(peerId, lcssMostRecent)
+                )
+                stay
+              }
+            }
+
             case Send(msg: UpdateAddHtlc) => {
               Active()
             }
