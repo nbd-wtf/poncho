@@ -15,13 +15,8 @@ import codecs.HostedChannelTags._
 import codecs.HostedChannelCodecs._
 import codecs.LightningMessageCodecs._
 
-sealed trait HostedMessage[A] {
-  def tag: Int
-  def codec: Codec[A]
-}
-
-sealed trait HostedClientMessage[A] extends HostedMessage[A]
-sealed trait HostedServerMessage[A] extends HostedMessage[A]
+sealed trait HostedClientMessage
+sealed trait HostedServerMessage
 sealed trait HostedGossipMessage
 sealed trait HostedPreimageMessage
 
@@ -29,11 +24,8 @@ case class InvokeHostedChannel(
     chainHash: ByteVector32,
     refundScriptPubKey: ByteVector,
     secret: ByteVector = ByteVector.empty
-) extends HostedClientMessage[InvokeHostedChannel] {
+) extends HostedClientMessage {
   val finalSecret: ByteVector = secret.take(128)
-
-  def tag = HC_INVOKE_HOSTED_CHANNEL_TAG
-  def codec = invokeHostedChannelCodec
 }
 
 case class InitHostedChannel(
@@ -43,19 +35,13 @@ case class InitHostedChannel(
     channelCapacityMsat: MilliSatoshi,
     initialClientBalanceMsat: MilliSatoshi,
     features: List[Int] = Nil
-) extends HostedServerMessage[InitHostedChannel] {
-  def tag = HC_INIT_HOSTED_CHANNEL_TAG
-  def codec = initHostedChannelCodec
-}
+) extends HostedServerMessage
 
 case class HostedChannelBranding(
     rgbColor: Color,
     pngIcon: Option[ByteVector],
     contactInfo: String
-) extends HostedServerMessage[HostedChannelBranding] {
-  def tag = HC_HOSTED_CHANNEL_BRANDING_TAG
-  def codec = hostedChannelBrandingCodec
-}
+) extends HostedServerMessage
 
 case class LastCrossSignedState(
     isHost: Boolean,
@@ -70,11 +56,8 @@ case class LastCrossSignedState(
     outgoingHtlcs: List[UpdateAddHtlc],
     remoteSigOfLocal: ByteVector64,
     localSigOfRemote: ByteVector64
-) extends HostedServerMessage[LastCrossSignedState]
-    with HostedClientMessage[LastCrossSignedState] {
-  def tag = HC_LAST_CROSS_SIGNED_STATE_TAG
-  def codec = lastCrossSignedStateCodec
-
+) extends HostedServerMessage
+    with HostedClientMessage {
   lazy val reverse: LastCrossSignedState =
     copy(
       isHost = !isHost,
@@ -147,11 +130,8 @@ case class StateUpdate(
     localUpdates: Long,
     remoteUpdates: Long,
     localSigOfRemoteLCSS: ByteVector64
-) extends HostedServerMessage[StateUpdate]
-    with HostedClientMessage[StateUpdate] {
-  def tag = HC_STATE_UPDATE_TAG
-  def codec = stateUpdateCodec
-}
+) extends HostedServerMessage
+    with HostedClientMessage
 
 case class StateOverride(
     blockDay: Long,
@@ -159,10 +139,7 @@ case class StateOverride(
     localUpdates: Long,
     remoteUpdates: Long,
     localSigOfRemoteLCSS: ByteVector64
-) extends HostedServerMessage[StateOverride] {
-  def tag = HC_STATE_OVERRIDE_TAG
-  def codec = stateOverrideCodec
-}
+) extends HostedServerMessage
 
 case class AnnouncementSignature(
     nodeSignature: ByteVector64,
@@ -172,10 +149,7 @@ case class AnnouncementSignature(
 case class ResizeChannel(
     newCapacity: Satoshi,
     clientSig: ByteVector64 = ByteVector64.Zeroes
-) extends HostedClientMessage[ResizeChannel] {
-  def tag = HC_RESIZE_CHANNEL_TAG
-  def codec = resizeChannelCodec
-
+) extends HostedClientMessage {
   def isRemoteResized(remote: LastCrossSignedState): Boolean =
     newCapacity.toMilliSatoshi == remote.initHostedChannel.channelCapacityMsat
   def sign(priv: ByteVector32): ResizeChannel = ResizeChannel(
@@ -193,48 +167,28 @@ case class ResizeChannel(
   lazy val newCapacityMsatU64: ULong = newCapacity.toMilliSatoshi.toLong.toULong
 }
 
-case class AskBrandingInfo(chainHash: ByteVector32)
-    extends HostedClientMessage[AskBrandingInfo] {
-  def tag = HC_ASK_BRANDING_INFO_TAG
-  def codec = askBrandingInfoCodec
-}
+case class AskBrandingInfo(chainHash: ByteVector32) extends HostedClientMessage
 
-// PHC
 case class QueryPublicHostedChannels(chainHash: ByteVector32)
-    extends HostedGossipMessage {
-  def tag = HC_QUERY_PUBLIC_HOSTED_CHANNELS_TAG
-  def codec = queryPublicHostedChannelsCodec
-}
+    extends HostedGossipMessage {}
 
 case class ReplyPublicHostedChannelsEnd(chainHash: ByteVector32)
-    extends HostedGossipMessage {
-  def tag = HC_REPLY_PUBLIC_HOSTED_CHANNELS_END_TAG
-  def codec = replyPublicHostedChannelsEndCodec
-}
+    extends HostedGossipMessage {}
 
 // Queries
 case class QueryPreimages(hashes: List[ByteVector32] = Nil)
-    extends HostedPreimageMessage {
-  def tag = HC_QUERY_PREIMAGES_TAG
-  def codec = queryPreimagesCodec
-}
+    extends HostedPreimageMessage {}
 
 case class ReplyPreimages(preimages: List[ByteVector32] = Nil)
-    extends HostedPreimageMessage {
-  def tag = HC_REPLY_PREIMAGES_TAG
-  def codec = replyPreimagesCodec
-}
+    extends HostedPreimageMessage {}
 
 // BOLT messages (used with nonstandard tag numbers)
 case class Error(
     channelId: ByteVector32,
     data: ByteVector,
     tlvStream: TlvStream[ErrorTlv] = TlvStream.empty
-) extends HostedClientMessage[Error]
-    with HostedServerMessage[Error] {
-  def tag = HC_ERROR_TAG
-  def codec = errorCodec
-
+) extends HostedClientMessage
+    with HostedServerMessage {
   def toAscii: String = if (data.toArray.forall(ch => ch >= 32 && ch < 127))
     new String(data.toArray, StandardCharsets.US_ASCII)
   else "n/a"
@@ -261,33 +215,24 @@ case class UpdateAddHtlc(
     cltvExpiry: CltvExpiry,
     onionRoutingPacket: ByteVector,
     tlvStream: TlvStream[UpdateAddHtlcTlv] = TlvStream.empty
-) extends HostedClientMessage[UpdateAddHtlc]
-    with HostedServerMessage[UpdateAddHtlc] {
-  def tag = HC_UPDATE_ADD_HTLC_TAG
-  def codec = updateAddHtlcCodec
-}
+) extends HostedClientMessage
+    with HostedServerMessage
 
 case class UpdateFulfillHtlc(
     channelId: ByteVector32,
     id: ULong,
     paymentPreimage: ByteVector32,
     tlvStream: TlvStream[UpdateFulfillHtlcTlv] = TlvStream.empty
-) extends HostedClientMessage[UpdateFulfillHtlc]
-    with HostedServerMessage[UpdateFulfillHtlc] {
-  def tag = HC_UPDATE_FULFILL_HTLC_TAG
-  def codec = updateFulfillHtlcCodec
-}
+) extends HostedClientMessage
+    with HostedServerMessage
 
 case class UpdateFailHtlc(
     channelId: ByteVector32,
     id: ULong,
     reason: ByteVector,
     tlvStream: TlvStream[UpdateFailHtlcTlv] = TlvStream.empty
-) extends HostedClientMessage[UpdateFailHtlc]
-    with HostedServerMessage[UpdateFailHtlc] {
-  def tag = HC_UPDATE_FAIL_HTLC_TAG
-  def codec = updateFailHtlcCodec
-}
+) extends HostedClientMessage
+    with HostedServerMessage
 
 case class UpdateFailMalformedHtlc(
     channelId: ByteVector32,
@@ -295,11 +240,8 @@ case class UpdateFailMalformedHtlc(
     onionHash: ByteVector32,
     failureCode: Int,
     tlvStream: TlvStream[UpdateFailMalformedHtlcTlv] = TlvStream.empty
-) extends HostedClientMessage[UpdateFailMalformedHtlc]
-    with HostedServerMessage[UpdateFailMalformedHtlc] {
-  def tag = HC_UPDATE_FAIL_MALFORMED_HTLC_TAG
-  def codec = updateFailMalformedHtlcCodec
-}
+) extends HostedClientMessage
+    with HostedServerMessage
 
 case class ChannelAnnouncement(
     nodeSignature1: ByteVector64,
@@ -314,12 +256,7 @@ case class ChannelAnnouncement(
     bitcoinKey1: ByteVector,
     bitcoinKey2: ByteVector,
     tlvStream: TlvStream[ChannelAnnouncementTlv] = TlvStream.empty
-) extends HostedGossipMessage {
-  def gossipTag = PHC_ANNOUNCE_GOSSIP_TAG
-  def syncTag = PHC_ANNOUNCE_SYNC_TAG
-  def codec = channelAnnouncementCodec
-}
-
+) extends HostedGossipMessage
 case class ChannelUpdate(
     signature: ByteVector64,
     chainHash: ByteVector32,
@@ -332,13 +269,9 @@ case class ChannelUpdate(
     feeProportionalMillionths: Long,
     htlcMaximumMsat: Option[MilliSatoshi],
     tlvStream: TlvStream[ChannelUpdateTlv] = TlvStream.empty
-) extends HostedServerMessage[ChannelUpdate]
-    with HostedClientMessage[ChannelUpdate]
+) extends HostedServerMessage
+    with HostedClientMessage
     with HostedGossipMessage {
-  def tag = PHC_UPDATE_SYNC_TAG
-  def gossipTag = PHC_UPDATE_GOSSIP_TAG
-  def codec = channelUpdateCodec
-
   def messageFlags: Byte = if (htlcMaximumMsat.isDefined) 1 else 0
   def toStringShort: String =
     s"cltvExpiryDelta=$cltvExpiryDelta,feeBase=$feeBaseMsat,feeProportionalMillionths=$feeProportionalMillionths"

@@ -107,13 +107,13 @@ class CLN {
 
   def sendCustomMessage(
       peerId: String,
-      message: HostedMessage[_]
+      message: HostedServerMessage | HostedClientMessage
   ): Unit = {
-    val encoded = message.codec
-      .encode(message)
-      .require
-      .toByteVector
-    val tagHex = uint16.encode(message.tag).toOption.get.toByteVector.toHex
+    val (tag, encoded) = message match {
+      case m: HostedServerMessage => encodeServerMessage(m)
+      case m: HostedClientMessage => encodeClientMessage(m)
+    }
+    val tagHex = uint16.encode(tag).toOption.get.toByteVector.toHex
     val lengthHex = uint16
       .encode(encoded.size.toInt)
       .toOption

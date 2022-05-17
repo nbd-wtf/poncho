@@ -17,8 +17,8 @@ import scodec.bits.ByteVector
 import scodec.codecs._
 
 sealed trait Msg
-case class Send(msg: HostedServerMessage[_]) extends Msg
-case class Recv(msg: HostedClientMessage[_]) extends Msg
+case class Send(msg: HostedServerMessage) extends Msg
+case class Recv(msg: HostedClientMessage) extends Msg
 
 class Channel(peerId: String)(implicit
     ac: castor.Context
