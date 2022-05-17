@@ -107,25 +107,28 @@ class CLN {
 
   def sendCustomMessage(
       peerId: String,
-      tag: Int,
-      message: ByteVector
+      message: HostedMessage[_]
   ): Unit = {
-    val tagHex = uint16.encode(tag).toOption.get.toByteVector.toHex
+    val encoded = message.codec
+      .encode(message)
+      .require
+      .toByteVector
+    val tagHex = uint16.encode(message.tag).toOption.get.toByteVector.toHex
     val lengthHex = uint16
-      .encode(message.size.toInt)
+      .encode(encoded.size.toInt)
       .toOption
       .get
       .toByteVector
       .toHex
-    val msg = tagHex + lengthHex + message.toHex
+    val payload = tagHex + lengthHex + encoded.toHex
 
-    Main.log(s"sending [$tag] $msg to $peerId")
+    Main.log(s"  ::> sending $message --> $peerId")
 
     rpc(
       "sendcustommsg",
       ujson.Obj(
         "node_id" -> peerId,
-        "msg" -> msg
+        "msg" -> payload
       )
     )
       .onComplete {

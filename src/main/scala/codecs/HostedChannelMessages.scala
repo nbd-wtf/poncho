@@ -15,16 +15,13 @@ import codecs.HostedChannelTags._
 import codecs.HostedChannelCodecs._
 import codecs.LightningMessageCodecs._
 
-sealed trait HostedClientMessage[A] {
+sealed trait HostedMessage[A] {
   def tag: Int
   def codec: Codec[A]
 }
 
-sealed trait HostedServerMessage[A] {
-  def tag: Int
-  def codec: Codec[A]
-}
-
+sealed trait HostedClientMessage[A] extends HostedMessage[A]
+sealed trait HostedServerMessage[A] extends HostedMessage[A]
 sealed trait HostedGossipMessage
 sealed trait HostedPreimageMessage
 
@@ -335,9 +332,11 @@ case class ChannelUpdate(
     feeProportionalMillionths: Long,
     htlcMaximumMsat: Option[MilliSatoshi],
     tlvStream: TlvStream[ChannelUpdateTlv] = TlvStream.empty
-) extends HostedGossipMessage {
+) extends HostedServerMessage[ChannelUpdate]
+    with HostedClientMessage[ChannelUpdate]
+    with HostedGossipMessage {
+  def tag = PHC_UPDATE_SYNC_TAG
   def gossipTag = PHC_UPDATE_GOSSIP_TAG
-  def syncTag = PHC_UPDATE_SYNC_TAG
   def codec = channelUpdateCodec
 
   def messageFlags: Byte = if (htlcMaximumMsat.isDefined) 1 else 0

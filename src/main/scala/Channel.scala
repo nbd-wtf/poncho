@@ -44,15 +44,12 @@ class Channel(peerId: String)(implicit
             Main.log(
               s"[${peerId}] sent InvokeHostedChannel for wrong chain: ${msg.chainHash} (current: ${Main.chainHash})"
             )
-
-            val err = Error(
-              ChannelMaster.getChannelId(peerId),
-              s"invalid chainHash (local=${Main.chainHash} remote=${msg.chainHash})"
-            )
             Main.node.sendCustomMessage(
               peerId,
-              err.tag,
-              err.codec.encode(err).require.toByteVector
+              Error(
+                ChannelMaster.getChannelId(peerId),
+                s"invalid chainHash (local=${Main.chainHash} remote=${msg.chainHash})"
+              )
             )
             stay
           } else {
@@ -60,27 +57,12 @@ class Channel(peerId: String)(implicit
             Database.data.channels.get(peerId) match {
               case Some(chandata) => {
                 // channel already exists, so send last cross-signed-state
-                Main.node.sendCustomMessage(
-                  peerId,
-                  chandata.lcss.tag,
-                  chandata.lcss.codec
-                    .encode(chandata.lcss)
-                    .require
-                    .toByteVector
-                )
+                Main.node.sendCustomMessage(peerId, chandata.lcss)
                 Opening(refundScriptPubKey = msg.refundScriptPubKey)
               }
               case None => {
                 // reply saying we accept the invoke
-                Main.node.sendCustomMessage(
-                  peerId,
-                  Main.ourInit.tag,
-                  Main.ourInit.codec
-                    .encode(Main.ourInit)
-                    .require
-                    .toByteVector
-                )
-
+                Main.node.sendCustomMessage(peerId, Main.ourInit)
                 Opening(refundScriptPubKey = msg.refundScriptPubKey)
               }
             }
@@ -114,34 +96,22 @@ class Channel(peerId: String)(implicit
             Main.log(
               s"[${peerId}] sent StateUpdate with wrong blockday: ${msg.blockDay} (current: ${Main.currentBlockDay})"
             )
-            val err =
+            Main.node.sendCustomMessage(
+              peerId,
               Error(
                 ChannelMaster.getChannelId(peerId),
                 ErrorCodes.ERR_HOSTED_WRONG_BLOCKDAY
               )
-            Main.node.sendCustomMessage(
-              peerId,
-              err.tag,
-              err.codec
-                .encode(err)
-                .require
-                .toByteVector
             )
             Inactive()
           } else if (!lcss.verifyRemoteSig(ByteVector.fromValidHex(peerId))) {
             Main.log(s"[${peerId}] sent StateUpdate with wrong signature.")
-            val err =
+            Main.node.sendCustomMessage(
+              peerId,
               Error(
                 ChannelMaster.getChannelId(peerId),
                 ErrorCodes.ERR_HOSTED_WRONG_REMOTE_SIG
               )
-            Main.node.sendCustomMessage(
-              peerId,
-              err.tag,
-              err.codec
-                .encode(err)
-                .require
-                .toByteVector
             )
             Inactive()
           } else {
@@ -162,15 +132,15 @@ class Channel(peerId: String)(implicit
               }
             }
 
-            // and send our state update
-            Main.node.sendCustomMessage(
-              peerId,
-              lcss.stateUpdate.tag,
-              lcss.stateUpdate.codec
-                .encode(lcss.stateUpdate)
-                .require
-                .toByteVector
-            )
+            // send our signed state update
+            Main.node.sendCustomMessage(peerId, lcss.stateUpdate)
+
+            // send a channel update
+            Main.node
+              .sendCustomMessage(
+                peerId,
+                ChannelMaster.makeChannelUpdate(peerId, lcss)
+              )
 
             Active()
           }
@@ -179,20 +149,13 @@ class Channel(peerId: String)(implicit
       })
   case class Active()
       extends State({ input =>
-        // channel is active, which means we must have a database entry necessarily
         {
+          // channel is active, which means we must have a database entry necessarily
           val chandata = Database.data.channels.get(peerId).get
           input match {
             case Recv(msg: InvokeHostedChannel) => {
               // channel already exists, so send last cross-signed-state
-              Main.node.sendCustomMessage(
-                peerId,
-                chandata.lcss.tag,
-                chandata.lcss.codec
-                  .encode(chandata.lcss)
-                  .require
-                  .toByteVector
-              )
+              Main.node.sendCustomMessage(peerId, chandata.lcss)
               stay
             }
 
