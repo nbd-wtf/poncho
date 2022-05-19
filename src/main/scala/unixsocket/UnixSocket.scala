@@ -2,7 +2,7 @@ package unixsocket
 
 import scala.Byte.byte2int
 import scala.collection.mutable.HashSet
-import scala.concurrent.{Promise}
+import scala.concurrent.Promise
 import scala.scalanative.unsafe._
 import scala.scalanative.libc.{stdlib, string}
 import scalanative.unsigned.UnsignedRichLong

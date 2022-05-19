@@ -66,6 +66,20 @@ class CLN {
     )
   }
 
+  def answer(req: ujson.Value)(errorMessage: String): Unit = {
+    System.out.println(
+      ujson.write(
+        ujson.Obj(
+          "jsonrpc" -> "2.0",
+          "id" -> req("id").num,
+          "error" -> ujson.Obj(
+            "message" -> errorMessage
+          )
+        )
+      )
+    )
+  }
+
   def getPrivateKey(): PrivateKey = {
     val salt = Array[UByte](0.toByte.toUByte)
     val info = "nodeid".getBytes().map(_.toUByte)
@@ -145,7 +159,8 @@ class CLN {
   def handleRPC(line: String): Unit = {
     val req = ujson.read(line)
     val data = req("params")
-    val reply = answer(req)
+    def reply(result: ujson.Obj) = answer(req)(result)
+    def replyError(err: String) = answer(req)(err)
 
     req("method").str match {
       case "getmanifest" =>
@@ -163,7 +178,13 @@ class CLN {
               ujson.Obj("name" -> "custommsg"),
               ujson.Obj("name" -> "htlc_accepted")
             ),
-            "rpcmethods" -> ujson.Arr(),
+            "rpcmethods" -> ujson.Arr(
+              ujson.Obj(
+                "name" -> "hc-override",
+                "usage" -> "peerid msatoshi",
+                "description" -> "Propose overriding the state of the channel with {peerid} with the next local balance being equal to {msatoshi}."
+              )
+            ),
             "notifications" -> ujson.Arr(),
             "featurebits" -> ujson.Obj(
               // "init" -> 32972 /* hosted_channels */ .toHexString,
@@ -205,7 +226,7 @@ class CLN {
           case Left(err) => Main.log(s"$err")
           case Right(msg) => {
             val peer = ChannelMaster.getChannelActor(peerId)
-            peer.send(Recv(msg))
+            peer.send(msg)
           }
         }
       }
@@ -226,8 +247,8 @@ class CLN {
           ) match {
           case Some((peerId, chandata)) if chandata.isActive => {
             val peer = ChannelMaster.getChannelActor(peerId)
-            peer.send(
-              Send(
+            peer
+              .addHTLC(
                 UpdateAddHtlc(
                   channelId = ChannelMaster.getChannelId(peerId),
                   id = 0L.toULong,
@@ -235,36 +256,45 @@ class CLN {
                   paymentHash = hash,
                   cltvExpiry = cltv,
                   onionRoutingPacket = nextOnion
-                ),
-                {
-                  case Some(Right(preimage)) => {
-                    Main.log(s"[htlc] channel $scid succeed in handling $hash")
-                    reply(
-                      ujson
-                        .Obj(
-                          "result" -> "resolve",
-                          "payment_key" -> preimage.toString
-                        )
-                    )
-                  }
-                  case Some(Left(failureOnion)) => {
-                    Main.log(s"[htlc] channel $scid failed $hash")
-                    reply(
-                      ujson.Obj(
-                        "result" -> "resolve",
-                        "failure_onion" -> failureOnion.toString
-                      )
-                    )
-                  }
-                  case None => {
-                    Main.log(
-                      s"[htlc] channel $scid decided to not handle $hash"
-                    )
-                    reply(ujson.Obj("result" -> "continue"))
-                  }
-                }
+                )
               )
-            )
+              .future
+              .foreach {
+                case Some(Right(preimage)) => {
+                  Main.log(s"[htlc] channel $scid succeed in handling $hash")
+                  reply(
+                    ujson
+                      .Obj(
+                        "result" -> "resolve",
+                        "payment_key" -> preimage.toString
+                      )
+                  )
+                }
+                case Some(Left(FailureOnion(onion))) => {
+                  Main.log(s"[htlc] channel $scid failed $hash")
+                  reply(
+                    ujson.Obj(
+                      "result" -> "fail",
+                      "failure_onion" -> onion.toString
+                    )
+                  )
+                }
+                case Some(Left(FailureCode(code))) => {
+                  Main.log(s"[htlc] we've failed $hash for channel $scid")
+                  reply(
+                    ujson.Obj(
+                      "result" -> "fail",
+                      "failure_message" -> code
+                    )
+                  )
+                }
+                case None => {
+                  Main.log(
+                    s"[htlc] channel $scid decided to not handle $hash"
+                  )
+                  reply(ujson.Obj("result" -> "continue"))
+                }
+              }
           }
           case Some((_, chandata)) => {
             Main.log(
@@ -294,6 +324,26 @@ class CLN {
       case "disconnect" => {
         val id = data("id").str
         Main.log(s"$id disconnected")
+      }
+
+      // custom rpc methods
+      case "hc-override" => {
+        val params = data match {
+          case _: ujson.Obj =>
+            Some((data("peerid").strOpt, data("msatoshi").numOpt))
+          case _: ujson.Arr =>
+            Some((data(0).strOpt, data(0).numOpt))
+          case _ => None
+        } match {
+          case Some(Some(peerId), Some(msatoshi)) => {
+            ChannelMaster
+              .getChannelActor(peerId)
+              .stateOverride(MilliSatoshi(msatoshi.toLong))
+          }
+          case _ => {
+            replyError("invalid parameters")
+          }
+        }
       }
     }
   }
