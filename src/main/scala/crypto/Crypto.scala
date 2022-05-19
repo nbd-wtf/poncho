@@ -7,6 +7,10 @@ import sha256.Sha256
 
 import codecs.{ByteVector32, ByteVector64}
 
+type PublicKey = ByteVector
+type PrivateKey = ByteVector32
+type Signature = ByteVector64
+
 object Crypto {
   def sha256(x: ByteVector): ByteVector32 =
     ByteVector32(
@@ -15,7 +19,7 @@ object Crypto {
       )
     )
 
-  def sign(data: ByteVector, privateKey: ByteVector32): ByteVector64 =
+  def sign(data: ByteVector, privateKey: PrivateKey): Signature =
     ByteVector64(
       ByteVector(
         Keys
@@ -31,8 +35,8 @@ object Crypto {
 
   def verifySignature(
       data: ByteVector,
-      signature: ByteVector64,
-      publicKey: ByteVector
+      signature: Signature,
+      publicKey: PublicKey
   ): Boolean = {
     Keys
       .loadPublicKey(publicKey.toArray.map(_.toUByte))

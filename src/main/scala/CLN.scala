@@ -9,10 +9,11 @@ import scala.util.{Failure, Success}
 import secp256k1.Keys
 import sha256.Hkdf
 import ujson._
-
-import unixsocket.UnixSocket
 import scodec.bits.ByteVector
 import scodec.codecs.uint16
+
+import unixsocket.UnixSocket
+import crypto.{PublicKey, PrivateKey}
 import codecs.HostedChannelCodecs._
 import codecs._
 import secp256k1.Secp256k1
@@ -65,7 +66,7 @@ class CLN {
     )
   }
 
-  def getPrivateKey(): ByteVector32 = {
+  def getPrivateKey(): PrivateKey = {
     val salt = Array[UByte](0.toByte.toUByte)
     val info = "nodeid".getBytes().map(_.toUByte)
     val secret = Files.readAllBytes(hsmSecret).map(_.toUByte)
@@ -74,7 +75,7 @@ class CLN {
     ByteVector32(ByteVector(sk.map(_.toByte)))
   }
 
-  lazy val ourPubKey: ByteVector = ByteVector(
+  lazy val ourPubKey: PublicKey = ByteVector(
     Keys
       .loadPrivateKey(getPrivateKey().bytes.toArray.map(_.toUByte))
       .toOption
