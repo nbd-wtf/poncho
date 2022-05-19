@@ -16,8 +16,15 @@ import codecs.LightningMessageCodecs._
 import scodec.bits.ByteVector
 import scodec.codecs._
 
+type FailureOnion = ByteVector
+type Preimage = ByteVector
+type SendCallback = Option[Either[FailureOnion, Preimage]] => Unit
+
 sealed trait Msg
-case class Send(msg: HostedServerMessage) extends Msg
+case class Send(
+    msg: HostedServerMessage,
+    callback: SendCallback
+) extends Msg
 case class Recv(msg: HostedClientMessage) extends Msg
 
 class Channel(peerId: String)(implicit
@@ -228,7 +235,8 @@ class Channel(peerId: String)(implicit
               }
             }
 
-            case Send(msg: UpdateAddHtlc) => {
+            case Send(msg: UpdateAddHtlc, cb: SendCallback) => {
+              cb(None)
               Active()
             }
 

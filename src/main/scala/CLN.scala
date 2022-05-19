@@ -208,35 +208,69 @@ class CLN {
       case "htlc_accepted" => {
         val htlc = data("htlc")
         val onion = data("onion")
-        val paymentHash = ByteVector32.fromValidHex(htlc("payment_hash").str)
+        val scid = ShortChannelId(onion("short_channel_id").str)
+        val hash = ByteVector32.fromValidHex(htlc("payment_hash").str)
         val amount = htlc("amount").str.dropRight(4).toInt
         val onionRoutingPacket =
           ByteVector.fromValidHex(onion("next_onion").str)
 
-        (for {
-          (peerId, chandata) <- Database.data.channels
-            .find((peerId: String, _: ChannelData) =>
-              ChannelMaster.getChannelId(peerId).toString == onion(
-                "short_channel_id"
-              ).str
+        Database.data.channels
+          .find((peerId: String, chandata: ChannelData) =>
+            ChannelMaster.getShortChannelId(peerId) == scid
+          ) match {
+          case Some((peerId, chandata)) if chandata.isActive => {
+            val peer = ChannelMaster.getChannelActor(peerId)
+            val msg = UpdateAddHtlc(
+              channelId = ChannelMaster.getChannelId(peerId),
+              id = 0L.toULong,
+              amountMsat = MilliSatoshi(amount),
+              paymentHash = hash,
+              cltvExpiry =
+                CltvExpiry(BlockHeight(htlc("cltv_expiry").num.toLong)),
+              onionRoutingPacket = onionRoutingPacket
             )
-          peer = ChannelMaster.getChannelActor(peerId)
-          msg = UpdateAddHtlc(
-            channelId = ChannelMaster.getChannelId(peerId),
-            id = 0L.toULong,
-            amountMsat = MilliSatoshi(amount),
-            paymentHash = paymentHash,
-            cltvExpiry =
-              CltvExpiry(BlockHeight(htlc("cltv_expiry").num.toLong)),
-            onionRoutingPacket = onionRoutingPacket
-          )
-        } yield (peer, msg)) match {
-          case Some((peer, msg)) => peer.send(Send(msg))
-          case _ => {
-            val hash = htlc("payment_hash").str
-            val scid = onion("short_channel_id").str
+            peer.send(
+              Send(
+                msg,
+                {
+                  case Some(Right(preimage)) => {
+                    Main.log(s"[htlc] channel $scid succeed in handling $hash")
+                    reply(
+                      ujson
+                        .Obj(
+                          "result" -> "resolve",
+                          "payment_key" -> preimage.toString
+                        )
+                    )
+                  }
+                  case Some(Left(failureOnion)) => {
+                    Main.log(s"[htlc] channel $scid failed $hash")
+                    reply(
+                      ujson.Obj(
+                        "result" -> "resolve",
+                        "failure_onion" -> failureOnion.toString
+                      )
+                    )
+                  }
+                  case None => {
+                    Main.log(
+                      s"[htlc] channel $scid decided to not handle $hash"
+                    )
+                    reply(ujson.Obj("result" -> "continue"))
+                  }
+                }
+              )
+            )
+          }
+          case Some((_, chandata)) => {
             Main.log(
-              s"not handling this htlc: $hash=>scid"
+              s"[htlc] can't assign $hash to $scid as that channel is inactive"
+            )
+            reply(ujson.Obj("result" -> "continue"))
+          }
+          case None => {
+            Main.log(
+              s"[htlc] can't assign $hash to $scid as that channel doesn't exist"
             )
             reply(ujson.Obj("result" -> "continue"))
           }
