@@ -2,6 +2,7 @@ import java.io.ByteArrayInputStream
 import java.nio.ByteOrder
 import scala.concurrent.Future
 import scala.util.{Failure, Success}
+import scala.util.chaining._
 import scala.scalanative.loop.EventLoop.loop
 import scala.scalanative.loop.Poll
 import scala.scalanative.unsigned._
@@ -18,12 +19,12 @@ import scodec.codecs._
 
 type FailureOnion = ByteVector
 type Preimage = ByteVector
-type SendCallback = Option[Either[FailureOnion, Preimage]] => Unit
+type HTLCCallback = Option[Either[FailureOnion, Preimage]] => Unit
 
 sealed trait Msg
 case class Send(
     msg: HostedServerMessage,
-    callback: SendCallback
+    callback: HTLCCallback
 ) extends Msg
 case class Recv(msg: HostedClientMessage) extends Msg
 
@@ -33,9 +34,10 @@ class Channel(peerId: String)(implicit
   def stay = state
 
   def initialState =
-    Database.data.channels.get(peerId).map(_.isActive) match {
-      case Some(true) => Active()
-      case _          => Inactive()
+    Database.data.channels.get(peerId) match {
+      case Some(chandata) if chandata.isActive =>
+        Active(lcssNext = None, cbs = Map.empty)
+      case _ => Inactive()
     }
 
   override def run(msg: Msg): Unit = {
@@ -149,13 +151,15 @@ class Channel(peerId: String)(implicit
                 ChannelMaster.makeChannelUpdate(peerId, lcss)
               )
 
-            Active()
+            Active(None, Map.empty)
           }
         }
         case _ => stay
       })
-  case class Active()
-      extends State({ input =>
+  case class Active(
+      lcssNext: Option[LastCrossSignedState],
+      cbs: Map[String, HTLCCallback]
+  ) extends State({ input =>
         {
           // channel is active, which means we must have a database entry necessarily
           val chandata = Database.data.channels.get(peerId).get
@@ -235,17 +239,63 @@ class Channel(peerId: String)(implicit
               }
             }
 
-            case Send(msg: UpdateAddHtlc, cb: SendCallback) => {
-              cb(None)
-              Active()
+            case Send(msg: UpdateAddHtlc, cb: HTLCCallback) => {
+              // send update_add_htlc
+              Main.node.sendCustomMessage(
+                peerId,
+                msg.copy(id =
+                  lcssNext
+                    .map(_.localUpdates)
+                    .getOrElse(0L)
+                    .toULong + 1L.toULong
+                ),
+                () => {
+                  cb(None)
+                }
+              )
+
+              // create new lcss to be our next
+              val lcss = lcssNext
+                .getOrElse(
+                  chandata.lcss.copy(
+                    remoteSigOfLocal = ByteVector64.Zeroes,
+                    localSigOfRemote = ByteVector64.Zeroes
+                  )
+                )
+                .pipe(baseLcssNext =>
+                  baseLcssNext
+                    .copy(
+                      blockDay = Main.currentBlockDay,
+                      localBalanceMsat =
+                        baseLcssNext.localBalanceMsat - msg.amountMsat,
+                      localUpdates = baseLcssNext.localUpdates + 1,
+                      outgoingHtlcs = baseLcssNext.outgoingHtlcs :+ msg,
+                      remoteSigOfLocal = ByteVector64.Zeroes
+                    )
+                    .withLocalSigOfRemote(Main.node.getPrivateKey())
+                )
+
+              // send state_update
+              Main.node.sendCustomMessage(peerId, lcss.stateUpdate)
+
+              // update callbacks we're keeping track of
+              Active(
+                lcssNext = Some(lcss),
+                cbs = cbs + (msg.paymentHash.toString -> cb)
+              )
             }
 
-            case Recv(msg: AskBrandingInfo)         => stay
-            case Recv(msg: ResizeChannel)           => stay
-            case Recv(msg: UpdateAddHtlc)           => stay
+            case Recv(msg: StateUpdate) => {
+              stay
+            }
+
             case Recv(msg: UpdateFailHtlc)          => stay
             case Recv(msg: UpdateFulfillHtlc)       => stay
             case Recv(msg: UpdateFailMalformedHtlc) => stay
+
+            case Recv(msg: AskBrandingInfo) => stay
+            case Recv(msg: ResizeChannel)   => stay
+            case Recv(msg: UpdateAddHtlc)   => stay
 
             // these are only for PHC
             case Recv(msg: ChannelUpdate)       => stay

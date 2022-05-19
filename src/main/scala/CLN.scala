@@ -108,7 +108,8 @@ class CLN {
 
   def sendCustomMessage(
       peerId: String,
-      message: HostedServerMessage | HostedClientMessage
+      message: HostedServerMessage | HostedClientMessage,
+      failureCallback: () => Unit = () => {}
   ): Unit = {
     val (tag, encoded) = message match {
       case m: HostedServerMessage => encodeServerMessage(m)
@@ -133,8 +134,11 @@ class CLN {
       )
     )
       .onComplete {
-        case Failure(err) => Main.log(s"failed to send custom message: $err")
-        case _            => {}
+        case Failure(err) => {
+          Main.log(s"failed to send custom message: $err")
+          failureCallback()
+        }
+        case _ => {}
       }
   }
 
@@ -210,9 +214,11 @@ class CLN {
         val onion = data("onion")
         val scid = ShortChannelId(onion("short_channel_id").str)
         val hash = ByteVector32.fromValidHex(htlc("payment_hash").str)
-        val amount = htlc("amount").str.dropRight(4).toInt
-        val onionRoutingPacket =
-          ByteVector.fromValidHex(onion("next_onion").str)
+        val amount = onion("forward_amount").str.dropRight(4).toInt
+        val cltv = CltvExpiry(
+          BlockHeight(onion("outgoing_cltv_value").num.toLong)
+        )
+        val nextOnion = ByteVector.fromValidHex(onion("next_onion").str)
 
         Database.data.channels
           .find((peerId: String, chandata: ChannelData) =>
@@ -220,18 +226,16 @@ class CLN {
           ) match {
           case Some((peerId, chandata)) if chandata.isActive => {
             val peer = ChannelMaster.getChannelActor(peerId)
-            val msg = UpdateAddHtlc(
-              channelId = ChannelMaster.getChannelId(peerId),
-              id = 0L.toULong,
-              amountMsat = MilliSatoshi(amount),
-              paymentHash = hash,
-              cltvExpiry =
-                CltvExpiry(BlockHeight(htlc("cltv_expiry").num.toLong)),
-              onionRoutingPacket = onionRoutingPacket
-            )
             peer.send(
               Send(
-                msg,
+                UpdateAddHtlc(
+                  channelId = ChannelMaster.getChannelId(peerId),
+                  id = 0L.toULong,
+                  amountMsat = MilliSatoshi(amount),
+                  paymentHash = hash,
+                  cltvExpiry = cltv,
+                  onionRoutingPacket = nextOnion
+                ),
                 {
                   case Some(Right(preimage)) => {
                     Main.log(s"[htlc] channel $scid succeed in handling $hash")
