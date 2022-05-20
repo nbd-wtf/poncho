@@ -1,7 +1,7 @@
 import java.io.ByteArrayInputStream
 import java.nio.ByteOrder
-import scala.concurrent.Promise
-import scala.util.{Failure, Success}
+import scala.concurrent.{Promise, Future}
+import scala.util.{Try, Failure, Success}
 import scala.util.chaining._
 import scala.scalanative.loop.EventLoop.loop
 import scala.scalanative.loop.Poll
@@ -233,7 +233,7 @@ class Channel(peerId: String)(implicit
     }
   }
 
-  def addHTLC(prototype: UpdateAddHtlc): Promise[HTLCResult] = {
+  def addHTLC(prototype: UpdateAddHtlc): Future[HTLCResult] = {
     var promise = Promise[HTLCResult]()
 
     state match {
@@ -275,34 +275,33 @@ class Channel(peerId: String)(implicit
         if (lcss.localBalanceMsat < MilliSatoshi(0L)) {
           // TODO provide the correct failure message here
           promise.success(Some(Left(FailureCode("2002"))))
-          return promise
+        } else {
+          // send update_add_htlc
+          Main.node
+            .sendCustomMessage(peerId, msg)
+            .onComplete {
+              case Failure(err) =>
+                promise.success(None)
+              case _ => {}
+            }
+
+          // send state_update
+          Main.node.sendCustomMessage(peerId, lcss.stateUpdate)
+
+          // update callbacks we're keeping track of
+          state = Active(
+            lcssNext = Some(lcss),
+            htlcResults = htlcResults + (msg.paymentHash.toString -> promise)
+          )
         }
-
-        // send update_add_htlc
-        Main.node.sendCustomMessage(
-          peerId,
-          msg,
-          () => {
-            promise.success(None)
-          }
-        )
-
-        // send state_update
-        Main.node.sendCustomMessage(peerId, lcss.stateUpdate)
-
-        // update callbacks we're keeping track of
-        state = Active(
-          lcssNext = Some(lcss),
-          htlcResults = htlcResults + (msg.paymentHash.toString -> promise)
-        )
       }
       case _ => {}
     }
 
-    promise.success(None)
+    promise.future
   }
 
-  def stateOverride(newLocalBalance: MilliSatoshi) = {
+  def stateOverride(newLocalBalance: MilliSatoshi): Future[String] = {
     state match {
       case Active(lcssNext, _) => {
         val lcssBase =
@@ -330,9 +329,13 @@ class Channel(peerId: String)(implicit
           lcssOverride.localSigOfRemote
         )
 
-        Main.node.sendCustomMessage(peerId, msg)
+        Main.node
+          .sendCustomMessage(peerId, msg)
+          .map((v: ujson.Value) => v("status").str)
       }
-      case _ => {}
+      case _ => {
+        Future { s"can't send to this channel since it is not active." }
+      }
     }
   }
 }

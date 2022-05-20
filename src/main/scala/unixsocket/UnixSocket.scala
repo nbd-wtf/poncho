@@ -35,7 +35,10 @@ object LibUVMissing {
   ): CInt = extern
 }
 
-private case class UnixDomainSocketException(s: String) extends Exception(s)
+private case class UnixDomainSocketException(s: String)
+    extends java.lang.Exception(s) {
+  override def toString(): String = s
+}
 
 private class Call(_path: String, _payload: String) {
   final val UV_CONNECT_REQUEST = 2

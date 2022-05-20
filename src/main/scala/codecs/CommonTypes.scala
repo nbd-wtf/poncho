@@ -1,6 +1,7 @@
 package codecs
 
 import java.nio.{ByteBuffer, ByteOrder}
+import scala.language.implicitConversions
 import scala.concurrent.duration.{DurationLong, FiniteDuration}
 import scodec.bits.{ByteVector}
 import scodec.bits._

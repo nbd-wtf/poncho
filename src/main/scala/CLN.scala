@@ -26,7 +26,7 @@ class CLN {
 
   def rpc(method: String, params: ujson.Obj): Future[ujson.Value] = {
     if (rpcAddr == "") {
-      return Future.failed(Exception("rpc address is not known yet"))
+      return Future.failed(PonchoException("rpc address is not known yet"))
     }
 
     nextId += 1
@@ -47,7 +47,7 @@ class CLN {
       .map(ujson.read(_))
       .flatMap(read =>
         if (read.obj.contains("error")) {
-          Future.failed(Exception(read("error")("message").str))
+          Future.failed(PonchoException(read("error")("message").str))
         } else {
           Future.successful(read("result"))
         }
@@ -122,9 +122,8 @@ class CLN {
 
   def sendCustomMessage(
       peerId: String,
-      message: HostedServerMessage | HostedClientMessage,
-      failureCallback: () => Unit = () => {}
-  ): Unit = {
+      message: HostedServerMessage | HostedClientMessage
+  ): Future[ujson.Value] = {
     val (tag, encoded) = message match {
       case m: HostedServerMessage => encodeServerMessage(m)
       case m: HostedClientMessage => encodeClientMessage(m)
@@ -147,13 +146,6 @@ class CLN {
         "msg" -> payload
       )
     )
-      .onComplete {
-        case Failure(err) => {
-          Main.log(s"failed to send custom message: $err")
-          failureCallback()
-        }
-        case _ => {}
-      }
   }
 
   def handleRPC(line: String): Unit = {
@@ -263,7 +255,6 @@ class CLN {
                   onionRoutingPacket = nextOnion
                 )
               )
-              .future
               .foreach {
                 case Some(Right(preimage)) => {
                   Main.log(s"[htlc] channel $scid succeed in handling $hash")
@@ -347,6 +338,10 @@ class CLN {
             ChannelMaster
               .getChannelActor(peerId)
               .stateOverride(MilliSatoshi(msatoshi.toLong))
+              .onComplete {
+                case Success(msg) => reply(msg)
+                case Failure(err) => replyError(err.toString)
+              }
           }
           case _ => {
             replyError("invalid parameters")

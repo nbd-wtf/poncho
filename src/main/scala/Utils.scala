@@ -6,6 +6,10 @@ import scodec.bits.ByteVector
 import crypto.Crypto
 import codecs._
 
+class PonchoException(s: String) extends java.lang.Exception {
+  override def toString(): String = s
+}
+
 object Utils {
   @tailrec
   final def isLessThan(a: ByteVector, b: ByteVector): Boolean = {
