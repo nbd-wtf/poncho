@@ -248,14 +248,14 @@ class CLN {
 
         Database.data.channels
           .find((peerId: String, chandata: ChannelData) =>
-            ChannelMaster.getShortChannelId(peerId) == scid
+            ChanTools.getShortChannelId(peerId) == scid
           ) match {
           case Some((peerId, chandata)) if chandata.isActive => {
             val peer = ChannelMaster.getChannelActor(peerId)
             peer
               .addHTLC(
                 UpdateAddHtlc(
-                  channelId = ChannelMaster.getChannelId(peerId),
+                  channelId = ChanTools.getChannelId(peerId),
                   id = 0L.toULong,
                   amountMsat = MilliSatoshi(amount),
                   paymentHash = hash,

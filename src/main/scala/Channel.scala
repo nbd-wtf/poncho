@@ -56,7 +56,7 @@ class Channel(peerId: String)(implicit
           Main.node.sendCustomMessage(
             peerId,
             Error(
-              ChannelMaster.getChannelId(peerId),
+              ChanTools.getChannelId(peerId),
               s"invalid chainHash (local=${Main.chainHash} remote=${msg.chainHash})"
             )
           )
@@ -104,7 +104,7 @@ class Channel(peerId: String)(implicit
           Main.node.sendCustomMessage(
             peerId,
             Error(
-              ChannelMaster.getChannelId(peerId),
+              ChanTools.getChannelId(peerId),
               ErrorCodes.ERR_HOSTED_WRONG_BLOCKDAY
             )
           )
@@ -114,7 +114,7 @@ class Channel(peerId: String)(implicit
           Main.node.sendCustomMessage(
             peerId,
             Error(
-              ChannelMaster.getChannelId(peerId),
+              ChanTools.getChannelId(peerId),
               ErrorCodes.ERR_HOSTED_WRONG_REMOTE_SIG
             )
           )
@@ -144,7 +144,7 @@ class Channel(peerId: String)(implicit
           Main.node
             .sendCustomMessage(
               peerId,
-              ChannelMaster.makeChannelUpdate(peerId, lcss)
+              ChanTools.makeChannelUpdate(peerId, lcss)
             )
 
           Active(None, Map.empty)
@@ -161,7 +161,7 @@ class Channel(peerId: String)(implicit
               s"[${peerId}] sent LastCrossSignedState with a signature that isn't ours"
             )
             Error(
-              ChannelMaster.getChannelId(peerId),
+              ChanTools.getChannelId(peerId),
               ErrorCodes.ERR_HOSTED_WRONG_LOCAL_SIG
             )
           } else {
@@ -169,7 +169,7 @@ class Channel(peerId: String)(implicit
               s"[${peerId}] sent LastCrossSignedState with an invalid signature"
             )
             Error(
-              ChannelMaster.getChannelId(peerId),
+              ChanTools.getChannelId(peerId),
               ErrorCodes.ERR_HOSTED_WRONG_REMOTE_SIG
             )
           }
@@ -217,7 +217,7 @@ class Channel(peerId: String)(implicit
           Main.node.sendCustomMessage(peerId, lcssMostRecent)
           Main.node.sendCustomMessage(
             peerId,
-            ChannelMaster.makeChannelUpdate(peerId, lcssMostRecent)
+            ChanTools.makeChannelUpdate(peerId, lcssMostRecent)
           )
           stay
         }

@@ -29,11 +29,15 @@ object ChannelMaster {
       all.toList.map((peerId, chandata) =>
         ujson.Obj(
           "peer_id" -> peerId,
-          "active" -> chandata.isActive,
-          "is_host" -> chandata.lcss.isHost,
-          "blockday" -> chandata.lcss.blockDay.toInt,
+          "channel_id" -> ChanTools.getChannelId(peerId).toHex,
+          "short_channel_id" -> ChanTools.getShortChannelId(peerId).toString,
+          "status" -> ujson.Obj(
+            "blockday" -> chandata.lcss.blockDay.toInt,
+            "active" -> chandata.isActive,
+            "is_host" -> chandata.lcss.isHost
+          ),
           "balance" -> ujson.Obj(
-            "total" -> chandata.lcss.initHostedChannel.channelCapacityMsat.toLong,
+            "total" -> chandata.lcss.initHostedChannel.channelCapacityMsat.toLong.toInt,
             "local" -> chandata.lcss.localBalanceMsat.toLong.toInt,
             "remote" -> chandata.lcss.remoteBalanceMsat.toLong.toInt
           ),
@@ -47,7 +51,9 @@ object ChannelMaster {
       )
     )
   }
+}
 
+object ChanTools {
   def getChannelId(peerId: String): ByteVector32 =
     Utils.getChannelId(Main.node.ourPubKey, ByteVector.fromValidHex(peerId))
 
