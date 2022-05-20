@@ -159,7 +159,7 @@ class CLN {
   def handleRPC(line: String): Unit = {
     val req = ujson.read(line)
     val data = req("params")
-    def reply(result: ujson.Obj) = answer(req)(result)
+    def reply(result: ujson.Value) = answer(req)(result)
     def replyError(err: String) = answer(req)(err)
 
     req("method").str match {
@@ -179,6 +179,11 @@ class CLN {
               ujson.Obj("name" -> "htlc_accepted")
             ),
             "rpcmethods" -> ujson.Arr(
+              ujson.Obj(
+                "name" -> "hc-list",
+                "usage" -> "",
+                "description" -> "List all your hosted channels."
+              ),
               ujson.Obj(
                 "name" -> "hc-override",
                 "usage" -> "peerid msatoshi",
@@ -327,6 +332,9 @@ class CLN {
       }
 
       // custom rpc methods
+      case "hc-list" =>
+        reply(ChannelMaster.channelsJSON)
+
       case "hc-override" => {
         val params = data match {
           case _: ujson.Obj =>

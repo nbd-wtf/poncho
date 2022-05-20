@@ -14,6 +14,40 @@ object ChannelMaster {
     actors.getOrElseUpdate(peerId, { new Channel(peerId) })
   }
 
+  def all: Map[String, ChannelData] = Database.data.channels
+
+  def channelsJSON: ujson.Arr = {
+    val mapHtlc = (htlc: UpdateAddHtlc) =>
+      ujson.Obj(
+        "id" -> htlc.id.toLong.toInt,
+        "amount" -> htlc.amountMsat.toLong.toInt,
+        "hash" -> htlc.paymentHash.toHex,
+        "cltv" -> htlc.cltvExpiry.toLong.toInt
+      )
+
+    ujson.Arr.from(
+      all.toList.map((peerId, chandata) =>
+        ujson.Obj(
+          "peer_id" -> peerId,
+          "active" -> chandata.isActive,
+          "is_host" -> chandata.lcss.isHost,
+          "blockday" -> chandata.lcss.blockDay.toInt,
+          "balance" -> ujson.Obj(
+            "total" -> chandata.lcss.initHostedChannel.channelCapacityMsat.toLong,
+            "local" -> chandata.lcss.localBalanceMsat.toLong.toInt,
+            "remote" -> chandata.lcss.remoteBalanceMsat.toLong.toInt
+          ),
+          "incoming_htlcs" -> ujson.Arr.from(
+            chandata.lcss.incomingHtlcs.map(mapHtlc)
+          ),
+          "outgoing_htlcs" -> ujson.Arr.from(
+            chandata.lcss.outgoingHtlcs.map(mapHtlc)
+          )
+        )
+      )
+    )
+  }
+
   def getChannelId(peerId: String): ByteVector32 =
     Utils.getChannelId(Main.node.ourPubKey, ByteVector.fromValidHex(peerId))
 
