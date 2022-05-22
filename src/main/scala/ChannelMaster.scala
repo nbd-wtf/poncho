@@ -8,10 +8,13 @@ import codecs._
 import crypto.Crypto
 
 object ChannelMaster {
-  val actors = mutable.Map.empty[String, Channel]
-
-  def getChannelActor(peerId: String): Channel = {
-    actors.getOrElseUpdate(peerId, { new Channel(peerId) })
+  val servers = mutable.Map.empty[String, ChannelServer]
+  val clients = mutable.Map.empty[String, ChannelClient]
+  def getChannelServer(peerId: String): ChannelServer = {
+    servers.getOrElseUpdate(peerId, { new ChannelServer(peerId) })
+  }
+  def getChannelClient(peerId: String): ChannelClient = {
+    clients.getOrElseUpdate(peerId, { new ChannelClient(peerId) })
   }
 
   def all: Map[String, ChannelData] = Database.data.channels

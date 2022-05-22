@@ -24,19 +24,19 @@ type PaymentPreimage = ByteVector
 type HTLCResult =
   Option[Either[PaymentFailure, PaymentPreimage]]
 
-sealed trait State
-case class Inactive() extends State
-case class Opening(refundScriptPubKey: ByteVector) extends State
-case class Active(
-    lcssNext: Option[LastCrossSignedState],
-    htlcResults: Map[String, Promise[HTLCResult]]
-) extends State
-case class Errored(lcssNext: Option[LastCrossSignedState]) extends State
-case class Overriding(target: LastCrossSignedState) extends State
-
-class Channel(peerId: String)(implicit
+class ChannelServer(peerId: String)(implicit
     ac: castor.Context
 ) extends castor.SimpleActor[HostedClientMessage] {
+  sealed trait State
+  case class Inactive() extends State
+  case class Opening(refundScriptPubKey: ByteVector) extends State
+  case class Active(
+      lcssNext: Option[LastCrossSignedState],
+      htlcResults: Map[String, Promise[HTLCResult]]
+  ) extends State
+  case class Errored(lcssNext: Option[LastCrossSignedState]) extends State
+  case class Overriding(target: LastCrossSignedState) extends State
+
   var state: State =
     Database.data.channels.get(peerId) match {
       case Some(chandata) if chandata.isActive =>

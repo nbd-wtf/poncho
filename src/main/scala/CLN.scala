@@ -219,12 +219,18 @@ class CLN {
               .drop(4 /* length */ )
           )
 
-        decodeClientMessage(tag, payload).toEither match {
-          case Left(err) => Main.log(s"$err")
-          case Right(msg) => {
-            val peer = ChannelMaster.getChannelActor(peerId)
-            peer.send(msg)
-          }
+        (
+          decodeServerMessage(tag, payload).toEither,
+          decodeClientMessage(tag, payload).toEither
+        ) match {
+          case (Left(err1), Left(err2)) => Main.log(s"$err1 | $err2")
+          case (Right(msg), Left(_)) =>
+            ChannelMaster.getChannelClient(peerId).send(msg)
+          case (Left(_), Right(msg)) =>
+            ChannelMaster.getChannelServer(peerId).send(msg)
+          case (Right(msg1), Right(msg2)) =>
+            ChannelMaster.getChannelClient(peerId).send(msg1)
+            ChannelMaster.getChannelServer(peerId).send(msg2)
         }
       }
       case "htlc_accepted" => {
@@ -243,7 +249,7 @@ class CLN {
             ChanTools.getShortChannelId(peerId) == scid
           ) match {
           case Some((peerId, chandata)) if chandata.isActive => {
-            val peer = ChannelMaster.getChannelActor(peerId)
+            val peer = ChannelMaster.getChannelServer(peerId)
             peer
               .addHTLC(
                 UpdateAddHtlc(
@@ -336,7 +342,7 @@ class CLN {
         } match {
           case Some(Some(peerId), Some(msatoshi)) => {
             ChannelMaster
-              .getChannelActor(peerId)
+              .getChannelServer(peerId)
               .stateOverride(MilliSatoshi(msatoshi.toLong))
               .onComplete {
                 case Success(msg) => reply(msg)
