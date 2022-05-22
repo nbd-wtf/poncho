@@ -21,15 +21,16 @@ object Utils {
   }
 
   def getShortChannelId(peer1: ByteVector, peer2: ByteVector): ShortChannelId =
-    val num: Long = Protocol.uint64(
-      new ByteArrayInputStream(
-        pubkeysCombined(peer1, peer2).toArray
-      ),
+    val stream = new ByteArrayInputStream(
+      pubkeysCombined(peer1, peer2).toArray
+    )
+    def getChunk(): Long = Protocol.uint64(
+      stream,
       ByteOrder.BIG_ENDIAN
     )
     ShortChannelId(
       List
-        .fill(8)(num)
+        .fill(8)(getChunk())
         .sum
     )
 

@@ -209,8 +209,6 @@ case class Error(
     val tag = data.take(4)
     val postTagData = data.drop(4)
 
-    System.err.println(data)
-
     Error.knownHostedCodes.get(tag.toHex) match {
       case Some(code) if postTagData.isEmpty => s"hosted-code=$code"
       case Some(code) =>
