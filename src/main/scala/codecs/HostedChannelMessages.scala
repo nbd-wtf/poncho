@@ -121,8 +121,17 @@ case class LastCrossSignedState(
     copy(localSigOfRemote = localSignature)
   }
 
-  lazy val stateUpdate: StateUpdate =
+  def stateUpdate: StateUpdate =
     StateUpdate(blockDay, localUpdates, remoteUpdates, localSigOfRemote)
+
+  def stateOverride: StateOverride =
+    StateOverride(
+      blockDay,
+      localBalanceMsat,
+      localUpdates,
+      remoteUpdates,
+      localSigOfRemote
+    )
 }
 
 case class StateUpdate(

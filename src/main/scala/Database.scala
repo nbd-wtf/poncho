@@ -14,7 +14,9 @@ case class Data(
 
 case class ChannelData(
     isActive: Boolean,
-    lcss: LastCrossSignedState
+    lcss: LastCrossSignedState,
+    error: Option[Error] = None,
+    proposedOverride: Option[LastCrossSignedState] = None
 )
 
 object Database {
@@ -53,13 +55,37 @@ object Picklers {
   given ReadWriter[LastCrossSignedState] = macroRW
   given ReadWriter[InitHostedChannel] = macroRW
   given ReadWriter[UpdateAddHtlc] = macroRW
-  given ReadWriter[TlvStream[UpdateAddHtlcTlv]] =
+  given ReadWriter[Error] = macroRW
+
+  type UpdateAddHtlcTlvStream = TlvStream[UpdateAddHtlcTlv]
+  given ReadWriter[UpdateAddHtlcTlvStream] =
     readwriter[List[Int]]
       .bimap[TlvStream[UpdateAddHtlcTlv]](
+        _ => List.empty[Int],
+        _ => TlvStream.empty
+      )
+  type ErrorTlvStream = TlvStream[ErrorTlv] // hack
+  given ReadWriter[ErrorTlvStream] =
+    readwriter[List[Int]]
+      .bimap[TlvStream[ErrorTlv]](
         _ => List.empty[Int],
         _ => TlvStream.empty
       )
 
   implicit val rw: ReadWriter[Data] = macroRW
   given ReadWriter[ChannelData] = macroRW
+}
+
+object OptionPickler extends upickle.AttributeTagged {
+  override implicit def OptionWriter[T: Writer]: Writer[Option[T]] =
+    implicitly[Writer[T]].comap[Option[T]] {
+      case None    => null.asInstanceOf[T]
+      case Some(x) => x
+    }
+
+  override implicit def OptionReader[T: Reader]: Reader[Option[T]] = {
+    new Reader.Delegate[Any, Option[T]](implicitly[Reader[T]].map(Some(_))) {
+      override def visitNull(index: Int) = None
+    }
+  }
 }

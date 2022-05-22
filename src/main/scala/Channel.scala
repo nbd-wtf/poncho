@@ -31,6 +31,8 @@ case class Active(
     lcssNext: Option[LastCrossSignedState],
     htlcResults: Map[String, Promise[HTLCResult]]
 ) extends State
+case class Errored(lcssNext: Option[LastCrossSignedState]) extends State
+case class Overriding(target: LastCrossSignedState) extends State
 
 class Channel(peerId: String)(implicit
     ac: castor.Context
@@ -130,7 +132,9 @@ class Channel(peerId: String)(implicit
                     (
                       peerId -> ChannelData(
                         isActive = true,
-                        lcss = lcss
+                        error = None,
+                        lcss = lcss,
+                        proposedOverride = None
                       )
                     )
                 )
@@ -229,6 +233,46 @@ class Channel(peerId: String)(implicit
         Main.node.sendCustomMessage(peerId, chandata.lcss)
         stay
       }
+
+      case (Overriding(lcssOverrideProposal), msg: StateUpdate) => {
+        if (
+          msg.remoteUpdates == lcssOverrideProposal.localUpdates &&
+          msg.localUpdates == lcssOverrideProposal.remoteUpdates &&
+          msg.blockDay == lcssOverrideProposal.blockDay
+        ) {
+          // it seems that the peer has agreed to our override proposal
+          val lcss = lcssOverrideProposal.copy(remoteSigOfLocal =
+            msg.localSigOfRemoteLCSS
+          )
+          if (lcss.verifyRemoteSig(ByteVector.fromValidHex(peerId))) {
+            // update state on the database
+            Database.update { data =>
+              data
+                .modify(_.channels.at(peerId))
+                .using(
+                  _.copy(lcss = lcss, proposedOverride = None, error = None)
+                )
+            }
+
+            // send our channel policies again just in case
+            Main.node.sendCustomMessage(
+              peerId,
+              ChanTools.makeChannelUpdate(peerId, lcss)
+            )
+
+            // channel is active again
+            Active(None, Map.empty)
+          } else stay
+        } else stay
+      }
+
+      case (Active(lcssNext, _), msg: Error) => {
+        Database.update { data =>
+          data.modify(_.channels.at(peerId).error).setTo(Some(msg))
+        }
+        Errored(lcssNext = lcssNext)
+      }
+
       case _ => stay
     }
   }
@@ -303,7 +347,7 @@ class Channel(peerId: String)(implicit
 
   def stateOverride(newLocalBalance: MilliSatoshi): Future[String] = {
     state match {
-      case Active(lcssNext, _) => {
+      case Errored(lcssNext) => {
         val lcssBase =
           lcssNext.getOrElse(Database.data.channels.get(peerId).get.lcss)
 
@@ -321,16 +365,10 @@ class Channel(peerId: String)(implicit
           )
           .withLocalSigOfRemote(Main.node.getPrivateKey())
 
-        val msg = StateOverride(
-          lcssOverride.blockDay,
-          lcssOverride.localBalanceMsat,
-          lcssOverride.localUpdates,
-          lcssOverride.remoteUpdates,
-          lcssOverride.localSigOfRemote
-        )
+        state = Overriding(lcssOverride)
 
         Main.node
-          .sendCustomMessage(peerId, msg)
+          .sendCustomMessage(peerId, lcssOverride.stateOverride)
           .map((v: ujson.Value) => v("status").str)
       }
       case _ => {
