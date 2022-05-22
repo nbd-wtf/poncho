@@ -37,6 +37,7 @@ object ChannelMaster {
           "status" -> ujson.Obj(
             "blockday" -> chandata.lcss.blockDay.toInt,
             "active" -> chandata.isActive,
+            "error" -> chandata.error.map(_.description).getOrElse(null),
             "is_host" -> chandata.lcss.isHost
           ),
           "balance" -> ujson.Obj(

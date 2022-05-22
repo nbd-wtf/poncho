@@ -21,7 +21,6 @@ object Main {
   val node = new CLN()
 
   log(s"database is at: ${Database.path}")
-  log(s"starting with data: ${write(Database.data)}")
 
   def main(args: Array[String]): Unit = {
     node.main(() => {

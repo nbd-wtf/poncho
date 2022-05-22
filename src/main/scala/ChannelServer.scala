@@ -108,7 +108,7 @@ class ChannelServer(peerId: String)(implicit
           sendMessage(
             Error(
               ChanTools.getChannelId(peerId),
-              ErrorCodes.ERR_HOSTED_WRONG_BLOCKDAY
+              Error.ERR_HOSTED_WRONG_BLOCKDAY
             )
           )
           Inactive()
@@ -117,7 +117,7 @@ class ChannelServer(peerId: String)(implicit
           sendMessage(
             Error(
               ChanTools.getChannelId(peerId),
-              ErrorCodes.ERR_HOSTED_WRONG_REMOTE_SIG
+              Error.ERR_HOSTED_WRONG_REMOTE_SIG
             )
           )
           Inactive()
@@ -162,7 +162,7 @@ class ChannelServer(peerId: String)(implicit
             )
             Error(
               ChanTools.getChannelId(peerId),
-              ErrorCodes.ERR_HOSTED_WRONG_LOCAL_SIG
+              Error.ERR_HOSTED_WRONG_LOCAL_SIG
             )
           } else {
             Main.log(
@@ -170,7 +170,7 @@ class ChannelServer(peerId: String)(implicit
             )
             Error(
               ChanTools.getChannelId(peerId),
-              ErrorCodes.ERR_HOSTED_WRONG_REMOTE_SIG
+              Error.ERR_HOSTED_WRONG_REMOTE_SIG
             )
           }
           sendMessage(err)

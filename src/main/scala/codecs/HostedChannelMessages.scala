@@ -204,9 +204,47 @@ case class Error(
   def toAscii: String = if (data.toArray.forall(ch => ch >= 32 && ch < 127))
     new String(data.toArray, StandardCharsets.US_ASCII)
   else "n/a"
+
+  def description: String = {
+    val tag = data.take(4)
+    val postTagData = data.drop(4)
+
+    System.err.println(data)
+
+    Error.knownHostedCodes.get(tag.toHex) match {
+      case Some(code) if postTagData.isEmpty => s"hosted-code=$code"
+      case Some(code) =>
+        s"hosted-code=$code, extra=${this.copy(data = postTagData).toAscii}"
+      case None => toAscii
+    }
+  }
 }
 
 object Error {
+  final val ERR_HOSTED_WRONG_BLOCKDAY = "0001"
+  final val ERR_HOSTED_WRONG_LOCAL_SIG = "0002"
+  final val ERR_HOSTED_WRONG_REMOTE_SIG = "0003"
+  final val ERR_HOSTED_CLOSED_BY_REMOTE_PEER = "0004"
+  final val ERR_HOSTED_TIMED_OUT_OUTGOING_HTLC = "0005"
+  final val ERR_HOSTED_HTLC_EXTERNAL_FULFILL = "0006"
+  final val ERR_HOSTED_CHANNEL_DENIED = "0007"
+  final val ERR_HOSTED_MANUAL_SUSPEND = "0008"
+  final val ERR_HOSTED_INVALID_RESIZE = "0009"
+  final val ERR_MISSING_CHANNEL = "0010"
+
+  val knownHostedCodes: Map[String, String] = Map(
+    ERR_HOSTED_WRONG_BLOCKDAY -> "ERR_HOSTED_WRONG_BLOCKDAY",
+    ERR_HOSTED_WRONG_LOCAL_SIG -> "ERR_HOSTED_WRONG_LOCAL_SIG",
+    ERR_HOSTED_WRONG_REMOTE_SIG -> "ERR_HOSTED_WRONG_REMOTE_SIG",
+    ERR_HOSTED_CLOSED_BY_REMOTE_PEER -> "ERR_HOSTED_CLOSED_BY_REMOTE_PEER",
+    ERR_HOSTED_TIMED_OUT_OUTGOING_HTLC -> "ERR_HOSTED_TIMED_OUT_OUTGOING_HTLC",
+    ERR_HOSTED_HTLC_EXTERNAL_FULFILL -> "ERR_HOSTED_HTLC_EXTERNAL_FULFILL",
+    ERR_HOSTED_CHANNEL_DENIED -> "ERR_HOSTED_CHANNEL_DENIED",
+    ERR_HOSTED_MANUAL_SUSPEND -> "ERR_HOSTED_MANUAL_SUSPEND",
+    ERR_HOSTED_INVALID_RESIZE -> "ERR_HOSTED_INVALID_RESIZE",
+    ERR_MISSING_CHANNEL -> "ERR_MISSING_CHANNEL"
+  )
+
   def apply(channelId: ByteVector32, msg: String): Error =
     Error(channelId, ByteVector.view(msg.getBytes(StandardCharsets.US_ASCII)))
 }
