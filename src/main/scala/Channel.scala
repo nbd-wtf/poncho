@@ -46,6 +46,9 @@ class Channel(peerId: String)(implicit
 
   def stay = state
 
+  def sendMessage: HostedServerMessage => Future[ujson.Value] =
+    Main.node.sendCustomMessage(peerId, _)
+
   def run(msg: HostedClientMessage): Unit = {
     Main.log(s"[$this] at $state <-- $msg")
     state = (state, msg) match {
@@ -55,8 +58,7 @@ class Channel(peerId: String)(implicit
           Main.log(
             s"[${peerId}] sent InvokeHostedChannel for wrong chain: ${msg.chainHash} (current: ${Main.chainHash})"
           )
-          Main.node.sendCustomMessage(
-            peerId,
+          sendMessage(
             Error(
               ChanTools.getChannelId(peerId),
               s"invalid chainHash (local=${Main.chainHash} remote=${msg.chainHash})"
@@ -68,12 +70,12 @@ class Channel(peerId: String)(implicit
           Database.data.channels.get(peerId) match {
             case Some(chandata) => {
               // channel already exists, so send last cross-signed-state
-              Main.node.sendCustomMessage(peerId, chandata.lcss)
+              sendMessage(chandata.lcss)
               Opening(refundScriptPubKey = msg.refundScriptPubKey)
             }
             case None => {
               // reply saying we accept the invoke
-              Main.node.sendCustomMessage(peerId, Main.ourInit)
+              sendMessage(Main.ourInit)
               Opening(refundScriptPubKey = msg.refundScriptPubKey)
             }
           }
@@ -103,8 +105,7 @@ class Channel(peerId: String)(implicit
           Main.log(
             s"[${peerId}] sent StateUpdate with wrong blockday: ${msg.blockDay} (current: ${Main.currentBlockDay})"
           )
-          Main.node.sendCustomMessage(
-            peerId,
+          sendMessage(
             Error(
               ChanTools.getChannelId(peerId),
               ErrorCodes.ERR_HOSTED_WRONG_BLOCKDAY
@@ -113,8 +114,7 @@ class Channel(peerId: String)(implicit
           Inactive()
         } else if (!lcss.verifyRemoteSig(ByteVector.fromValidHex(peerId))) {
           Main.log(s"[${peerId}] sent StateUpdate with wrong signature.")
-          Main.node.sendCustomMessage(
-            peerId,
+          sendMessage(
             Error(
               ChanTools.getChannelId(peerId),
               ErrorCodes.ERR_HOSTED_WRONG_REMOTE_SIG
@@ -142,14 +142,10 @@ class Channel(peerId: String)(implicit
           }
 
           // send our signed state update
-          Main.node.sendCustomMessage(peerId, lcss.stateUpdate)
+          sendMessage(lcss.stateUpdate)
 
           // send a channel update
-          Main.node
-            .sendCustomMessage(
-              peerId,
-              ChanTools.makeChannelUpdate(peerId, lcss)
-            )
+          sendMessage(ChanTools.makeChannelUpdate(peerId, lcss))
 
           Active(None, Map.empty)
         }
@@ -177,7 +173,7 @@ class Channel(peerId: String)(implicit
               ErrorCodes.ERR_HOSTED_WRONG_REMOTE_SIG
             )
           }
-          Main.node.sendCustomMessage(peerId, err)
+          sendMessage(err)
           Database.update { data =>
             {
               data
@@ -218,11 +214,8 @@ class Channel(peerId: String)(implicit
             }
 
           // all good, send the most recent lcss again and then the channel update
-          Main.node.sendCustomMessage(peerId, lcssMostRecent)
-          Main.node.sendCustomMessage(
-            peerId,
-            ChanTools.makeChannelUpdate(peerId, lcssMostRecent)
-          )
+          sendMessage(lcssMostRecent)
+          sendMessage(ChanTools.makeChannelUpdate(peerId, lcssMostRecent))
           stay
         }
       }
@@ -230,7 +223,7 @@ class Channel(peerId: String)(implicit
       case (Active(_, _), msg: InvokeHostedChannel) => {
         // channel already exists, so send last cross-signed-state
         val chandata = Database.data.channels.get(peerId).get
-        Main.node.sendCustomMessage(peerId, chandata.lcss)
+        sendMessage(chandata.lcss)
         stay
       }
 
@@ -255,10 +248,7 @@ class Channel(peerId: String)(implicit
             }
 
             // send our channel policies again just in case
-            Main.node.sendCustomMessage(
-              peerId,
-              ChanTools.makeChannelUpdate(peerId, lcss)
-            )
+            sendMessage(ChanTools.makeChannelUpdate(peerId, lcss))
 
             // channel is active again
             Active(None, Map.empty)
@@ -321,8 +311,7 @@ class Channel(peerId: String)(implicit
           promise.success(Some(Left(FailureCode("2002"))))
         } else {
           // send update_add_htlc
-          Main.node
-            .sendCustomMessage(peerId, msg)
+          sendMessage(msg)
             .onComplete {
               case Failure(err) =>
                 promise.success(None)
@@ -330,7 +319,7 @@ class Channel(peerId: String)(implicit
             }
 
           // send state_update
-          Main.node.sendCustomMessage(peerId, lcss.stateUpdate)
+          sendMessage(lcss.stateUpdate)
 
           // update callbacks we're keeping track of
           state = Active(
@@ -367,8 +356,7 @@ class Channel(peerId: String)(implicit
 
         state = Overriding(lcssOverride)
 
-        Main.node
-          .sendCustomMessage(peerId, lcssOverride.stateOverride)
+        sendMessage(lcssOverride.stateOverride)
           .map((v: ujson.Value) => v("status").str)
       }
       case _ => {
