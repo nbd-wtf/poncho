@@ -117,4 +117,11 @@ object ChanTools {
       htlcMaximumMsat = Some(Main.ourInit.channelCapacityMsat)
     )
   }
+
+  def lcssIsBroken(lcss: LastCrossSignedState): Boolean =
+    lcss.localBalanceMsat < MilliSatoshi(0L) || (
+      lcss.initHostedChannel.channelCapacityMsat != (
+        lcss.localBalanceMsat + lcss.remoteBalanceMsat
+      )
+    )
 }
