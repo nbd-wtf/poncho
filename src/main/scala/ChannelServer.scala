@@ -211,7 +211,7 @@ class ChannelServer(peerId: String)(implicit
                 {
                   data
                     .modify(_.channels.at(peerId).lcss)
-                    .setTo(msg)
+                    .setTo(msg.reverse)
                 }
               }
 
@@ -240,25 +240,29 @@ class ChannelServer(peerId: String)(implicit
 
       // client is fulfilling an HTLC we've sent
       case (Active(maybeLcssNext, htlcResults), msg: UpdateFulfillHtlc) => {
+        val fulfilledHash = Crypto.sha256(msg.paymentPreimage)
         val chandata = Database.data.channels.get(peerId).get
 
         // create (or modify) new lcss to be our next
-        val baseLcssNext = maybeLcssNext
+        val lcssNextBase = maybeLcssNext
           .getOrElse(chandata.lcss)
 
         // find the htlc
-        baseLcssNext.outgoingHtlcs.find(htlc =>
-          htlc.paymentHash == Crypto.sha256(msg.paymentPreimage)
-        ) match {
+        Main.log(s"outgoing: ${lcssNextBase.outgoingHtlcs.size}")
+        Main.log(s"incoming: ${lcssNextBase.incomingHtlcs.size}")
+
+        lcssNextBase.outgoingHtlcs.find(_.paymentHash == fulfilledHash) match {
           case Some(htlc) => {
+            Main.log(s"resolving htlc ${htlc.paymentHash}")
+
             val lcssNext =
-              baseLcssNext
+              lcssNextBase
                 .copy(
                   localBalanceMsat =
-                    baseLcssNext.localBalanceMsat - htlc.amountMsat,
-                  localUpdates = baseLcssNext.localUpdates + 1,
+                    lcssNextBase.localBalanceMsat - htlc.amountMsat,
+                  localUpdates = lcssNextBase.localUpdates + 1,
                   outgoingHtlcs =
-                    baseLcssNext.outgoingHtlcs.filter(_.id == htlc.id),
+                    lcssNextBase.outgoingHtlcs.filter(_.id == htlc.id),
                   remoteSigOfLocal = ByteVector64.Zeroes
                 )
                 .withLocalSigOfRemote(Main.node.getPrivateKey())
@@ -266,15 +270,18 @@ class ChannelServer(peerId: String)(implicit
             // check if this new potential lcss is not stupid
             if (ChanTools.lcssIsBroken(lcssNext)) {
               // TODO what is happening?
+              Main.log(s"lcssNext is broken: $lcssNext")
               stay
             } else {
               // send state_update
               sendMessage(lcssNext.stateUpdate)
 
               // call our htlc callback so our node is notified
-              htlcResults
-                .get(htlc.paymentHash)
-                .foreach(_.success(Some(Right(msg.paymentPreimage))))
+              val s = htlcResults.get(htlc.paymentHash)
+              Main.log(
+                s"returning response to c-lightning: ${msg.paymentPreimage}"
+              )
+              s.foreach(_.success(Some(Right(msg.paymentPreimage))))
 
               // update state (lcssNext, plus remove this from the callbacks we're keeping track of)
               Active(
@@ -286,8 +293,7 @@ class ChannelServer(peerId: String)(implicit
           }
           case None => {
             Main.log(
-              s"client has fulfilled an HTLC we don't know about: ${Crypto
-                  .sha256(msg.paymentPreimage)}"
+              s"client has fulfilled an HTLC we don't know about: ${fulfilledHash}"
             )
             stay
           }
@@ -322,10 +328,10 @@ class ChannelServer(peerId: String)(implicit
                   _.copy(lcss = lcss, proposedOverride = None, error = None)
                 )
             }
+            stay
+
           } else stay
         } else stay
-
-        stay
       }
 
       // client is (hopefully) accepting our override proposal
@@ -374,61 +380,87 @@ class ChannelServer(peerId: String)(implicit
     var promise = Promise[HTLCResult]()
 
     Main.log(s"forwarding payment $state <-- $prototype")
-
     state match {
       case Active(maybeLcssNext, htlcResults) => {
         val chandata = Database.data.channels.get(peerId).get
+        val lcssNextBase = maybeLcssNext.getOrElse(chandata.lcss)
 
-        // create update_add_htlc based on the prototype we've received
-        val msg = prototype.copy(id =
-          maybeLcssNext
-            .map(_.localUpdates)
-            .getOrElse(0L)
-            .toULong + 1L.toULong
-        )
-
-        // create (or modify) new lcss to be our next
-        val lcssNext = maybeLcssNext
-          .getOrElse(chandata.lcss)
-          .pipe(baseLcssNext =>
-            baseLcssNext
-              .copy(
-                blockDay = Main.currentBlockDay,
-                localBalanceMsat =
-                  baseLcssNext.localBalanceMsat - msg.amountMsat,
-                localUpdates = baseLcssNext.localUpdates + 1,
-                outgoingHtlcs = baseLcssNext.outgoingHtlcs :+ msg,
-                remoteSigOfLocal = ByteVector64.Zeroes
-              )
-              .withLocalSigOfRemote(Main.node.getPrivateKey())
+        if (
+          lcssNextBase.incomingHtlcs.exists(
+            _.paymentHash == prototype.paymentHash
           )
+        ) {
+          // reject htlc as outgoing if it's already incoming, sanity check
+          Main.log(
+            s"${prototype.paymentHash} is already incoming, can't add it as outgoing"
+          )
+          promise.success(None)
+        } else if (
+          lcssNextBase.outgoingHtlcs.exists(
+            _.paymentHash == prototype.paymentHash
+          )
+        ) {
+          // do not add htlc to state if it's already there (otherwise the state will be invalid)
+          // this is likely to be hit on restarts as the node will replay pending htlcs on us
 
-        // TODO check if fees are sufficient
-
-        // check if this new potential lcss is not stupid
-        if (!ChanTools.lcssIsBroken(lcssNext)) {
-          // TODO provide the correct failure message here
-          promise.success(Some(Left(FailureCode("2002"))))
-        } else {
-          // send update_add_htlc
-          sendMessage(msg)
-            .onComplete {
-              case Failure(err) =>
-                promise.success(None)
-              case _ => {}
-            }
-
-          // send state_update
-          sendMessage(lcssNext.stateUpdate)
-
-          // update callbacks we're keeping track of
+          // but we still want to update the callbacks we're keeping track of (because we've restarted!)
           state = Active(
-            lcssNext = Some(lcssNext),
-            htlcResults = htlcResults + (msg.paymentHash -> promise)
+            Some(lcssNextBase),
+            htlcResults = htlcResults + (prototype.paymentHash -> promise)
           )
+        } else {
+          // the default case in which we add a new htlc
+          // create update_add_htlc based on the prototype we've received
+          val msg = prototype
+            .copy(id =
+              maybeLcssNext
+                .map(_.localUpdates)
+                .getOrElse(0L)
+                .toULong + 1L.toULong
+            )
+
+          // create (or modify) new lcss to be our next
+          val lcssNext = lcssNextBase
+            .copy(
+              blockDay = Main.currentBlockDay,
+              localBalanceMsat = lcssNextBase.localBalanceMsat - msg.amountMsat,
+              localUpdates = lcssNextBase.localUpdates + 1,
+              outgoingHtlcs = lcssNextBase.outgoingHtlcs :+ msg,
+              remoteSigOfLocal = ByteVector64.Zeroes
+            )
+            .withLocalSigOfRemote(Main.node.getPrivateKey())
+
+          // TODO check if fees are sufficient
+
+          // check if this new potential lcss is not stupid
+          if (ChanTools.lcssIsBroken(lcssNext)) {
+            // TODO provide the correct failure message here
+            promise.success(Some(Left(FailureCode("2002"))))
+          } else {
+            // send update_add_htlc
+            sendMessage(msg)
+              .onComplete {
+                case Failure(err) =>
+                  promise.success(None)
+                case _ => {}
+              }
+
+            // send state_update
+            sendMessage(lcssNext.stateUpdate)
+
+            // update next state and callbacks we're keeping track of
+            state = Active(
+              lcssNext = Some(lcssNext),
+              htlcResults = htlcResults + (msg.paymentHash -> promise)
+            )
+          }
         }
       }
-      case _ => {}
+
+      case _ => {
+        Main.log("can't add an HTLC in a channel that isn't Active()")
+        promise.success(None)
+      }
     }
 
     promise.future

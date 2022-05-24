@@ -119,9 +119,12 @@ object ChanTools {
   }
 
   def lcssIsBroken(lcss: LastCrossSignedState): Boolean =
-    lcss.localBalanceMsat < MilliSatoshi(0L) || (
-      lcss.initHostedChannel.channelCapacityMsat != (
-        lcss.localBalanceMsat + lcss.remoteBalanceMsat
+    lcss.localBalanceMsat < MilliSatoshi(0L) ||
+      lcss.remoteBalanceMsat < MilliSatoshi(0L) || (
+        lcss.initHostedChannel.channelCapacityMsat != (
+          lcss.localBalanceMsat + lcss.remoteBalanceMsat + (lcss.outgoingHtlcs ++ lcss.incomingHtlcs)
+            .map(_.amountMsat)
+            .fold(MilliSatoshi(0L))(_ + _)
+        )
       )
-    )
 }
