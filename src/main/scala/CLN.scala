@@ -263,12 +263,14 @@ class CLN {
               )
               .foreach {
                 case Some(Right(preimage)) => {
-                  Main.log(s"[htlc] channel $scid succeed in handling $hash")
+                  Main.log(
+                    s"[htlc] channel $scid succeed in handling $hash, preimage is ${preimage.toHex}"
+                  )
                   reply(
                     ujson
                       .Obj(
                         "result" -> "resolve",
-                        "payment_key" -> preimage.toString
+                        "payment_key" -> preimage.toHex
                       )
                   )
                 }

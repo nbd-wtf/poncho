@@ -3,8 +3,6 @@ import java.nio.ByteOrder
 import scala.concurrent.{Promise, Future}
 import scala.util.{Try, Failure, Success}
 import scala.util.chaining._
-import scala.scalanative.loop.EventLoop.loop
-import scala.scalanative.loop.Poll
 import scala.scalanative.unsigned._
 import com.softwaremill.quicklens._
 import castor.Context
@@ -248,9 +246,6 @@ class ChannelServer(peerId: String)(implicit
           .getOrElse(chandata.lcss)
 
         // find the htlc
-        Main.log(s"outgoing: ${lcssNextBase.outgoingHtlcs.size}")
-        Main.log(s"incoming: ${lcssNextBase.incomingHtlcs.size}")
-
         lcssNextBase.outgoingHtlcs.find(_.paymentHash == fulfilledHash) match {
           case Some(htlc) => {
             Main.log(s"resolving htlc ${htlc.paymentHash}")
@@ -258,11 +253,11 @@ class ChannelServer(peerId: String)(implicit
             val lcssNext =
               lcssNextBase
                 .copy(
-                  localBalanceMsat =
-                    lcssNextBase.localBalanceMsat - htlc.amountMsat,
-                  localUpdates = lcssNextBase.localUpdates + 1,
+                  remoteBalanceMsat =
+                    lcssNextBase.remoteBalanceMsat + htlc.amountMsat,
+                  remoteUpdates = lcssNextBase.remoteUpdates + 1,
                   outgoingHtlcs =
-                    lcssNextBase.outgoingHtlcs.filter(_.id == htlc.id),
+                    lcssNextBase.outgoingHtlcs.filterNot(_.id == htlc.id),
                   remoteSigOfLocal = ByteVector64.Zeroes
                 )
                 .withLocalSigOfRemote(Main.node.getPrivateKey())
@@ -311,7 +306,7 @@ class ChannelServer(peerId: String)(implicit
       // after an HTLC has been sent or received or failed or fulfilled and we've updated our local state,
       // this should be the confirmation that the other side has also updated it correctly
       // TODO this should account for situations in which peer is behind us (ignore?) and for when we're behind (keep track of the forward state?)
-      case (Active(Some(lcssNext), _), msg: StateUpdate) => {
+      case (active @ Active(Some(lcssNext), _), msg: StateUpdate) => {
         if (
           msg.remoteUpdates == lcssNext.localUpdates &&
           msg.localUpdates == lcssNext.remoteUpdates &&
@@ -328,8 +323,7 @@ class ChannelServer(peerId: String)(implicit
                   _.copy(lcss = lcss, proposedOverride = None, error = None)
                 )
             }
-            stay
-
+            active.copy(lcssNext = None)
           } else stay
         } else stay
       }
@@ -402,6 +396,7 @@ class ChannelServer(peerId: String)(implicit
         ) {
           // do not add htlc to state if it's already there (otherwise the state will be invalid)
           // this is likely to be hit on restarts as the node will replay pending htlcs on us
+          Main.log("won't forward the htlc as it's already there")
 
           // but we still want to update the callbacks we're keeping track of (because we've restarted!)
           state = Active(
@@ -412,12 +407,7 @@ class ChannelServer(peerId: String)(implicit
           // the default case in which we add a new htlc
           // create update_add_htlc based on the prototype we've received
           val msg = prototype
-            .copy(id =
-              maybeLcssNext
-                .map(_.localUpdates)
-                .getOrElse(0L)
-                .toULong + 1L.toULong
-            )
+            .copy(id = lcssNextBase.localUpdates.toULong + 1L.toULong)
 
           // create (or modify) new lcss to be our next
           val lcssNext = lcssNextBase
@@ -440,19 +430,21 @@ class ChannelServer(peerId: String)(implicit
             // send update_add_htlc
             sendMessage(msg)
               .onComplete {
-                case Failure(err) =>
+                case Success(_) => {
+                  // send state_update
+                  sendMessage(lcssNext.stateUpdate)
+
+                  // update next state and callbacks we're keeping track of
+                  state = Active(
+                    lcssNext = Some(lcssNext),
+                    htlcResults = htlcResults + (msg.paymentHash -> promise)
+                  )
+                }
+                case Failure(err) => {
+                  Main.log(s"failed to send update_add_htlc to $peerId: $err")
                   promise.success(None)
-                case _ => {}
+                }
               }
-
-            // send state_update
-            sendMessage(lcssNext.stateUpdate)
-
-            // update next state and callbacks we're keeping track of
-            state = Active(
-              lcssNext = Some(lcssNext),
-              htlcResults = htlcResults + (msg.paymentHash -> promise)
-            )
           }
         }
       }
