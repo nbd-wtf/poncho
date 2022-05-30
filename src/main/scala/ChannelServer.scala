@@ -12,8 +12,12 @@ import codecs._
 import crypto.Crypto
 import codecs.HostedChannelCodecs._
 import codecs.LightningMessageCodecs._
+import codecs.Sphinx.peel
 import scodec.bits.ByteVector
 import scodec.codecs._
+
+// TODO questions:
+// should we fail all pending incoming htlcs on our actual normal node side whenever we fail the channel (i.e. send an Error message -- or receive an error message?)
 
 case class FailureOnion(onion: ByteVector)
 case class FailureCode(code: String)
@@ -29,17 +33,19 @@ class ChannelServer(peerId: String)(implicit
   case class Inactive() extends State
   case class Opening(refundScriptPubKey: ByteVector) extends State
   case class Active(
-      lcssNext: Option[LastCrossSignedState],
-      htlcResults: Map[ByteVector32, Promise[HTLCResult]]
+      lcssNext: Option[LastCrossSignedState] = None,
+      htlcResults: Map[ULong, Promise[HTLCResult]] = Map.empty,
+      pendingMessages: List[
+        UpdateFailHtlc | UpdateFailMalformedHtlc | UpdateAddHtlc
+      ] = List.empty
   ) extends State
   case class Errored(lcssNext: Option[LastCrossSignedState]) extends State
   case class Overriding(target: LastCrossSignedState) extends State
 
   var state: State =
     Database.data.channels.get(peerId) match {
-      case Some(chandata) if chandata.isActive =>
-        Active(lcssNext = None, htlcResults = Map.empty)
-      case _ => Inactive()
+      case Some(chandata) if chandata.isActive => Active()
+      case _                                   => Inactive()
     }
 
   def stay = state
@@ -148,12 +154,12 @@ class ChannelServer(peerId: String)(implicit
           // send a channel update
           sendMessage(ChanTools.makeChannelUpdate(peerId, lcss))
 
-          Active(None, Map.empty)
+          Active()
         }
       }
 
       // a client was just turned on and is sending this to sync states
-      case (Active(_, _), msg: LastCrossSignedState) => {
+      case (Active(_, _, _), msg: LastCrossSignedState) => {
         val isLocalSigOk = msg.verifyRemoteSig(Main.node.ourPubKey)
         val isRemoteSigOk =
           msg.reverse.verifyRemoteSig(ByteVector.fromValidHex(peerId))
@@ -224,30 +230,29 @@ class ChannelServer(peerId: String)(implicit
       }
 
       // a client has lost its channel state but we have it
-      case (Active(_, _), msg: InvokeHostedChannel) => {
+      case (Active(_, _, _), msg: InvokeHostedChannel) => {
         // channel already exists, so send last cross-signed-state
         val chandata = Database.data.channels.get(peerId).get
         sendMessage(chandata.lcss)
         stay
       }
 
-      // client is sending an htlc through us
-      case (Active(maybeLcssNext, htlcResults), msg: UpdateAddHtlc) => {
-        stay
-      }
-
       // client is fulfilling an HTLC we've sent
-      case (Active(maybeLcssNext, htlcResults), msg: UpdateFulfillHtlc) => {
-        val fulfilledHash = Crypto.sha256(msg.paymentPreimage)
-        val chandata = Database.data.channels.get(peerId).get
+      case (
+            active @ Active(maybeLcssNext, htlcResults, _),
+            msg: UpdateFulfillHtlc
+          ) => {
 
         // create (or modify) new lcss to be our next
-        val lcssNextBase = maybeLcssNext
-          .getOrElse(chandata.lcss)
+        val lcssNextBase =
+          maybeLcssNext
+            .orElse(Database.data.channels.get(peerId).map(_.lcss))
+            .get
 
         // find the htlc
-        lcssNextBase.outgoingHtlcs.find(_.paymentHash == fulfilledHash) match {
-          case Some(htlc) => {
+        lcssNextBase.outgoingHtlcs.find(_.id == msg.id) match {
+          case Some(htlc)
+              if Crypto.sha256(msg.paymentPreimage) == htlc.paymentHash => {
             Main.log(s"resolving htlc ${htlc.paymentHash}")
 
             val lcssNext =
@@ -258,37 +263,33 @@ class ChannelServer(peerId: String)(implicit
                   remoteUpdates = lcssNextBase.remoteUpdates + 1,
                   outgoingHtlcs =
                     lcssNextBase.outgoingHtlcs.filterNot(_.id == htlc.id),
-                  remoteSigOfLocal = ByteVector64.Zeroes
+                  remoteSigOfLocal = ByteVector64.Zeroes,
+                  localSigOfRemote = ByteVector64.Zeroes
                 )
-                .withLocalSigOfRemote(Main.node.getPrivateKey())
 
             // check if this new potential lcss is not stupid
             if (ChanTools.lcssIsBroken(lcssNext)) {
-              // TODO what is happening?
+              // TODO we should get a proper error here and fail the channel
               Main.log(s"lcssNext is broken: $lcssNext")
               stay
             } else {
-              // send state_update
-              sendMessage(lcssNext.stateUpdate)
-
               // call our htlc callback so our node is notified
-              val s = htlcResults.get(htlc.paymentHash)
-              Main.log(
-                s"returning response to c-lightning: ${msg.paymentPreimage}"
-              )
-              s.foreach(_.success(Some(Right(msg.paymentPreimage))))
+              // we do this to guarantee our money as soon as possible
+              htlcResults
+                .get(htlc.id)
+                .foreach(_.success(Some(Right(msg.paymentPreimage))))
 
               // update state (lcssNext, plus remove this from the callbacks we're keeping track of)
-              Active(
+              active.copy(
                 lcssNext = Some(lcssNext),
                 htlcResults =
                   htlcResults.filter((hash, _) => hash != htlc.paymentHash)
               )
             }
           }
-          case None => {
+          case _ => {
             Main.log(
-              s"client has fulfilled an HTLC we don't know about: ${fulfilledHash}"
+              s"client has fulfilled an HTLC we don't know about (or used a wrong preimage): ${msg}"
             )
             stay
           }
@@ -297,25 +298,135 @@ class ChannelServer(peerId: String)(implicit
 
       // client is failing an HTLC we've sent
       case (
-            Active(maybeLcssNext, htlcResults),
+            active @ Active(maybeLcssNext, _, pendingMessages),
             msg: (UpdateFailHtlc | UpdateFailMalformedHtlc)
           ) => {
-        stay
+        val lcssNextBase =
+          maybeLcssNext
+            .orElse(Database.data.channels.get(peerId).map(_.lcss))
+            .get
+
+        val htlcId = msg match {
+          case x: UpdateFailHtlc          => x.id;
+          case x: UpdateFailMalformedHtlc => x.id
+        }
+
+        // TODO check if 'reason' is not empty
+
+        // we just update our local next state here and wait to actually tell the node
+        // to fail the payment when we get their signed StateUpdate
+        lcssNextBase.outgoingHtlcs.find(_.id == htlcId) match {
+          case Some(htlc) => {
+            val lcssNext = lcssNextBase.copy(
+              localBalanceMsat =
+                lcssNextBase.localBalanceMsat + htlc.amountMsat,
+              remoteUpdates = lcssNextBase.remoteUpdates + 1,
+              outgoingHtlcs =
+                lcssNextBase.outgoingHtlcs.filterNot(_.id == htlc.id),
+              remoteSigOfLocal = ByteVector64.Zeroes,
+              localSigOfRemote = ByteVector64.Zeroes
+            )
+
+            if (ChanTools.lcssIsBroken(lcssNext)) {
+              // TODO send an error to this invalid client?
+              stay
+            } else {
+              active.copy(
+                lcssNext = Some(lcssNext),
+                pendingMessages = pendingMessages :+ msg
+              )
+            }
+          }
+          case None => {
+            Main.log(s"client has failed an HTLC we don't know: ${msg}")
+            stay
+          }
+        }
+      }
+
+      // client is sending an htlc through us
+      case (
+            active @ Active(maybeLcssNext, _, pendingMessages),
+            msg: UpdateAddHtlc
+          ) => {
+        val lcssNextBase =
+          maybeLcssNext
+            .orElse(Database.data.channels.get(peerId).map(_.lcss))
+            .get
+
+          // TODO check if fees are ok
+
+          // we just update our local next state here and wait to actually tell the node
+          // to send the payment when we get their signed StateUpdate
+        val lcssNext = lcssNextBase.copy(
+          remoteBalanceMsat = lcssNextBase.remoteBalanceMsat - msg.amountMsat,
+          remoteUpdates = lcssNextBase.remoteUpdates + 1,
+          incomingHtlcs = lcssNextBase.incomingHtlcs :+ msg,
+          remoteSigOfLocal = ByteVector64.Zeroes,
+          localSigOfRemote = ByteVector64.Zeroes
+        )
+
+        if (ChanTools.lcssIsBroken(lcssNext)) {
+          // TODO send an error to this invalid client?
+          stay
+        } else {
+          active.copy(lcssNext = Some(lcssNext))
+        }
       }
 
       // after an HTLC has been sent or received or failed or fulfilled and we've updated our local state,
       // this should be the confirmation that the other side has also updated it correctly
       // TODO this should account for situations in which peer is behind us (ignore?) and for when we're behind (keep track of the forward state?)
-      case (active @ Active(Some(lcssNext), _), msg: StateUpdate) => {
+      case (
+            Active(Some(lcssNext), htlcResults, pendingMessages),
+            msg: StateUpdate
+          ) => {
+        Main.log(s"updating our local state after a transition")
         if (
           msg.remoteUpdates == lcssNext.localUpdates &&
           msg.localUpdates == lcssNext.remoteUpdates &&
           msg.blockDay == lcssNext.blockDay
         ) {
-          // it seems ok
+          Main.log("it seems ok")
+          // it seems we and the client are now even
+
+          // relay pending messages to node
+          pendingMessages.foreach {
+            // i.e. and fail htlcs if any
+            case fail: UpdateFailHtlc =>
+              htlcResults
+                .get(fail.id)
+                .foreach(_.success(Some(Left(FailureCode("2002")))))
+            case fail: UpdateFailMalformedHtlc =>
+              htlcResults
+                .get(fail.id)
+                .foreach(_.success(Some(Left(FailureCode("2002")))))
+            case add: UpdateAddHtlc => {
+              // and send payments to the external world
+
+              // TODO: decode onion, get next peer, send onion
+              // TODO check if fee and cltv delta are correct
+              Sphinx.peel(
+                Main.node.getPrivateKey(),
+                Some(add.paymentHash),
+                add.onionRoutingPacket
+              ) match {
+                case Success(onion) => {
+                  // onion is decoded
+                  Main.node.getPeerFromChannel(onion.channelId)
+                  // Main.node.sendOnion()
+                }
+                case Failure(_) =>
+                // TODO fail the payment
+              }
+            }
+          }
+
+          // save this cross-signed state
           val lcss = lcssNext.copy(remoteSigOfLocal = msg.localSigOfRemoteLCSS)
           if (lcss.verifyRemoteSig(ByteVector.fromValidHex(peerId))) {
             // update state on the database
+            Main.log(s"saving on db: $lcss")
             Database.update { data =>
               data
                 .modify(_.channels.at(peerId))
@@ -323,7 +434,7 @@ class ChannelServer(peerId: String)(implicit
                   _.copy(lcss = lcss, proposedOverride = None, error = None)
                 )
             }
-            active.copy(lcssNext = None)
+            Active()
           } else stay
         } else stay
       }
@@ -353,13 +464,13 @@ class ChannelServer(peerId: String)(implicit
             sendMessage(ChanTools.makeChannelUpdate(peerId, lcss))
 
             // channel is active again
-            Active(None, Map.empty)
+            Active()
           } else stay
         } else stay
       }
 
       // client is sending an error
-      case (Active(maybeLcssNext, _), msg: Error) => {
+      case (Active(maybeLcssNext, _, _), msg: Error) => {
         Database.update { data =>
           data.modify(_.channels.at(peerId).error).setTo(Some(msg))
         }
@@ -368,6 +479,7 @@ class ChannelServer(peerId: String)(implicit
 
       case _ => stay
     }
+    Main.log(s"    ~ afterwards $state ~")
   }
 
   def addHTLC(prototype: UpdateAddHtlc): Future[HTLCResult] = {
@@ -375,9 +487,11 @@ class ChannelServer(peerId: String)(implicit
 
     Main.log(s"forwarding payment $state <-- $prototype")
     state match {
-      case Active(maybeLcssNext, htlcResults) => {
-        val chandata = Database.data.channels.get(peerId).get
-        val lcssNextBase = maybeLcssNext.getOrElse(chandata.lcss)
+      case active @ Active(maybeLcssNext, htlcResults, _) => {
+        val lcssNextBase =
+          maybeLcssNext
+            .orElse(Database.data.channels.get(peerId).map(_.lcss))
+            .get
 
         if (
           lcssNextBase.incomingHtlcs.exists(
@@ -399,9 +513,9 @@ class ChannelServer(peerId: String)(implicit
           Main.log("won't forward the htlc as it's already there")
 
           // but we still want to update the callbacks we're keeping track of (because we've restarted!)
-          state = Active(
-            Some(lcssNextBase),
-            htlcResults = htlcResults + (prototype.paymentHash -> promise)
+          state = active.copy(
+            lcssNext = Some(lcssNextBase),
+            htlcResults = htlcResults + (prototype.id -> promise)
           )
         } else {
           // the default case in which we add a new htlc
@@ -437,7 +551,7 @@ class ChannelServer(peerId: String)(implicit
                   // update next state and callbacks we're keeping track of
                   state = Active(
                     lcssNext = Some(lcssNext),
-                    htlcResults = htlcResults + (msg.paymentHash -> promise)
+                    htlcResults = htlcResults + (msg.id -> promise)
                   )
                 }
                 case Failure(err) => {
@@ -460,19 +574,21 @@ class ChannelServer(peerId: String)(implicit
 
   def stateOverride(newLocalBalance: MilliSatoshi): Future[String] = {
     state match {
-      case Errored(lcssNext) => {
-        val lcssBase =
-          lcssNext.getOrElse(Database.data.channels.get(peerId).get.lcss)
+      case Errored(maybeLcssNext) => {
+        val lcssNextBase =
+          maybeLcssNext
+            .orElse(Database.data.channels.get(peerId).map(_.lcss))
+            .get
 
-        val lcssOverride = lcssBase
+        val lcssOverride = lcssNextBase
           .copy(
             localBalanceMsat = newLocalBalance,
             remoteBalanceMsat =
-              lcssBase.initHostedChannel.channelCapacityMsat - newLocalBalance,
+              lcssNextBase.initHostedChannel.channelCapacityMsat - newLocalBalance,
             incomingHtlcs = Nil,
             outgoingHtlcs = Nil,
-            localUpdates = lcssBase.localUpdates + 1,
-            remoteUpdates = lcssBase.remoteUpdates + 1,
+            localUpdates = lcssNextBase.localUpdates + 1,
+            remoteUpdates = lcssNextBase.remoteUpdates + 1,
             blockDay = Main.currentBlockDay,
             remoteSigOfLocal = ByteVector64.Zeroes
           )

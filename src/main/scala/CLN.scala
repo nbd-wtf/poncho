@@ -120,6 +120,9 @@ class CLN {
     rpc("getchaininfo", ujson.Obj())
       .map(_("headercount").num.toLong / 144)
 
+  def getPeerFromChannel(scid: ShortChannelId): ByteVector =
+    ByteVector.empty // TODO
+
   def sendCustomMessage(
       peerId: String,
       message: HostedServerMessage | HostedClientMessage
@@ -144,6 +147,27 @@ class CLN {
       ujson.Obj(
         "node_id" -> peerId,
         "msg" -> payload
+      )
+    )
+  }
+
+  def sendOnion(
+      paymentHash: ByteVector32,
+      firstHop: PublicKey,
+      amount: MilliSatoshi,
+      cltvExpiryDelta: CltvExpiryDelta,
+      onion: ByteVector
+  ): Unit = {
+    rpc(
+      "sendonion",
+      ujson.Obj(
+        "first_hop" -> ujson.Obj(
+          "id" -> firstHop.toHex,
+          "amount_msat" -> s"${amount.toLong}msat",
+          "delay" -> cltvExpiryDelta.toInt
+        ),
+        "onion" -> onion.toHex,
+        "payment_hash": paymentHash.toHex
       )
     )
   }

@@ -8,6 +8,8 @@ import scodec.bits.{BitVector, ByteVector}
 import scodec.codecs._
 import scodec.{Attempt, Codec, DecodeResult, Err, SizeBound}
 
+import crypto.Hmac256
+
 object CommonCodecs {
   def discriminatorWithDefault[A](
       discriminator: Codec[A],
@@ -119,6 +121,22 @@ object CommonCodecs {
 
   val cltvExpiryDelta: Codec[CltvExpiryDelta] =
     uint16.xmapc(CltvExpiryDelta.apply)(_.toInt)
+
+    /** When encoding, prepend a valid mac to the output of the given codec.
+      * When decoding, verify that a valid mac is prepended.
+      */
+  def prependmac[A](codec: Codec[A], mac: Hmac256): Codec[A] = Codec[A](
+    (a: A) =>
+      codec.encode(a).map(bits => mac.mac(bits.toByteVector).bits ++ bits),
+    (bits: BitVector) =>
+      ("mac" | bytes32).decode(bits) match {
+        case Attempt.Successful(DecodeResult(msgMac, remainder))
+            if mac.verify(msgMac, remainder.toByteVector) =>
+          codec.decode(remainder)
+        case Attempt.Successful(_) => Attempt.Failure(scodec.Err("invalid mac"))
+        case Attempt.Failure(err)  => Attempt.Failure(err)
+      }
+  )
 
   case class Color(r: Byte, g: Byte, b: Byte) {
     override def toString: String =

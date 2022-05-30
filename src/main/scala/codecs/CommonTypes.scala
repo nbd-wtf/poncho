@@ -75,6 +75,7 @@ object CltvExpiry {
 case class ByteVector32(bytes: ByteVector) {
   require(bytes.size == 32, s"size must be 32 bytes, is ${bytes.size} bytes")
   def reverse: ByteVector32 = ByteVector32(bytes.reverse)
+  def toHex = bytes.toHex
   override def toString: String = bytes.toHex
 }
 

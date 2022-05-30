@@ -11,5 +11,6 @@ libraryDependencies   ++= Seq(
   "com.lihaoyi" %%% "upickle" % "1.6.0",
   "com.lihaoyi" %%% "ujson" % "1.6.0",
   "com.fiatjaf" %%% "sn-sha256" % "0.3.0",
-  "com.fiatjaf" %%% "sn-secp256k1" % "0.1.0"
+  "com.fiatjaf" %%% "sn-secp256k1" % "0.2.0-SNAPSHOT",
+  "com.fiatjaf" %%% "sn-chacha20poly1305" % "0.2.1"
 )

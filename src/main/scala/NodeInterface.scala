@@ -6,17 +6,27 @@ import scala.concurrent.Future
 
 import scodec.bits.ByteVector
 import scodec.codecs.uint16
+
 import codecs.HostedChannelCodecs._
 import codecs._
+import crypto.{PublicKey, PrivateKey}
 
 trait NodeInterface {
-  def getPrivateKey(): ByteVector32
-  lazy val ourPubKey: ByteVector
+  def getPrivateKey(): PrivateKey
+  def ourPubKey: PublicKey
 
+  def getPeerFromChannel(scid: ShortChannelId): ByteVector
   def sendCustomMessage(
       peerId: String,
       tag: Int,
       message: ByteVector
+  ): Unit
+  def sendOnion(
+      paymentHash: ByteVector32,
+      firstHop: PublicKey,
+      amount: MilliSatoshi,
+      cltvExpiryDelta: CltvExpiryDelta,
+      onion: ByteVector
   ): Unit
   def getCurrentBlockDay(): Future[Long]
   def getChainHash(): Future[ByteVector32]
