@@ -7,6 +7,7 @@ import scala.scalanative.unsigned._
 import com.softwaremill.quicklens._
 import castor.Context
 import upickle.default.{ReadWriter, macroRW}
+import scodec.{DecodeResult, Attempt}
 
 import codecs._
 import crypto.Crypto
@@ -239,7 +240,7 @@ class ChannelServer(peerId: String)(implicit
 
       // client is fulfilling an HTLC we've sent
       case (
-            active @ Active(maybeLcssNext, htlcResults, _),
+            active @ Active(maybeLcssNext, htlcResults, x),
             msg: UpdateFulfillHtlc
           ) => {
 
@@ -275,6 +276,8 @@ class ChannelServer(peerId: String)(implicit
             } else {
               // call our htlc callback so our node is notified
               // we do this to guarantee our money as soon as possible
+              System.err.println(s"results pending: $htlcResults")
+              System.err.println(s"that other thing: $x")
               htlcResults
                 .get(htlc.id)
                 .foreach(_.success(Some(Right(msg.paymentPreimage))))
@@ -404,20 +407,60 @@ class ChannelServer(peerId: String)(implicit
             case add: UpdateAddHtlc => {
               // and send payments to the external world
 
-              // TODO: decode onion, get next peer, send onion
-              // TODO check if fee and cltv delta are correct
-              Sphinx.peel(
-                Main.node.getPrivateKey(),
-                Some(add.paymentHash),
-                add.onionRoutingPacket
-              ) match {
-                case Success(onion) => {
-                  // onion is decoded
-                  Main.node.getPeerFromChannel(onion.channelId)
-                  // Main.node.sendOnion()
+              // decode onion
+              PaymentOnionCodecs.paymentOnionPacketCodec
+                .decode(add.onionRoutingPacket.toBitVector)
+                .toEither match {
+                case Left(_) => {
+                  // TODO reply with UpdateFailMalformedHtlc
                 }
-                case Failure(_) =>
-                // TODO fail the payment
+                case Right(onion) =>
+                  Sphinx.peel(
+                    Main.node.getPrivateKey(),
+                    Some(add.paymentHash),
+                    onion.value
+                  ) match {
+                    case Left(badOnion) => Left(badOnion)
+                    case Right(
+                          p @ Sphinx.DecryptedPacket(payload, nextPacket, _)
+                        ) =>
+                      PaymentOnionCodecs
+                        .paymentOnionPerHopPayloadCodec(p.isLastPacket)
+                        .decode(payload.bits) match {
+                        case Attempt.Successful(
+                              DecodeResult(perHopPayload, _)
+                            ) =>
+                          Right((perHopPayload, nextPacket))
+                        case Attempt.Failure(
+                              e: OnionRoutingCodecs.MissingRequiredTlv
+                            ) =>
+                          Left(e.failureMessage)
+                        case Attempt.Failure(_) =>
+                          Left(InvalidOnionPayload(0.toULong, 0))
+                      }
+                  } match {
+                    case Left(failureMessage) => {
+                      // TODO reply with failure
+                    }
+                    case Right((payload: PaymentOnion.FinalTlvPayload, _)) => {
+                      // TODO we're receiving the payment? this is weird but possible.
+                      // figure out how to handle this later, it probably involves checking our parent node invoices.
+                      // could also be a trampoline, so when we want to support that we'll have to look again at the
+                      // eclair code to see how they're doing it.
+                    }
+                    case Right(
+                          (
+                            payload: PaymentOnion.ChannelRelayPayload,
+                            next
+                          )
+                        ) => {
+                      // TODO check if fee and cltv delta are correct
+                      // TODO get next peer, send onion
+                      System.err.println(s"got an onion: $payload")
+                      // Main.node.getPeerFromChannel(payload.outgoingChannelId)
+                      // Main.node.sendOnion()
+                    }
+                  }
               }
             }
           }
@@ -513,9 +556,12 @@ class ChannelServer(peerId: String)(implicit
           Main.log("won't forward the htlc as it's already there")
 
           // but we still want to update the callbacks we're keeping track of (because we've restarted!)
+          val add = lcssNextBase.outgoingHtlcs
+            .find(_.paymentHash == prototype.paymentHash)
+            .get
           state = active.copy(
             lcssNext = Some(lcssNextBase),
-            htlcResults = htlcResults + (prototype.id -> promise)
+            htlcResults = htlcResults + (add.id -> promise)
           )
         } else {
           // the default case in which we add a new htlc
@@ -523,13 +569,15 @@ class ChannelServer(peerId: String)(implicit
           val msg = prototype
             .copy(id = lcssNextBase.localUpdates.toULong + 1L.toULong)
 
-          // create (or modify) new lcss to be our next
-          val lcssNext = lcssNextBase
+          // prepare modification to new lcss to be our next
+          def prepareNextLcss(
+              lcssBase: LastCrossSignedState
+          ): LastCrossSignedState = lcssBase
             .copy(
               blockDay = Main.currentBlockDay,
-              localBalanceMsat = lcssNextBase.localBalanceMsat - msg.amountMsat,
-              localUpdates = lcssNextBase.localUpdates + 1,
-              outgoingHtlcs = lcssNextBase.outgoingHtlcs :+ msg,
+              localBalanceMsat = lcssBase.localBalanceMsat - msg.amountMsat,
+              localUpdates = lcssBase.localUpdates + 1,
+              outgoingHtlcs = lcssBase.outgoingHtlcs :+ msg,
               remoteSigOfLocal = ByteVector64.Zeroes
             )
             .withLocalSigOfRemote(Main.node.getPrivateKey())
@@ -537,23 +585,42 @@ class ChannelServer(peerId: String)(implicit
           // TODO check if fees are sufficient
 
           // check if this new potential lcss is not stupid
-          if (ChanTools.lcssIsBroken(lcssNext)) {
+          if (ChanTools.lcssIsBroken(prepareNextLcss(lcssNextBase))) {
             // TODO provide the correct failure message here
             promise.success(Some(Left(FailureCode("2002"))))
           } else {
-            // send update_add_htlc
+            // will send update_add_htlc to hosted client
+            //
+            // but first we update the callbacks we're keeping track of
+            state = active.copy(htlcResults = htlcResults + (msg.id -> promise))
+
             sendMessage(msg)
               .onComplete {
-                case Success(_) => {
-                  // send state_update
-                  sendMessage(lcssNext.stateUpdate)
+                case Success(_) =>
+                  state match {
+                    case active @ Active(maybeLcssNext, _, _) => {
+                      // only here we create, commit and send the next state update
+                      val lcssNext = prepareNextLcss(
+                        maybeLcssNext
+                          .orElse(
+                            Database.data.channels.get(peerId).map(_.lcss)
+                          )
+                          .get
+                      )
 
-                  // update next state and callbacks we're keeping track of
-                  state = Active(
-                    lcssNext = Some(lcssNext),
-                    htlcResults = htlcResults + (msg.id -> promise)
-                  )
-                }
+                      // prepare next
+                      state = active.copy(lcssNext = Some(lcssNext))
+
+                      // send state_update
+                      sendMessage(lcssNext.stateUpdate)
+                    }
+                    case _ => {
+                      // some error must have happened if we arrive here
+                      Main.log(
+                        "channel changed from Active to something else in the course of sending the update_add_htlc"
+                      )
+                    }
+                  }
                 case Failure(err) => {
                   Main.log(s"failed to send update_add_htlc to $peerId: $err")
                   promise.success(None)
@@ -600,7 +667,7 @@ class ChannelServer(peerId: String)(implicit
           .map((v: ujson.Value) => v("status").str)
       }
       case _ => {
-        Future { s"can't send to this channel since it is not active." }
+        Future { s"can't send to this channel since it is not errored." }
       }
     }
   }

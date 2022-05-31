@@ -167,7 +167,7 @@ class CLN {
           "delay" -> cltvExpiryDelta.toInt
         ),
         "onion" -> onion.toHex,
-        "payment_hash": paymentHash.toHex
+        "payment_hash" -> paymentHash.toHex
       )
     )
   }
