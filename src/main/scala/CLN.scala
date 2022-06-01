@@ -28,7 +28,10 @@ class CLN {
 
   Timer.timeout(FiniteDuration(10, "seconds")) { () => onStartup = false }
 
-  def rpc(method: String, params: ujson.Obj): Future[ujson.Value] = {
+  def rpc(
+      method: String,
+      params: ujson.Obj = ujson.Obj()
+  ): Future[ujson.Value] = {
     if (rpcAddr == "") {
       return Future.failed(PonchoException("rpc address is not known yet"))
     }
@@ -121,11 +124,21 @@ class CLN {
       .map(ByteVector32.fromValidHex(_))
 
   def getCurrentBlockDay(): Future[Long] =
-    rpc("getchaininfo", ujson.Obj())
-      .map(_("headercount").num.toLong / 144)
+    rpc("getchaininfo").map(_("headercount").num.toLong / 144)
 
-  def getPeerFromChannel(scid: ShortChannelId): ByteVector =
-    ByteVector.empty // TODO
+  def getPeerFromChannel(scid: ShortChannelId): Future[Option[PublicKey]] =
+    rpc("listfunds").map(res =>
+      res("channels").arr
+        .filter(chan =>
+          if chan.obj.contains("short_channel_id") then
+            chan(
+              "short_channel_id"
+            ).str == scid.toString
+          else false
+        )
+        .map(peer => ByteVector.fromValidHex(peer("peer_id").str))
+        .headOption
+    )
 
   def sendCustomMessage(
       peerId: String,
@@ -161,7 +174,19 @@ class CLN {
       amount: MilliSatoshi,
       cltvExpiryDelta: CltvExpiryDelta,
       onion: ByteVector
-  ): Unit = {
+  ): Future[ujson.Value] = {
+    System.err.println(s"calling sendonion with ${ujson
+        .Obj(
+          "first_hop" -> ujson.Obj(
+            "id" -> firstHop.toHex,
+            "amount_msat" -> s"${amount.toLong}msat",
+            "delay" -> cltvExpiryDelta.toInt
+          ),
+          "onion" -> onion.toHex,
+          "payment_hash" -> paymentHash.toHex
+        )
+        .toString}")
+
     rpc(
       "sendonion",
       ujson.Obj(
@@ -273,6 +298,10 @@ class CLN {
         )(() => {
           val htlc = data("htlc")
           val onion = data("onion")
+
+          // if we're the final hop of an htlc this property won't exist
+          if (!onion.obj.contains("short_channel_id")) return
+
           val scid = ShortChannelId(onion("short_channel_id").str)
           val hash = ByteVector32.fromValidHex(htlc("payment_hash").str)
           val amount = onion("forward_amount").str.dropRight(4).toInt

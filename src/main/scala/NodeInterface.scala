@@ -27,7 +27,7 @@ trait NodeInterface {
       amount: MilliSatoshi,
       cltvExpiryDelta: CltvExpiryDelta,
       onion: ByteVector
-  ): Unit
+  ): Future[ujson.Value]
   def getCurrentBlockDay(): Future[Long]
   def getChainHash(): Future[ByteVector32]
 
