@@ -243,6 +243,7 @@ class ChannelServer(peerId: String)(implicit
             active @ Active(maybeLcssNext, htlcResults, x),
             msg: UpdateFulfillHtlc
           ) => {
+        Main.log(s"got fulfill!")
 
         // create (or modify) new lcss to be our next
         val lcssNextBase =
@@ -285,8 +286,8 @@ class ChannelServer(peerId: String)(implicit
               // update state (lcssNext, plus remove this from the callbacks we're keeping track of)
               active.copy(
                 lcssNext = Some(lcssNext),
-                htlcResults =
-                  htlcResults.filter((hash, _) => hash != htlc.paymentHash)
+                htlcResults = htlcResults
+                  .filterNot((hash, _) => hash == htlc.paymentHash)
               )
             }
           }
@@ -385,6 +386,8 @@ class ChannelServer(peerId: String)(implicit
             msg: StateUpdate
           ) => {
         Main.log(s"updating our local state after a transition")
+        // this won't be triggered if we don't have a pending next lcss
+
         if (
           msg.remoteUpdates == lcssNext.localUpdates &&
           msg.localUpdates == lcssNext.remoteUpdates &&
@@ -466,7 +469,9 @@ class ChannelServer(peerId: String)(implicit
           }
 
           // save this cross-signed state
-          val lcss = lcssNext.copy(remoteSigOfLocal = msg.localSigOfRemoteLCSS)
+          val lcss = lcssNext
+            .copy(remoteSigOfLocal = msg.localSigOfRemoteLCSS)
+            .withLocalSigOfRemote(Main.node.getPrivateKey())
           if (lcss.verifyRemoteSig(ByteVector.fromValidHex(peerId))) {
             // update state on the database
             Main.log(s"saving on db: $lcss")
@@ -477,7 +482,17 @@ class ChannelServer(peerId: String)(implicit
                   _.copy(lcss = lcss, proposedOverride = None, error = None)
                 )
             }
-            Active()
+
+            // send our state update
+            sendMessage(lcss.stateUpdate)
+
+            // keep new Active state except for the htlcResults promises we keep tracking
+            // (but cleaned up of the ones that were already fulfilled)
+            Active(
+              htlcResults = htlcResults.filterNot((_, promise) =>
+                promise.future.isCompleted
+              )
+            )
           } else stay
         } else stay
       }
@@ -593,6 +608,7 @@ class ChannelServer(peerId: String)(implicit
             //
             // but first we update the callbacks we're keeping track of
             state = active.copy(htlcResults = htlcResults + (msg.id -> promise))
+            Main.log(s"sending update_add_htlc, tracking htlcResults: $state")
 
             sendMessage(msg)
               .onComplete {
@@ -612,6 +628,9 @@ class ChannelServer(peerId: String)(implicit
                       state = active.copy(lcssNext = Some(lcssNext))
 
                       // send state_update
+                      Main.log(
+                        s"sending state_update, tracking next lcss: $lcssNext"
+                      )
                       sendMessage(lcssNext.stateUpdate)
                     }
                     case _ => {
@@ -639,7 +658,7 @@ class ChannelServer(peerId: String)(implicit
     promise.future
   }
 
-  def stateOverride(newLocalBalance: MilliSatoshi): Future[String] = {
+  def proposeOverride(newLocalBalance: MilliSatoshi): Future[String] = {
     state match {
       case Errored(maybeLcssNext) => {
         val lcssNextBase =
@@ -662,12 +681,27 @@ class ChannelServer(peerId: String)(implicit
           .withLocalSigOfRemote(Main.node.getPrivateKey())
 
         state = Overriding(lcssOverride)
+        sendMessage(lcssOverride.stateOverride)
+          .map((v: ujson.Value) => v("status").str)
+      }
+      case Overriding(target) => {
+        val lcssOverride = target
+          .copy(
+            localBalanceMsat = newLocalBalance,
+            remoteBalanceMsat =
+              target.initHostedChannel.channelCapacityMsat - newLocalBalance,
+            blockDay = Main.currentBlockDay
+          )
+          .withLocalSigOfRemote(Main.node.getPrivateKey())
 
+        state = Overriding(lcssOverride)
         sendMessage(lcssOverride.stateOverride)
           .map((v: ujson.Value) => v("status").str)
       }
       case _ => {
-        Future { s"can't send to this channel since it is not errored." }
+        Future {
+          s"can't send to this channel since it is not errored or in overriding state."
+        }
       }
     }
   }
