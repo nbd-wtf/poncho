@@ -19,6 +19,7 @@ sealed trait HostedClientMessage
 sealed trait HostedServerMessage
 sealed trait HostedGossipMessage
 sealed trait HostedPreimageMessage
+sealed trait ChannelModifier
 
 case class InvokeHostedChannel(
     chainHash: ByteVector32,
@@ -265,6 +266,7 @@ case class UpdateAddHtlc(
     tlvStream: TlvStream[UpdateAddHtlcTlv] = TlvStream.empty
 ) extends HostedClientMessage
     with HostedServerMessage
+    with ChannelModifier
 
 case class UpdateFulfillHtlc(
     channelId: ByteVector32,
@@ -273,6 +275,7 @@ case class UpdateFulfillHtlc(
     tlvStream: TlvStream[UpdateFulfillHtlcTlv] = TlvStream.empty
 ) extends HostedClientMessage
     with HostedServerMessage
+    with ChannelModifier
 
 case class UpdateFailHtlc(
     channelId: ByteVector32,
@@ -281,6 +284,7 @@ case class UpdateFailHtlc(
     tlvStream: TlvStream[UpdateFailHtlcTlv] = TlvStream.empty
 ) extends HostedClientMessage
     with HostedServerMessage
+    with ChannelModifier
 
 case class UpdateFailMalformedHtlc(
     channelId: ByteVector32,
@@ -290,6 +294,7 @@ case class UpdateFailMalformedHtlc(
     tlvStream: TlvStream[UpdateFailMalformedHtlcTlv] = TlvStream.empty
 ) extends HostedClientMessage
     with HostedServerMessage
+    with ChannelModifier
 
 case class ChannelAnnouncement(
     nodeSignature1: Signature,

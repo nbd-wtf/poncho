@@ -1,8 +1,10 @@
+import scala.scalanative.unsigned._
 import scala.util.{Failure, Success}
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.collection.mutable
 import castor.Context.Simple.global
 import scodec.bits.ByteVector
+import scodec.{DecodeResult}
 
 import codecs._
 import crypto.Crypto
@@ -127,4 +129,65 @@ object ChanTools {
             .fold(MilliSatoshi(0L))(_ + _)
         )
       )
+
+  def parseClientOnion(
+      add: UpdateAddHtlc
+  ): Either[
+    Exception | UpdateFailHtlc | UpdateFailMalformedHtlc,
+    (PaymentOnion.PaymentPacket, ByteVector)
+  ] =
+    PaymentOnionCodecs.paymentOnionPacketCodec
+      .decode(add.onionRoutingPacket.toBitVector)
+      .toEither match {
+      case Left(err) =>
+        // TODO return something here that indicates we must fail this channel
+        Left(Exception(""))
+      case Right(onion) =>
+        Sphinx.peel(
+          Main.node.getPrivateKey(),
+          Some(add.paymentHash),
+          onion.value
+        ) match {
+          case Left(badOnion) =>
+            Left(
+              UpdateFailMalformedHtlc(
+                add.channelId,
+                add.id,
+                badOnion.onionHash,
+                badOnion.code
+              )
+            )
+          case Right(
+                packet @ Sphinx.DecryptedPacket(payload, nextPacket, _)
+              ) =>
+            PaymentOnionCodecs
+              .paymentOnionPerHopPayloadCodec(packet.isLastPacket)
+              .decode(payload.bits)
+              .toEither match {
+              case Right(DecodeResult(packet, next)) =>
+                Right((packet, next.toByteVector))
+              case Left(e: OnionRoutingCodecs.MissingRequiredTlv) =>
+                Left(
+                  UpdateFailHtlc(
+                    add.channelId,
+                    add.id,
+                    Sphinx.FailurePacket
+                      .create(packet.sharedSecret, e.failureMessage)
+                  )
+                )
+              case Left(_) =>
+                Left(
+                  UpdateFailHtlc(
+                    add.channelId,
+                    add.id,
+                    Sphinx.FailurePacket
+                      .create(
+                        packet.sharedSecret,
+                        InvalidOnionPayload(0.toULong, 0)
+                      )
+                  )
+                )
+            }
+        }
+    }
 }
