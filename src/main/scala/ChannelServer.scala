@@ -7,14 +7,15 @@ import scala.scalanative.unsigned._
 import com.softwaremill.quicklens._
 import castor.Context
 import upickle.default.{ReadWriter, macroRW}
-
-import codecs._
-import crypto.Crypto
-import codecs.HostedChannelCodecs._
-import codecs.LightningMessageCodecs._
-import codecs.Sphinx.peel
 import scodec.bits.ByteVector
 import scodec.codecs._
+
+import codecs._
+import codecs.HostedChannelCodecs._
+import codecs.LightningMessageCodecs._
+import crypto.Crypto
+
+import ChanTools.OnionParseResult
 
 // -- questions:
 // should we fail all pending incoming htlcs on our actual normal node side whenever we fail the channel (i.e. send an Error message -- or receive an error message?)
@@ -429,8 +430,8 @@ class ChannelServer(peerId: String)(implicit
           ) => {
         // TODO check if fee and cltv delta etc are correct, otherwise fail the channel
         ChanTools.parseClientOnion(msg) match {
-          case Right((packet, _)) => {}
-          case _                  => {}
+          case Right(OnionParseResult(packet, _, _)) => {}
+          case _                                     => {}
         }
 
         val updated = active.addUncommittedUpdate(FromRemote(msg))
@@ -494,7 +495,13 @@ class ChannelServer(peerId: String)(implicit
                     // TODO reply with failure
                     Main.log(s"failure: $fail")
                   }
-                  case Right((payload: PaymentOnion.FinalTlvPayload, _)) => {
+                  case Right(
+                        OnionParseResult(
+                          payload: PaymentOnion.FinalTlvPayload,
+                          _,
+                          _
+                        )
+                      ) => {
                     // TODO we're receiving the payment? this is weird but possible.
                     // figure out how to handle this later, it probably involves checking our parent node invoices.
                     // could also be a trampoline, so when we want to support that we'll have to look again at the
@@ -504,9 +511,10 @@ class ChannelServer(peerId: String)(implicit
                     )
                   }
                   case Right(
-                        (
+                        OnionParseResult(
                           payload: PaymentOnion.ChannelRelayPayload,
-                          nextOnion: ByteVector
+                          nextOnion: ByteVector,
+                          sharedSecret: ByteVector32
                         )
                       ) => {
                     System.err.println(s"got an onion: $payload")
@@ -522,6 +530,8 @@ class ChannelServer(peerId: String)(implicit
                         case Success(Some(nodeid)) =>
                           Main.node
                             .sendOnion(
+                              hostedPeerId = peerId,
+                              htlcId = add.id,
                               paymentHash = add.paymentHash,
                               firstHop = nodeid,
                               amount = payload.amountToForward,
@@ -714,6 +724,85 @@ class ChannelServer(peerId: String)(implicit
     }
 
     promise.future
+  }
+
+  def upstreamPaymentFailure(htlcId: ULong): Unit = {
+    scala.concurrent.ExecutionContext.global.execute(() => {
+      state match {
+        case active: Active => {
+          active.lcssNext.outgoingHtlcs.find(_.id == htlcId) match {
+            case Some(htlc) => {
+              ChanTools.parseClientOnion(htlc) match {
+                case Right(OnionParseResult(packet, _, sharedSecret)) => {
+                  val fail = UpdateFailHtlc(
+                    ChanTools.getChannelId(peerId),
+                    htlcId,
+                    Sphinx.FailurePacket // TODO accept failure onions from upstream and just wrap them here
+                      .create(sharedSecret, TemporaryNodeFailure)
+                  )
+
+                  sendMessage(fail)
+                    .onComplete {
+                      case Success(_) => {
+                        state match {
+                          case active: Active => {
+                            val updated =
+                              active.addUncommittedUpdate(FromLocal(fail))
+                            state = updated
+                            sendMessage(updated.lcssNext.stateUpdate)
+                          }
+                          case _ => {}
+                        }
+                      }
+                      case _ => {}
+                    }
+                }
+                case _ => {} // should never happen
+              }
+            }
+            case None => {} // should never happen
+          }
+        }
+        case _ => {
+          // TODO what to do when a payment fails upstream and the channel is not active
+        }
+      }
+    })
+  }
+
+  def upstreamPaymentSuccess(
+      htlcId: ULong,
+      preimage: ByteVector32
+  ): Unit = {
+    scala.concurrent.ExecutionContext.global.execute(() => {
+      state match {
+        case active: Active => {
+          val success = UpdateFulfillHtlc(
+            ChanTools.getChannelId(peerId),
+            htlcId,
+            preimage
+          )
+          sendMessage(success)
+            .onComplete {
+              case Success(_) => {
+                state match {
+                  case active: Active => {
+                    val updated =
+                      active.addUncommittedUpdate(FromLocal(success))
+                    state = updated
+                    sendMessage(updated.lcssNext.stateUpdate)
+                  }
+                  case _ => {}
+                }
+              }
+              case _ => {}
+            }
+        }
+        case _ => {
+          // TODO what to do when a payment succeeds upstream and the channel is not active
+        }
+      }
+    })
   }
 
   def proposeOverride(newLocalBalance: MilliSatoshi): Future[String] = {

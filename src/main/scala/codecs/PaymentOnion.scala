@@ -443,9 +443,9 @@ object PaymentOnionCodecs {
 
   def paymentOnionPerHopPayloadCodec(
       isLastPacket: Boolean
-  ): Codec[PaymentPacket] = if (isLastPacket)
-    finalPerHopPayloadCodec.upcast[PaymentPacket]
-  else channelRelayPerHopPayloadCodec.upcast[PaymentPacket]
+  ): Codec[PaymentPacket] =
+    if isLastPacket then finalPerHopPayloadCodec.upcast[PaymentPacket]
+    else channelRelayPerHopPayloadCodec.upcast[PaymentPacket]
 
   def trampolineOnionPerHopPayloadCodec(
       isLastPacket: Boolean

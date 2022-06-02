@@ -169,6 +169,8 @@ class CLN {
   }
 
   def sendOnion(
+      hostedPeerId: String,
+      htlcId: ULong,
       paymentHash: ByteVector32,
       firstHop: PublicKey,
       amount: MilliSatoshi,
@@ -183,7 +185,8 @@ class CLN {
             "delay" -> cltvExpiryDelta.toInt
           ),
           "onion" -> onion.toHex,
-          "payment_hash" -> paymentHash.toHex
+          "payment_hash" -> paymentHash.toHex,
+          "label" -> upickle.default.write((hostedPeerId, htlcId.toLong))
         )
         .toString}")
 
@@ -196,7 +199,8 @@ class CLN {
           "delay" -> cltvExpiryDelta.toInt
         ),
         "onion" -> onion.toHex,
-        "payment_hash" -> paymentHash.toHex
+        "payment_hash" -> paymentHash.toHex,
+        "label" -> upickle.default.write((hostedPeerId, htlcId.toLong))
       )
     )
   }
@@ -310,10 +314,12 @@ class CLN {
           )
           val nextOnion = ByteVector.fromValidHex(onion("next_onion").str)
 
-          Database.data.channels
-            .find((peerId: String, chandata: ChannelData) =>
+          val channel = Database.data.channels.find(
+            (peerId: String, chandata: ChannelData) =>
               ChanTools.getShortChannelId(peerId) == scid
-            ) match {
+          )
+
+          channel match {
             case Some((peerId, chandata)) if chandata.isActive => {
               val peer = ChannelMaster.getChannelServer(peerId)
               peer
@@ -382,10 +388,34 @@ class CLN {
         })
       }
       case "sendpay_success" => {
-        Main.log(s"sendpay_success: $data")
+        val successdata = data("sendpay_success")
+        val label = successdata("label").str
+        val (peerId, htlcId) =
+          upickle.default.read[Tuple2[String, Long]](label)
+        val channel = Database.data.channels.get(peerId)
+        channel match {
+          case Some(chandata) if chandata.isActive => {
+            val peer = ChannelMaster.getChannelServer(peerId)
+            val preimage = ByteVector32(
+              ByteVector.fromValidHex(successdata("payment_preimage").str)
+            )
+            peer.upstreamPaymentSuccess(htlcId.toULong, preimage)
+          }
+          case _ => {}
+        }
       }
       case "sendpay_failure" => {
-        Main.log(s"sendpay_failure: $data")
+        val failuredata = data("sendpay_failure")("data")
+        val label = failuredata("label").str
+        val (peerId, htlcId) = upickle.default.read[Tuple2[String, Long]](label)
+        val channel = Database.data.channels.get(peerId)
+        channel match {
+          case Some(chandata) if chandata.isActive => {
+            val peer = ChannelMaster.getChannelServer(peerId)
+            peer.upstreamPaymentFailure(htlcId.toULong)
+          }
+          case _ => {}
+        }
       }
       case "connect" => {
         val id = data("id").str

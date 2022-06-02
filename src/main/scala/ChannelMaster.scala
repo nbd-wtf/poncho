@@ -130,15 +130,20 @@ object ChanTools {
         )
       )
 
-  def parseClientOnion(
-      add: UpdateAddHtlc
-  ): Either[
+  case class OnionParseResult(
+      packet: PaymentOnion.PaymentPacket,
+      nextOnion: ByteVector,
+      sharedSecret: ByteVector32
+  )
+
+  def parseClientOnion(add: UpdateAddHtlc): Either[
     Exception | UpdateFailHtlc | UpdateFailMalformedHtlc,
-    (PaymentOnion.PaymentPacket, ByteVector)
+    OnionParseResult
   ] =
     PaymentOnionCodecs.paymentOnionPacketCodec
       .decode(add.onionRoutingPacket.toBitVector)
-      .toEither match {
+      .toEither
+      .map(_.value) match {
       case Left(err) =>
         // TODO return something here that indicates we must fail this channel
         Left(Exception(""))
@@ -146,7 +151,7 @@ object ChanTools {
         Sphinx.peel(
           Main.node.getPrivateKey(),
           Some(add.paymentHash),
-          onion.value
+          onion
         ) match {
           case Left(badOnion) =>
             Left(
@@ -158,36 +163,41 @@ object ChanTools {
               )
             )
           case Right(
-                packet @ Sphinx.DecryptedPacket(payload, nextPacket, _)
-              ) =>
-            PaymentOnionCodecs
-              .paymentOnionPerHopPayloadCodec(packet.isLastPacket)
+                dp @ Sphinx.DecryptedPacket(payload, nextPacket, sharedSecret)
+              ) => {
+            val decodedOurOnion = PaymentOnionCodecs
+              .paymentOnionPerHopPayloadCodec(dp.isLastPacket)
               .decode(payload.bits)
-              .toEither match {
-              case Right(DecodeResult(packet, next)) =>
-                Right((packet, next.toByteVector))
-              case Left(e: OnionRoutingCodecs.MissingRequiredTlv) =>
+              .toEither
+              .map(_.value)
+            val encodedNextOnion = PaymentOnionCodecs.paymentOnionPacketCodec
+              .encode(nextPacket)
+              .toEither
+              .map(_.toByteVector)
+
+            (decodedOurOnion, encodedNextOnion) match {
+              case (Right(packet), Right(nextOnion)) =>
+                Right(OnionParseResult(packet, nextOnion, sharedSecret))
+              case (Left(e: OnionRoutingCodecs.MissingRequiredTlv), _) =>
                 Left(
                   UpdateFailHtlc(
                     add.channelId,
                     add.id,
                     Sphinx.FailurePacket
-                      .create(packet.sharedSecret, e.failureMessage)
+                      .create(sharedSecret, e.failureMessage)
                   )
                 )
-              case Left(_) =>
+              case _ =>
                 Left(
                   UpdateFailHtlc(
                     add.channelId,
                     add.id,
                     Sphinx.FailurePacket
-                      .create(
-                        packet.sharedSecret,
-                        InvalidOnionPayload(0.toULong, 0)
-                      )
+                      .create(sharedSecret, InvalidOnionPayload(0.toULong, 0))
                   )
                 )
             }
+          }
         }
     }
 }
