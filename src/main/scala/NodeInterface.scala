@@ -16,6 +16,10 @@ trait NodeInterface {
   def ourPubKey: PublicKey
 
   def getPeerFromChannel(scid: ShortChannelId): ByteVector
+  def inspectOutgoingPayment(
+      peerId: String,
+      htlc: UpdateAddHtlc
+  ): Future[UpstreamPaymentStatus]
   def sendCustomMessage(
       peerId: String,
       tag: Int,

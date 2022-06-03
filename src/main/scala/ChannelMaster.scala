@@ -71,10 +71,7 @@ object ChanTools {
       ByteVector.fromValidHex(peerId)
     )
 
-  def makeChannelUpdate(
-      peerId: String,
-      lcss: LastCrossSignedState
-  ): ChannelUpdate = {
+  def makeChannelUpdate(peerId: String): ChannelUpdate = {
     val remoteNodeId = ByteVector.fromValidHex(peerId)
     val shortChannelId = getShortChannelId(peerId)
     val flags = ChannelUpdate.ChannelFlags(

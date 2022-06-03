@@ -4,6 +4,7 @@ import scala.concurrent.{Promise, Future}
 import scala.util.{Try, Failure, Success}
 import scala.util.chaining._
 import scala.scalanative.unsigned._
+import scala.scalanative.loop.Timer
 import com.softwaremill.quicklens._
 import castor.Context
 import upickle.default.{ReadWriter, macroRW}
@@ -16,11 +17,16 @@ import codecs.LightningMessageCodecs._
 import crypto.Crypto
 
 import ChanTools.OnionParseResult
+import scala.concurrent.duration.FiniteDuration
 
 // -- questions:
 // should we fail all pending incoming htlcs on our actual normal node side whenever we fail the channel (i.e. send an Error message -- or receive an error message?)
 //   answer: no, as they can still be resolve manually.
 //   instead we should fail them whenever the timeout expires on the hosted channel side
+
+type HasFailed = Option[FailureMessage | ByteVector]
+type Preimage = ByteVector32
+type UpstreamPaymentStatus = Option[Either[HasFailed, Preimage]]
 
 case class FailureOnion(onion: ByteVector)
 case class FailureCode(code: String)
@@ -275,7 +281,7 @@ class ChannelServer(peerId: String)(implicit
           sendMessage(lcss.stateUpdate)
 
           // send a channel update
-          sendMessage(ChanTools.makeChannelUpdate(peerId, lcss))
+          sendMessage(ChanTools.makeChannelUpdate(peerId))
 
           Active()
         }
@@ -347,16 +353,26 @@ class ChannelServer(peerId: String)(implicit
 
           // all good, send the most recent lcss again and then the channel update
           sendMessage(lcssMostRecent)
-          sendMessage(ChanTools.makeChannelUpdate(peerId, lcssMostRecent))
+          sendMessage(ChanTools.makeChannelUpdate(peerId))
           stay
         }
       }
 
-      // a client has lost its channel state but we have it
-      case (_: Active, msg: InvokeHostedChannel) => {
-        // channel already exists, so send last cross-signed-state
+      // a client is telling us they are online
+      case (active: Active, msg: InvokeHostedChannel) => {
+        // channel already exists, so we just send last cross-signed-state
         val chandata = Database.data.channels.get(peerId).get
         sendMessage(chandata.lcss)
+
+        // investigate the situation of any payments that might be pending
+        Timer.timeout(FiniteDuration(5, "seconds")) { () =>
+          active.lcssNext.incomingHtlcs.foreach { htlc =>
+            Main.node
+              .inspectOutgoingPayment(peerId, htlc)
+              .foreach { result => upstreamPaymentResult(htlc.id, result) }
+          }
+        }
+
         stay
       }
 
@@ -365,8 +381,6 @@ class ChannelServer(peerId: String)(implicit
             active: Active,
             msg: UpdateFulfillHtlc
           ) => {
-        Main.log(s"got fulfill!")
-
         // find the htlc
         active.lcssNext.outgoingHtlcs.find(_.id == msg.id) match {
           case Some(htlc)
@@ -517,11 +531,6 @@ class ChannelServer(peerId: String)(implicit
                           sharedSecret: ByteVector32
                         )
                       ) => {
-                    System.err.println(s"got an onion: $payload")
-                    System.err.println(
-                      s"channel: ${ShortChannelId(payload.outgoingChannelId)}"
-                    )
-
                     Main.node
                       .getPeerFromChannel(
                         ShortChannelId(payload.outgoingChannelId)
@@ -540,20 +549,27 @@ class ChannelServer(peerId: String)(implicit
                               onion = nextOnion
                             )
                             .onComplete {
-                              case Failure(e) =>
-                                // TODO return a temporary_channel_failure here
+                              case Failure(e) => {
                                 Main.log(s"sendonion failure: $e")
-                              case _ => {}
+                                upstreamPaymentResult(add.id, Some(Left(None)))
+                              }
+                              case Success(_) => {}
                             }
                         case Failure(err) => {
                           // TODO return unknown_next_peer
-                          System.err.println(
-                            s"failed to get peer for channel: $err"
+                          Main.log(s"failed to get peer for channel: $err")
+                          upstreamPaymentResult(
+                            add.id,
+                            Some(Left(Some(UnknownNextPeer)))
                           )
                         }
                         case Success(None) => {
                           // TODO return unknown_next_peer
-                          System.err.println("didn't find peer for channel")
+                          Main.log("didn't find peer for channel")
+                          upstreamPaymentResult(
+                            add.id,
+                            Some(Left(Some(UnknownNextPeer)))
+                          )
                         }
                       }
                   }
@@ -617,7 +633,7 @@ class ChannelServer(peerId: String)(implicit
             }
 
             // send our channel policies again just in case
-            sendMessage(ChanTools.makeChannelUpdate(peerId, lcss))
+            sendMessage(ChanTools.makeChannelUpdate(peerId))
 
             // channel is active again
             Active()
@@ -726,57 +742,57 @@ class ChannelServer(peerId: String)(implicit
     promise.future
   }
 
-  def upstreamPaymentFailure(htlcId: ULong): Unit = {
-    scala.concurrent.ExecutionContext.global.execute(() => {
-      state match {
-        case active: Active => {
-          active.lcssNext.outgoingHtlcs.find(_.id == htlcId) match {
-            case Some(htlc) => {
-              ChanTools.parseClientOnion(htlc) match {
-                case Right(OnionParseResult(packet, _, sharedSecret)) => {
-                  val fail = UpdateFailHtlc(
-                    ChanTools.getChannelId(peerId),
-                    htlcId,
-                    Sphinx.FailurePacket // TODO accept failure onions from upstream and just wrap them here
-                      .create(sharedSecret, TemporaryNodeFailure)
-                  )
-
-                  sendMessage(fail)
-                    .onComplete {
-                      case Success(_) => {
-                        state match {
-                          case active: Active => {
-                            val updated =
-                              active.addUncommittedUpdate(FromLocal(fail))
-                            state = updated
-                            sendMessage(updated.lcssNext.stateUpdate)
-                          }
-                          case _ => {}
-                        }
-                      }
-                      case _ => {}
-                    }
-                }
-                case _ => {} // should never happen
-              }
-            }
-            case None => {} // should never happen
-          }
-        }
-        case _ => {
-          // TODO what to do when a payment fails upstream and the channel is not active
-        }
-      }
-    })
-  }
-
-  def upstreamPaymentSuccess(
+  def upstreamPaymentResult(
       htlcId: ULong,
-      preimage: ByteVector32
+      status: UpstreamPaymentStatus
   ): Unit = {
     scala.concurrent.ExecutionContext.global.execute(() => {
-      state match {
-        case active: Active => {
+      if (status.isEmpty) {
+        // payment still pending
+        return
+      }
+
+      (status.get, state) match {
+        case (Left(failure), active: Active) => {
+          System.err.println(s"and we are active, searching for $htlcId");
+          (for {
+            htlc <- active.lcssNext.incomingHtlcs.find(_.id == htlcId)
+            _ = System.err.println(s"got htlc $htlc")
+            OnionParseResult(packet, _, sharedSecret) <- ChanTools
+              .parseClientOnion(htlc)
+              .toOption
+            _ = System.err.println(s"parsed onion to get our shared secret")
+            fail = UpdateFailHtlc(
+              ChanTools.getChannelId(peerId),
+              htlcId,
+              failure.getOrElse(
+                TemporaryChannelFailure(ChanTools.makeChannelUpdate(peerId))
+              ) match {
+                case fm: FailureMessage =>
+                  Sphinx.FailurePacket.create(sharedSecret, fm)
+                case fo: ByteVector =>
+                  Sphinx.FailurePacket.wrap(fo, sharedSecret)
+              }
+            )
+          } yield fail)
+            .foreach { fail =>
+              System.err.println(
+                s"and we got a proper update_fail_htlc to send: $fail"
+              )
+              sendMessage(fail).foreach(_ =>
+                state match {
+                  case active: Active => {
+                    val updated =
+                      active.addUncommittedUpdate(FromLocal(fail))
+                    state = updated
+                    sendMessage(updated.lcssNext.stateUpdate)
+                  }
+                  case _ => {}
+                }
+              )
+            }
+        }
+        case (Right(preimage), active: Active) => {
           val success = UpdateFulfillHtlc(
             ChanTools.getChannelId(peerId),
             htlcId,
@@ -799,7 +815,8 @@ class ChannelServer(peerId: String)(implicit
             }
         }
         case _ => {
-          // TODO what to do when a payment succeeds upstream and the channel is not active
+          Main.log("a payment has failed but the channel is not active")
+          // TODO what to do when a payment fails upstream and the channel is not active
         }
       }
     })

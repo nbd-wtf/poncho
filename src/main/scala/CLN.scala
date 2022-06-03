@@ -140,6 +140,42 @@ class CLN {
         .headOption
     )
 
+  def inspectOutgoingPayment(
+      peerId: String,
+      htlc: UpdateAddHtlc
+  ): Future[UpstreamPaymentStatus] =
+    rpc("listsendpays", ujson.Obj("payment_hash" -> htlc.paymentHash.toHex))
+      .map(
+        _("payments").arr
+          .filter(_.obj.contains("label"))
+          .find(p => {
+            (peerId, htlc.id.toLong) ==
+              upickle.default.read[Tuple2[String, Long]](p("label").str)
+          })
+          .flatMap(toStatus(_))
+      )
+
+  private def toStatus(data: ujson.Value): UpstreamPaymentStatus =
+    data("status").str match {
+      case "complete" =>
+        Some(
+          Right(
+            ByteVector32(
+              ByteVector.fromValidHex(data("payment_preimage").str)
+            )
+          )
+        )
+      case "failed" =>
+        Some(
+          Left(
+            if data.obj.contains("onionreply") then
+              Some(ByteVector.fromValidHex(data("onionreply").str))
+            else None
+          )
+        )
+      case _ => None
+    }
+
   def sendCustomMessage(
       peerId: String,
       message: HostedServerMessage | HostedClientMessage
@@ -390,16 +426,12 @@ class CLN {
       case "sendpay_success" => {
         val successdata = data("sendpay_success")
         val label = successdata("label").str
-        val (peerId, htlcId) =
-          upickle.default.read[Tuple2[String, Long]](label)
+        val (peerId, htlcId) = upickle.default.read[Tuple2[String, Long]](label)
         val channel = Database.data.channels.get(peerId)
         channel match {
           case Some(chandata) if chandata.isActive => {
             val peer = ChannelMaster.getChannelServer(peerId)
-            val preimage = ByteVector32(
-              ByteVector.fromValidHex(successdata("payment_preimage").str)
-            )
-            peer.upstreamPaymentSuccess(htlcId.toULong, preimage)
+            peer.upstreamPaymentResult(htlcId.toULong, toStatus(successdata))
           }
           case _ => {}
         }
@@ -412,7 +444,7 @@ class CLN {
         channel match {
           case Some(chandata) if chandata.isActive => {
             val peer = ChannelMaster.getChannelServer(peerId)
-            peer.upstreamPaymentFailure(htlcId.toULong)
+            peer.upstreamPaymentResult(htlcId.toULong, toStatus(failuredata))
           }
           case _ => {}
         }
