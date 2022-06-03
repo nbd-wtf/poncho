@@ -123,8 +123,8 @@ class CLN {
       })
       .map(ByteVector32.fromValidHex(_))
 
-  def getCurrentBlockDay(): Future[Long] =
-    rpc("getchaininfo").map(_("headercount").num.toLong / 144)
+  def getCurrentBlock(): Future[BlockHeight] =
+    rpc("getchaininfo").map(info => BlockHeight(info("headercount").num.toLong))
 
   def getPeerFromChannel(scid: ShortChannelId): Future[Option[PublicKey]] =
     rpc("listfunds").map(res =>
@@ -316,7 +316,8 @@ class CLN {
           decodeServerMessage(tag, payload).toEither,
           decodeClientMessage(tag, payload).toEither
         ) match {
-          case (Left(err1), Left(err2)) => Main.log(s"$err1 | $err2")
+          case (Left(err1), Left(err2)) =>
+            Main.log(s"failed to parse client messages: $err1 | $err2")
           case (Right(msg), Left(_)) =>
             ChannelMaster.getChannelClient(peerId).send(msg)
           case (Left(_), Right(msg)) =>
@@ -340,85 +341,92 @@ class CLN {
           val onion = data("onion")
 
           // if we're the final hop of an htlc this property won't exist
-          if (!onion.obj.contains("short_channel_id")) return
+          if (!onion.obj.contains("short_channel_id")) {
+            // just continue so our node will accept this payment
+            reply(ujson.Obj("result" -> "continue"))
+          } else {
+            val scid = ShortChannelId(onion("short_channel_id").str)
+            val hash = ByteVector32.fromValidHex(htlc("payment_hash").str)
+            val incoming = MilliSatoshi(
+              Integer.getInteger(htlc("amount").str.takeWhile(_.isDigit)).toLong
+            )
+            val amount = onion("forward_amount").str.dropRight(4).toInt
+            val cltv = CltvExpiry(
+              BlockHeight(onion("outgoing_cltv_value").num.toLong)
+            )
+            val nextOnion = ByteVector.fromValidHex(onion("next_onion").str)
 
-          val scid = ShortChannelId(onion("short_channel_id").str)
-          val hash = ByteVector32.fromValidHex(htlc("payment_hash").str)
-          val amount = onion("forward_amount").str.dropRight(4).toInt
-          val cltv = CltvExpiry(
-            BlockHeight(onion("outgoing_cltv_value").num.toLong)
-          )
-          val nextOnion = ByteVector.fromValidHex(onion("next_onion").str)
+            val channel = Database.data.channels.find(
+              (peerId: String, chandata: ChannelData) =>
+                ChanTools.getShortChannelId(peerId) == scid
+            )
 
-          val channel = Database.data.channels.find(
-            (peerId: String, chandata: ChannelData) =>
-              ChanTools.getShortChannelId(peerId) == scid
-          )
-
-          channel match {
-            case Some((peerId, chandata)) if chandata.isActive => {
-              val peer = ChannelMaster.getChannelServer(peerId)
-              peer
-                .addHTLC(
-                  UpdateAddHtlc(
-                    channelId = ChanTools.getChannelId(peerId),
-                    id = 0L.toULong,
-                    amountMsat = MilliSatoshi(amount),
-                    paymentHash = hash,
-                    cltvExpiry = cltv,
-                    onionRoutingPacket = nextOnion
+            channel match {
+              case Some((peerId, chandata)) if chandata.isActive => {
+                val peer = ChannelMaster.getChannelServer(peerId)
+                peer
+                  .addHTLC(
+                    incoming,
+                    UpdateAddHtlc(
+                      channelId = ChanTools.getChannelId(peerId),
+                      id = 0L.toULong,
+                      amountMsat = MilliSatoshi(amount),
+                      paymentHash = hash,
+                      cltvExpiry = cltv,
+                      onionRoutingPacket = nextOnion
+                    )
                   )
-                )
-                .foreach {
-                  case Some(Right(preimage)) => {
-                    Main.log(
-                      s"[htlc] channel $scid succeed in handling $hash, preimage is ${preimage.toHex}"
-                    )
-                    reply(
-                      ujson
-                        .Obj(
-                          "result" -> "resolve",
-                          "payment_key" -> preimage.toHex
+                  .foreach {
+                    case Some(Right(preimage)) => {
+                      Main.log(
+                        s"[htlc] channel $scid succeed in handling $hash, preimage is ${preimage.toHex}"
+                      )
+                      reply(
+                        ujson
+                          .Obj(
+                            "result" -> "resolve",
+                            "payment_key" -> preimage.toHex
+                          )
+                      )
+                    }
+                    case Some(Left(FailureOnion(onion))) => {
+                      Main.log(s"[htlc] channel $scid failed $hash")
+                      reply(
+                        ujson.Obj(
+                          "result" -> "fail",
+                          "failure_onion" -> onion.toString
                         )
-                    )
-                  }
-                  case Some(Left(FailureOnion(onion))) => {
-                    Main.log(s"[htlc] channel $scid failed $hash")
-                    reply(
-                      ujson.Obj(
-                        "result" -> "fail",
-                        "failure_onion" -> onion.toString
                       )
-                    )
-                  }
-                  case Some(Left(FailureCode(code))) => {
-                    Main.log(s"[htlc] we've failed $hash for channel $scid")
-                    reply(
-                      ujson.Obj(
-                        "result" -> "fail",
-                        "failure_message" -> code
+                    }
+                    case Some(Left(FailureCode(code))) => {
+                      Main.log(s"[htlc] we've failed $hash for channel $scid")
+                      reply(
+                        ujson.Obj(
+                          "result" -> "fail",
+                          "failure_message" -> code
+                        )
                       )
-                    )
+                    }
+                    case None => {
+                      Main.log(
+                        s"[htlc] channel $scid decided to not handle $hash"
+                      )
+                      reply(ujson.Obj("result" -> "continue"))
+                    }
                   }
-                  case None => {
-                    Main.log(
-                      s"[htlc] channel $scid decided to not handle $hash"
-                    )
-                    reply(ujson.Obj("result" -> "continue"))
-                  }
-                }
-            }
-            case Some((_, chandata)) => {
-              Main.log(
-                s"[htlc] can't assign $hash to $scid as that channel is inactive"
-              )
-              reply(ujson.Obj("result" -> "continue"))
-            }
-            case None => {
-              Main.log(
-                s"[htlc] can't assign $hash to $scid as that channel doesn't exist"
-              )
-              reply(ujson.Obj("result" -> "continue"))
+              }
+              case Some((_, chandata)) => {
+                Main.log(
+                  s"[htlc] can't assign $hash to $scid as that channel is inactive"
+                )
+                reply(ujson.Obj("result" -> "continue"))
+              }
+              case None => {
+                Main.log(
+                  s"[htlc] can't assign $hash to $scid as that channel doesn't exist"
+                )
+                reply(ujson.Obj("result" -> "continue"))
+              }
             }
           }
         })

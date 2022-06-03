@@ -32,7 +32,7 @@ trait NodeInterface {
       cltvExpiryDelta: CltvExpiryDelta,
       onion: ByteVector
   ): Future[ujson.Value]
-  def getCurrentBlockDay(): Future[Long]
+  def getCurrentBlock(): Future[BlockHeight]
   def getChainHash(): Future[ByteVector32]
 
   def main(): Unit

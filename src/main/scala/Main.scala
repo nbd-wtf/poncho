@@ -5,9 +5,13 @@ import scala.scalanative.unsigned.given
 import scala.concurrent.duration.FiniteDuration
 import upickle.default._
 
-import codecs.ByteVector32
-import codecs.{InitHostedChannel, MilliSatoshi}
-import codecs.CltvExpiryDelta
+import codecs.{
+  CltvExpiryDelta,
+  BlockHeight,
+  ByteVector32,
+  InitHostedChannel,
+  MilliSatoshi
+}
 
 case class Config(
     cltvExpiryDelta: CltvExpiryDelta,
@@ -25,11 +29,11 @@ object Main {
   def main(args: Array[String]): Unit = {
     node.main(() => {
       // wait for this callback so we know the RPC is ready and we can call these things
-      getChainHash()
-      getCurrentBlockDay()
-      Timer.repeat(FiniteDuration(1, scala.concurrent.duration.HOURS))(
-        getCurrentBlockDay
-      )
+      setChainHash()
+      updateCurrentBlock()
+      Timer.repeat(FiniteDuration(1, "minutes")) { () =>
+        updateCurrentBlock()
+      }
     })
   }
 
@@ -46,21 +50,22 @@ object Main {
     feeProportionalMillionths = 1000L
   )
 
-  var currentBlockDay = 0L
-  def getCurrentBlockDay() = {
+  var currentBlock = BlockHeight(0L)
+  def currentBlockDay: Long = currentBlock.toLong / 144
+  def updateCurrentBlock() = {
     node
-      .getCurrentBlockDay()
+      .getCurrentBlock()
       .onComplete {
-        case Success(blockday) => {
-          Main.currentBlockDay = blockday
-          log(s"got current blockday: $blockday")
+        case Success(block) => {
+          Main.currentBlock = block
+          log(s"updated current block: $block")
         }
         case Failure(err) => log(s"failed to get current blockday: $err")
       }
   }
 
   var chainHash = ByteVector32.Zeroes
-  def getChainHash() = {
+  def setChainHash() = {
     node
       .getChainHash()
       .onComplete {

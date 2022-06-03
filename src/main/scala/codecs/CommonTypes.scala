@@ -169,8 +169,7 @@ case class TxCoordinates(
     outputIndex: Int
 )
 
-case class BlockHeight(private val underlying: Long)
-    extends Ordered[BlockHeight] {
+case class BlockHeight(val underlying: Long) extends Ordered[BlockHeight] {
   override def compare(other: BlockHeight): Int =
     underlying.compareTo(other.underlying)
   def +(i: Int) = BlockHeight(underlying + i)
@@ -186,10 +185,6 @@ case class BlockHeight(private val underlying: Long)
   def toInt: Int = underlying.toInt
   def toLong: Long = underlying
   def toDouble: Double = underlying.toDouble
-}
-
-object BlockHeight {
-  def apply(underlying: Int): BlockHeight = BlockHeight(underlying.toLong)
 }
 
 case class TimestampSecond(private val underlying: Long)

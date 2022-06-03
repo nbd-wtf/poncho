@@ -9,6 +9,21 @@ import scodec.{DecodeResult}
 import codecs._
 import crypto.Crypto
 
+type HasFailed = Option[FailureMessage | ByteVector]
+type Preimage = ByteVector32
+type UpstreamPaymentStatus = Option[Either[HasFailed, Preimage]]
+
+sealed trait PaymentFailure
+case class FailureOnion(onion: ByteVector) extends PaymentFailure
+case class FailureCode(code: String) extends PaymentFailure
+
+type PaymentPreimage = ByteVector32
+type HTLCResult =
+  Option[Either[PaymentFailure, PaymentPreimage]]
+
+case class FromLocal(upd: ChannelModifier)
+case class FromRemote(upd: ChannelModifier)
+
 object ChannelMaster {
   val servers = mutable.Map.empty[String, ChannelServer]
   val clients = mutable.Map.empty[String, ChannelClient]
@@ -117,16 +132,6 @@ object ChanTools {
     )
   }
 
-  def lcssIsBroken(lcss: LastCrossSignedState): Boolean =
-    lcss.localBalanceMsat < MilliSatoshi(0L) ||
-      lcss.remoteBalanceMsat < MilliSatoshi(0L) || (
-        lcss.initHostedChannel.channelCapacityMsat != (
-          lcss.localBalanceMsat + lcss.remoteBalanceMsat + (lcss.outgoingHtlcs ++ lcss.incomingHtlcs)
-            .map(_.amountMsat)
-            .fold(MilliSatoshi(0L))(_ + _)
-        )
-      )
-
   case class OnionParseResult(
       packet: PaymentOnion.PaymentPacket,
       nextOnion: ByteVector,
@@ -134,7 +139,7 @@ object ChanTools {
   )
 
   def parseClientOnion(add: UpdateAddHtlc): Either[
-    Exception | UpdateFailHtlc | UpdateFailMalformedHtlc,
+    Exception | FailureMessage,
     OnionParseResult
   ] =
     PaymentOnionCodecs.paymentOnionPacketCodec
@@ -142,23 +147,15 @@ object ChanTools {
       .toEither
       .map(_.value) match {
       case Left(err) =>
-        // TODO return something here that indicates we must fail this channel
-        Left(Exception(""))
+        // return something here that indicates we must fail this channel
+        Left(Exception("unparseable onion"))
       case Right(onion) =>
         Sphinx.peel(
           Main.node.getPrivateKey(),
           Some(add.paymentHash),
           onion
         ) match {
-          case Left(badOnion) =>
-            Left(
-              UpdateFailMalformedHtlc(
-                add.channelId,
-                add.id,
-                badOnion.onionHash,
-                badOnion.code
-              )
-            )
+          case Left(badOnion) => Left(badOnion)
           case Right(
                 dp @ Sphinx.DecryptedPacket(payload, nextPacket, sharedSecret)
               ) => {
@@ -176,23 +173,8 @@ object ChanTools {
               case (Right(packet), Right(nextOnion)) =>
                 Right(OnionParseResult(packet, nextOnion, sharedSecret))
               case (Left(e: OnionRoutingCodecs.MissingRequiredTlv), _) =>
-                Left(
-                  UpdateFailHtlc(
-                    add.channelId,
-                    add.id,
-                    Sphinx.FailurePacket
-                      .create(sharedSecret, e.failureMessage)
-                  )
-                )
-              case _ =>
-                Left(
-                  UpdateFailHtlc(
-                    add.channelId,
-                    add.id,
-                    Sphinx.FailurePacket
-                      .create(sharedSecret, InvalidOnionPayload(0.toULong, 0))
-                  )
-                )
+                Left(e.failureMessage)
+              case _ => Left(InvalidOnionPayload(0.toULong, 0))
             }
           }
         }
