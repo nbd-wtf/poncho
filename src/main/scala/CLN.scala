@@ -129,7 +129,7 @@ class CLN {
   def getPeerFromChannel(scid: ShortChannelId): Future[Option[PublicKey]] =
     rpc("listfunds").map(res =>
       res("channels").arr
-        .filter(chan =>
+        .find(chan =>
           if chan.obj.contains("short_channel_id") then
             chan(
               "short_channel_id"
@@ -137,7 +137,6 @@ class CLN {
           else false
         )
         .map(peer => ByteVector.fromValidHex(peer("peer_id").str))
-        .headOption
     )
 
   def inspectOutgoingPayment(

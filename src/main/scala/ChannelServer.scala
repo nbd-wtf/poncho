@@ -67,13 +67,12 @@ class ChannelServer(peerId: String)(implicit
       uncommittedUpdates
         .foldLeft(base)((lcss, upd) =>
           upd match {
-            case FromRemote(add: UpdateAddHtlc) => {
+            case FromRemote(add: UpdateAddHtlc) =>
               lcss.copy(
                 remoteBalanceMsat = lcss.remoteBalanceMsat - add.amountMsat,
                 remoteUpdates = lcss.remoteUpdates + 1,
                 incomingHtlcs = lcss.incomingHtlcs :+ add
               )
-            }
             case FromRemote(
                   fail: (UpdateFailHtlc | UpdateFailMalformedHtlc)
                 ) => {
@@ -123,27 +122,27 @@ class ChannelServer(peerId: String)(implicit
                 case x: UpdateFailMalformedHtlc => x.id
               }
 
-              lcss.outgoingHtlcs.find(_.id == htlcId) match {
+              lcss.incomingHtlcs.find(_.id == htlcId) match {
                 case Some(htlc) => {
                   lcss.copy(
                     remoteBalanceMsat =
                       lcss.remoteBalanceMsat + htlc.amountMsat,
                     localUpdates = lcss.localUpdates + 1,
-                    outgoingHtlcs =
-                      lcss.outgoingHtlcs.filterNot(_.id == htlc.id)
+                    incomingHtlcs =
+                      lcss.incomingHtlcs.filterNot(_.id == htlc.id)
                   )
                 }
                 case None => lcss
               }
             }
             case FromLocal(fulfill: UpdateFulfillHtlc) => {
-              lcss.outgoingHtlcs.find(_.id == fulfill.id) match {
+              lcss.incomingHtlcs.find(_.id == fulfill.id) match {
                 case Some(htlc) => {
                   lcss.copy(
                     localBalanceMsat = lcss.localBalanceMsat + htlc.amountMsat,
                     localUpdates = lcss.localUpdates + 1,
-                    outgoingHtlcs =
-                      lcss.outgoingHtlcs.filterNot(_.id == htlc.id)
+                    incomingHtlcs =
+                      lcss.incomingHtlcs.filterNot(_.id == htlc.id)
                   )
                 }
                 case None => lcss
@@ -556,8 +555,20 @@ class ChannelServer(peerId: String)(implicit
                           sharedSecret: ByteVector32
                         )
                       ) => {
-                    // a normal update_add_htlc we've received from the upstream node
-                    // (for c-lightning this comes from the "htlc_accepted" hook)
+                    // a payment the client is sending through us to someone else
+
+                    // TODO handle payments from a client to another client
+                    // do it by just intercepting stuff here then calling addHTLC
+                    // must also handle errors/fulfills differently
+                    // Future(
+                    //   Database.data.channels.keys
+                    //     .find(
+                    //       ShortChannelId(payload.outgoingChannelId) ==
+                    //         ChanTools.getShortChannelId(_)
+                    //     )
+                    //     .map(ByteVector.fromValidHex(_))
+                    // )
+
                     Main.node
                       .getPeerFromChannel(
                         ShortChannelId(payload.outgoingChannelId)
@@ -690,6 +701,8 @@ class ChannelServer(peerId: String)(implicit
     }
   }
 
+  // a update_add_htlc we've received from the upstream node
+  // (for c-lightning this comes from the "htlc_accepted" hook)
   def addHTLC(
       incoming: MilliSatoshi,
       prototype: UpdateAddHtlc
