@@ -41,6 +41,10 @@ class ChannelServer(peerId: String)(implicit
     // and that will be processed and dispatched to our upstream node once they are actually committed
     def addUncommittedUpdate(upd: FromLocal | FromRemote): Active =
       this.copy(uncommittedUpdates = this.uncommittedUpdates :+ upd)
+    def removeUncommitedUpdate(upd: FromLocal | FromRemote): Active =
+      this.copy(uncommittedUpdates =
+        this.uncommittedUpdates.filterNot(_ == upd)
+      )
 
     // this tells our upstream node to resolve or fail the htlc it is holding
     def provideHtlcResult(id: ULong, result: HTLCResult): Unit =
@@ -223,7 +227,7 @@ class ChannelServer(peerId: String)(implicit
         // check if everything is ok
         if ((msg.blockDay - Main.currentBlockDay).abs > 1) {
           Main.log(
-            s"[${peerId}] sent StateUpdate with wrong blockday: ${msg.blockDay} (current: ${Main.currentBlockDay})"
+            s"[${peerId}] sent state_update with wrong blockday: ${msg.blockDay} (current: ${Main.currentBlockDay})"
           )
           sendMessage(
             Error(
@@ -233,7 +237,7 @@ class ChannelServer(peerId: String)(implicit
           )
           Inactive()
         } else if (!lcss.verifyRemoteSig(ByteVector.fromValidHex(peerId))) {
-          Main.log(s"[${peerId}] sent StateUpdate with wrong signature.")
+          Main.log(s"[${peerId}] sent state_update with wrong signature.")
           sendMessage(
             Error(
               ChanTools.getChannelId(peerId),
@@ -474,12 +478,13 @@ class ChannelServer(peerId: String)(implicit
       // this should be the confirmation that the other side has also updated it correctly
       // account for situations in which peer is behind us (ignore?) and for when we're behind (keep track of the forward state?)
       case (active: Active, msg: StateUpdate)
-          if (!active.uncommittedUpdates.isEmpty) => {
-        // this won't be triggered if we don't have uncommitted updates
+          if !active.uncommittedUpdates.isEmpty => {
+        // this will only be triggered if there are uncommitted updates
+        // otherwise it will be ignored so the client is free to spam us with
+        // valid and up-to-date state_updates and we won't even notice
         Main.log(s"updating our local state after a transition")
         if (
-          msg.remoteUpdates == active.lcssNext.localUpdates &&
-          msg.localUpdates == active.lcssNext.remoteUpdates &&
+          msg.totalUpdates == active.lcssNext.totalUpdates &&
           msg.blockDay == active.lcssNext.blockDay
         ) {
           Main.log("we and the client are now even")
@@ -512,7 +517,13 @@ class ChannelServer(peerId: String)(implicit
                 // so just return a temporary_channel_failure for now
                 active.provideHtlcResult(
                   fail.id,
-                  Some(Left(FailureCode("4103")))
+                  Some(
+                    Left(
+                      FailureCode(
+                        ByteVector(scala.math.BigInt(4103).toByteArray).toHex
+                      )
+                    )
+                  )
                 )
               case FromRemote(add: UpdateAddHtlc) => {
                 // send a payment through the upstream node
@@ -599,6 +610,7 @@ class ChannelServer(peerId: String)(implicit
             }
 
             // send our state update
+            // TODO: only send state_update when we haven't sent it yet
             sendMessage(lcssNext.stateUpdate)
 
             // update this channel state to the new lcss
@@ -720,7 +732,8 @@ class ChannelServer(peerId: String)(implicit
           .copy(id = active.lcssNext.localUpdates.toULong + 1L.toULong)
 
         // prepare modification to new lcss to be our next
-        val updated = active.addUncommittedUpdate(FromLocal(add))
+        val upd = FromLocal(add)
+        val updated = active.addUncommittedUpdate(upd)
 
         // check a bunch of things, if any fail return a temporary_channel_failure
         val requiredFee = MilliSatoshi(
@@ -728,12 +741,25 @@ class ChannelServer(peerId: String)(implicit
         )
         if (
           add.amountMsat < updated.lcssNext.initHostedChannel.htlcMinimumMsat ||
-          (add.cltvExpiry.blockHeight - Main.currentBlock).toInt >= Main.config.cltvExpiryDelta.toInt ||
+          (add.cltvExpiry.blockHeight - Main.currentBlock).toInt < Main.config.cltvExpiryDelta.toInt ||
           (incoming - add.amountMsat) >= requiredFee ||
           updated.lcssNext.localBalanceMsat < MilliSatoshi(0L) ||
           updated.lcssNext.remoteBalanceMsat < MilliSatoshi(0L)
         ) {
-          promise.success(Some(Left(FailureCode("4103"))))
+          Main.log(
+            s"failing ${add.amountMsat < updated.lcssNext.initHostedChannel.htlcMinimumMsat} ${(add.cltvExpiry.blockHeight - Main.currentBlock).toInt >= Main.config.cltvExpiryDelta.toInt} ${(incoming - add.amountMsat) >= requiredFee} ${updated.lcssNext.localBalanceMsat < MilliSatoshi(
+                0L
+              )} ${updated.lcssNext.remoteBalanceMsat < MilliSatoshi(0L)}"
+          )
+          promise.success(
+            Some(
+              Left(
+                FailureCode(
+                  ByteVector(scala.math.BigInt(4103).toByteArray).toHex
+                )
+              )
+            )
+          )
         } else {
           // will send update_add_htlc to hosted client
           //
@@ -745,22 +771,18 @@ class ChannelServer(peerId: String)(implicit
           sendMessage(add)
             .onComplete {
               case Success(_) =>
-                // success here means the client did get our update_add_htlc, so send signed state_update
+                // success here means the client did get our update_add_htlc,
+                // so send our signed state_update
                 sendMessage(updated.lcssNext.stateUpdate)
               case Failure(err) => {
-                // client is offline and can't take our update_add_htlc, so we fail it on upstream
-                // and remote it from the list of uncommitted updates
+                // client is offline and can't take our update_add_htlc,
+                // so we fail it on upstream
+                // and remove it from the list of uncommitted updates
                 Main.log(s"failed to send update_add_htlc to $peerId: $err")
                 promise.success(None)
                 state match {
-                  case active: Active => {
-                    state = active.copy(uncommittedUpdates =
-                      active.uncommittedUpdates.filterNot({
-                        case FromLocal(add: UpdateAddHtlc) => add.id == add.id
-                        case _                             => false
-                      })
-                    )
-                  }
+                  case active: Active =>
+                    state = active.removeUncommitedUpdate(upd)
                   case _ => {}
                 }
               }
@@ -785,15 +807,43 @@ class ChannelServer(peerId: String)(implicit
     } else
       scala.concurrent.ExecutionContext.global.execute(() => {
         (status.get, state) match {
+          case (Right(preimage), active: Active) => {
+            val fulfill = UpdateFulfillHtlc(
+              ChanTools.getChannelId(peerId),
+              htlcId,
+              preimage
+            )
+
+            val upd = FromLocal(fulfill)
+            val updated = active.addUncommittedUpdate(upd)
+            state = updated
+
+            sendMessage(fulfill)
+              .onComplete {
+                case Success(_) => {
+                  sendMessage(updated.lcssNext.stateUpdate)
+                }
+                case Failure(err) => {
+                  // client is offline and can't take our update_fulfill_htlc,
+                  // so we remove it from the list of uncommitted updates
+                  // and wait for when the peer becomes online again
+                  Main.log(
+                    s"failed to send update_fulfill_htlc to $peerId: $err"
+                  )
+                  state match {
+                    case active: Active =>
+                      state = active.removeUncommitedUpdate(upd)
+                    case _ => {}
+                  }
+                }
+              }
+          }
           case (Left(failure), active: Active) => {
-            System.err.println(s"and we are active, searching for $htlcId");
             (for {
               htlc <- active.lcssNext.incomingHtlcs.find(_.id == htlcId)
-              _ = System.err.println(s"got htlc $htlc")
               OnionParseResult(packet, _, sharedSecret) <- ChanTools
                 .parseClientOnion(htlc)
                 .toOption
-              _ = System.err.println(s"parsed onion to get our shared secret")
               fail = failure match {
                 case bo: BadOnion =>
                   UpdateFailMalformedHtlc(
@@ -820,47 +870,45 @@ class ChannelServer(peerId: String)(implicit
               }
             } yield fail)
               .foreach { fail =>
-                System.err.println(
-                  s"and we got a proper update_fail_htlc to send: $fail"
-                )
-                sendMessage(fail).foreach(_ =>
-                  state match {
-                    case active: Active => {
-                      val updated =
-                        active.addUncommittedUpdate(FromLocal(fail))
-                      state = updated
+                // prepare updated state
+                val upd = FromLocal(fail)
+                val updated =
+                  active.addUncommittedUpdate(upd)
+                state = updated
+                sendMessage(updated.lcssNext.stateUpdate)
+
+                sendMessage(fail)
+                  .onComplete {
+                    case Success(_) => {
                       sendMessage(updated.lcssNext.stateUpdate)
                     }
-                    case _ => {}
+                    case Failure(err) => {
+                      // client is offline and can't take our update_fulfill_htlc,
+                      // so we remove it from the list of uncommitted updates
+                      // and wait for when the peer becomes online again
+                      Main.log(
+                        s"failed to send update_fail_htlc to $peerId: $err"
+                      )
+                      state match {
+                        case active: Active =>
+                          state = active.removeUncommitedUpdate(upd)
+                        case _ => {}
+                      }
+                    }
                   }
-                )
               }
           }
-          case (Right(preimage), active: Active) => {
-            val success = UpdateFulfillHtlc(
-              ChanTools.getChannelId(peerId),
-              htlcId,
-              preimage
+          case (Right(preimage), state) => {
+            Main.log(
+              s"a payment has succeeded with $preimage but the channel with $peerId is not Active, instead it is $state"
             )
-            sendMessage(success)
-              .onComplete {
-                case Success(_) => {
-                  state match {
-                    case active: Active => {
-                      val updated =
-                        active.addUncommittedUpdate(FromLocal(success))
-                      state = updated
-                      sendMessage(updated.lcssNext.stateUpdate)
-                    }
-                    case _ => {}
-                  }
-                }
-                case _ => {}
-              }
+            // TODO here is probably when we should publish this preimage somewhere
+            // fire the alarms etc
           }
-          case _ => {
-            Main.log("a payment has failed but the channel is not active")
-            // TODO what to do when a payment fails upstream and the channel is not active
+          case (Left(failure), state) => {
+            Main.log(
+              s"a payment has failed with $failure but the channel with $peerId is not Active, instead it is $state"
+            )
           }
         }
       })

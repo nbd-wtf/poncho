@@ -57,8 +57,10 @@ object Main {
       .getCurrentBlock()
       .onComplete {
         case Success(block) => {
-          Main.currentBlock = block
-          log(s"updated current block: $block")
+          if (block > Main.currentBlock) {
+            Main.currentBlock = block
+            log(s"updated current block: $block")
+          }
         }
         case Failure(err) => log(s"failed to get current blockday: $err")
       }

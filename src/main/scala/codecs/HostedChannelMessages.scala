@@ -59,6 +59,8 @@ case class LastCrossSignedState(
     localSigOfRemote: Signature
 ) extends HostedServerMessage
     with HostedClientMessage {
+  def totalUpdates: Long = localUpdates + remoteUpdates
+
   lazy val reverse: LastCrossSignedState =
     copy(
       isHost = !isHost,
@@ -141,7 +143,9 @@ case class StateUpdate(
     remoteUpdates: Long,
     localSigOfRemoteLCSS: Signature
 ) extends HostedServerMessage
-    with HostedClientMessage
+    with HostedClientMessage {
+  def totalUpdates: Long = localUpdates + remoteUpdates
+}
 
 case class StateOverride(
     blockDay: Long,
