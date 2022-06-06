@@ -7,7 +7,7 @@ import scodec.bits._
 import scodec.codecs._
 import scodec.Codec
 
-import crypto.{Crypto, PrivateKey, PublicKey, Signature}
+import crypto.Crypto
 import codecs.Protocol
 import codecs.TlvCodecs._
 import codecs.CommonCodecs._
@@ -55,8 +55,8 @@ case class LastCrossSignedState(
     remoteUpdates: Long,
     incomingHtlcs: List[UpdateAddHtlc],
     outgoingHtlcs: List[UpdateAddHtlc],
-    remoteSigOfLocal: Signature,
-    localSigOfRemote: Signature
+    remoteSigOfLocal: ByteVector64,
+    localSigOfRemote: ByteVector64
 ) extends HostedServerMessage
     with HostedClientMessage {
   def totalUpdates: Long = localUpdates + remoteUpdates
@@ -116,10 +116,10 @@ case class LastCrossSignedState(
     Crypto.sha256(message)
   }
 
-  def verifyRemoteSig(pubKey: PublicKey): Boolean =
+  def verifyRemoteSig(pubKey: ByteVector): Boolean =
     Crypto.verifySignature(hostedSigHash, remoteSigOfLocal, pubKey)
 
-  def withLocalSigOfRemote(priv: PrivateKey): LastCrossSignedState = {
+  def withLocalSigOfRemote(priv: ByteVector32): LastCrossSignedState = {
     val localSignature = Crypto.sign(reverse.hostedSigHash, priv)
     copy(localSigOfRemote = localSignature)
   }
@@ -141,7 +141,7 @@ case class StateUpdate(
     blockDay: Long,
     localUpdates: Long,
     remoteUpdates: Long,
-    localSigOfRemoteLCSS: Signature
+    localSigOfRemoteLCSS: ByteVector64
 ) extends HostedServerMessage
     with HostedClientMessage {
   def totalUpdates: Long = localUpdates + remoteUpdates
@@ -152,27 +152,27 @@ case class StateOverride(
     localBalanceMsat: MilliSatoshi,
     localUpdates: Long,
     remoteUpdates: Long,
-    localSigOfRemoteLCSS: Signature
+    localSigOfRemoteLCSS: ByteVector64
 ) extends HostedServerMessage
 
 case class AnnouncementSignature(
-    nodeSignature: Signature,
+    nodeSignature: ByteVector64,
     wantsReply: Boolean
 ) extends HostedGossipMessage
 
 case class ResizeChannel(
     newCapacity: Satoshi,
-    clientSig: Signature = ByteVector64.Zeroes
+    clientSig: ByteVector64 = ByteVector64.Zeroes
 ) extends HostedClientMessage {
   def isRemoteResized(remote: LastCrossSignedState): Boolean =
     newCapacity.toMilliSatoshi == remote.initHostedChannel.channelCapacityMsat
 
-  def sign(priv: PrivateKey): ResizeChannel = ResizeChannel(
+  def sign(priv: ByteVector32): ResizeChannel = ResizeChannel(
     clientSig = Crypto.sign(Crypto.sha256(sigMaterial), priv),
     newCapacity = newCapacity
   )
 
-  def verifyClientSig(pubKey: PublicKey): Boolean =
+  def verifyClientSig(pubKey: ByteVector): Boolean =
     Crypto.verifySignature(Crypto.sha256(sigMaterial), clientSig, pubKey)
 
   lazy val sigMaterial: ByteVector = {
@@ -301,21 +301,21 @@ case class UpdateFailMalformedHtlc(
     with ChannelModifier
 
 case class ChannelAnnouncement(
-    nodeSignature1: Signature,
-    nodeSignature2: Signature,
-    bitcoinSignature1: Signature,
-    bitcoinSignature2: Signature,
+    nodeSignature1: ByteVector64,
+    nodeSignature2: ByteVector64,
+    bitcoinSignature1: ByteVector64,
+    bitcoinSignature2: ByteVector64,
     features: Features[Feature],
     chainHash: ByteVector32,
     shortChannelId: ShortChannelId,
-    nodeId1: PublicKey,
-    nodeId2: PublicKey,
-    bitcoinKey1: PublicKey,
-    bitcoinKey2: PublicKey,
+    nodeId1: ByteVector,
+    nodeId2: ByteVector,
+    bitcoinKey1: ByteVector,
+    bitcoinKey2: ByteVector,
     tlvStream: TlvStream[ChannelAnnouncementTlv] = TlvStream.empty
 ) extends HostedGossipMessage
 case class ChannelUpdate(
-    signature: Signature,
+    signature: ByteVector64,
     chainHash: ByteVector32,
     shortChannelId: ShortChannelId,
     timestamp: TimestampSecond,

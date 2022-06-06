@@ -24,7 +24,7 @@ import scala.concurrent.duration.FiniteDuration
 //   answer: no, as they can still be resolve manually.
 //   instead we should fail them whenever the timeout expires on the hosted channel side
 
-class ChannelServer(peerId: String)(implicit
+class ChannelServer(peerId: ByteVector)(implicit
     ac: castor.Context
 ) extends castor.SimpleActor[HostedClientMessage] {
   sealed trait State
@@ -231,7 +231,7 @@ class ChannelServer(peerId: String)(implicit
             )
           )
           Inactive()
-        } else if (!lcss.verifyRemoteSig(ByteVector.fromValidHex(peerId))) {
+        } else if (!lcss.verifyRemoteSig(peerId)) {
           Main.log(s"[${peerId}] sent state_update with wrong signature.")
           sendMessage(
             Error(
@@ -281,7 +281,7 @@ class ChannelServer(peerId: String)(implicit
       case (active: Active, msg: LastCrossSignedState) => {
         val isLocalSigOk = msg.verifyRemoteSig(Main.node.ourPubKey)
         val isRemoteSigOk =
-          msg.reverse.verifyRemoteSig(ByteVector.fromValidHex(peerId))
+          msg.reverse.verifyRemoteSig(peerId)
 
         if (!isLocalSigOk || !isRemoteSigOk) {
           val err = if (!isLocalSigOk) {
@@ -488,7 +488,7 @@ class ChannelServer(peerId: String)(implicit
           val lcssNext = active.lcssNext.copy(
             remoteSigOfLocal = msg.localSigOfRemoteLCSS
           )
-          if (lcssNext.verifyRemoteSig(ByteVector.fromValidHex(peerId))) {
+          if (lcssNext.verifyRemoteSig(peerId)) {
             // update state on the database
             Main.log(s"saving on db: $lcssNext")
             Database.update { data =>
@@ -556,14 +556,6 @@ class ChannelServer(peerId: String)(implicit
                     // TODO handle payments from a client to another client
                     // do it by just intercepting stuff here then calling addHTLC
                     // must also handle errors/fulfills differently
-                    // Future(
-                    //   Database.data.channels.keys
-                    //     .find(
-                    //       ShortChannelId(payload.outgoingChannelId) ==
-                    //         ChanTools.getShortChannelId(_)
-                    //     )
-                    //     .map(ByteVector.fromValidHex(_))
-                    // )
 
                     Main.node
                       .getPeerFromChannel(
@@ -665,7 +657,7 @@ class ChannelServer(peerId: String)(implicit
           val lcss = lcssOverrideProposal.copy(remoteSigOfLocal =
             msg.localSigOfRemoteLCSS
           )
-          if (lcss.verifyRemoteSig(ByteVector.fromValidHex(peerId))) {
+          if (lcss.verifyRemoteSig(peerId)) {
             // update state on the database
             Database.update { data =>
               data

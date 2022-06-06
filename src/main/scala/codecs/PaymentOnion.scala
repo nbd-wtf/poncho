@@ -5,7 +5,6 @@ import scodec.bits._
 import scodec.codecs._
 import scodec.{Codec, Err}
 
-import crypto.{PublicKey, PrivateKey}
 import CommonCodecs._
 import TlvCodecs._
 import OnionRoutingCodecs._
@@ -48,10 +47,10 @@ object OnionPaymentPayloadTlv {
   /** Blinding ephemeral public key that should be used to derive shared secrets
     * when using route blinding.
     */
-  case class BlindingPoint(publicKey: PublicKey) extends OnionPaymentPayloadTlv
+  case class BlindingPoint(publicKey: ByteVector) extends OnionPaymentPayloadTlv
 
   /** Id of the next node. */
-  case class OutgoingNodeId(nodeId: PublicKey) extends OnionPaymentPayloadTlv
+  case class OutgoingNodeId(nodeId: ByteVector) extends OnionPaymentPayloadTlv
 
   /** When payment metadata is included in a Bolt 11 invoice, we should send it
     * as-is to the recipient. This lets recipients generate invoices without
@@ -230,7 +229,7 @@ object PaymentOnion {
   def createNodeRelayPayload(
       amount: MilliSatoshi,
       expiry: CltvExpiry,
-      nextNodeId: PublicKey
+      nextNodeId: ByteVector
   ): NodeRelayPayload =
     NodeRelayPayload(
       TlvStream(

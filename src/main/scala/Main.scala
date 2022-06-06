@@ -3,6 +3,8 @@ import scala.util.{Failure, Success}
 import scala.scalanative.loop.{Poll, Timer}
 import scala.scalanative.unsigned.given
 import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.Future
+import scodec.bits.ByteVector
 import upickle.default._
 
 import codecs.{
@@ -12,6 +14,7 @@ import codecs.{
   InitHostedChannel,
   MilliSatoshi
 }
+import codecs.ShortChannelId
 
 case class Config(
     cltvExpiryDelta: CltvExpiryDelta,
@@ -45,7 +48,7 @@ object Main {
     initialClientBalanceMsat = MilliSatoshi(0)
   )
   val config = Config(
-    cltvExpiryDelta = CltvExpiryDelta(144),
+    cltvExpiryDelta = CltvExpiryDelta(143),
     feeBase = MilliSatoshi(1000L),
     feeProportionalMillionths = 1000L
   )

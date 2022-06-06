@@ -8,7 +8,7 @@ import scodec.bits.ByteVector
 import ChaCha20.{xor}
 import ChaCha20Poly1305.{encrypt, decrypt}
 
-import crypto.{Crypto, Hmac256, PublicKey, PrivateKey}
+import crypto.{Crypto, Hmac256}
 
 object Sphinx {
 
@@ -40,16 +40,16 @@ object Sphinx {
         .map[Byte](_.toByte)
     )
 
-  def computeSharedSecret(pub: PublicKey, secret: PrivateKey): ByteVector32 =
+  def computeSharedSecret(pub: ByteVector, secret: ByteVector32): ByteVector32 =
     Crypto.sha256(Crypto.multiplyPublicKey(pub, secret))
 
-  def computeBlindingFactor(pub: PublicKey, secret: ByteVector): ByteVector32 =
+  def computeBlindingFactor(pub: ByteVector, secret: ByteVector): ByteVector32 =
     Crypto.sha256(pub ++ secret)
 
-  def blind(pub: PublicKey, blindingFactor: ByteVector32): PublicKey =
+  def blind(pub: ByteVector, blindingFactor: ByteVector32): ByteVector =
     Crypto.multiplyPublicKey(pub, blindingFactor)
 
-  def blind(pub: PublicKey, blindingFactors: Seq[ByteVector32]): PublicKey =
+  def blind(pub: ByteVector, blindingFactors: Seq[ByteVector32]): ByteVector =
     blindingFactors.foldLeft(pub)(blind)
 
   /** Compute the ephemeral public keys and shared secrets for all nodes on the
@@ -63,9 +63,9 @@ object Sphinx {
     *   a tuple (ephemeral public keys, shared secrets).
     */
   def computeEphemeralPublicKeysAndSharedSecrets(
-      sessionKey: PrivateKey,
-      publicKeys: Seq[PublicKey]
-  ): (Seq[PublicKey], Seq[ByteVector32]) = {
+      sessionKey: ByteVector32,
+      publicKeys: Seq[ByteVector]
+  ): (Seq[ByteVector], Seq[ByteVector32]) = {
     val ephemeralPublicKey0 =
       blind(Crypto.G, sessionKey)
     val secret0 = computeSharedSecret(publicKeys.head, sessionKey)
@@ -81,12 +81,12 @@ object Sphinx {
 
   @tailrec
   private def computeEphemeralPublicKeysAndSharedSecrets(
-      sessionKey: PrivateKey,
-      publicKeys: Seq[PublicKey],
-      ephemeralPublicKeys: Seq[PublicKey],
+      sessionKey: ByteVector32,
+      publicKeys: Seq[ByteVector],
+      ephemeralPublicKeys: Seq[ByteVector],
       blindingFactors: Seq[ByteVector32],
       sharedSecrets: Seq[ByteVector32]
-  ): (Seq[PublicKey], Seq[ByteVector32]) = {
+  ): (Seq[ByteVector], Seq[ByteVector32]) = {
     if (publicKeys.isEmpty) (ephemeralPublicKeys, sharedSecrets)
     else {
       val ephemeralPublicKey =
@@ -154,7 +154,7 @@ object Sphinx {
     */
   case class PacketAndSecrets(
       packet: OnionRoutingPacket,
-      sharedSecrets: Seq[(ByteVector32, PublicKey)]
+      sharedSecrets: Seq[(ByteVector32, ByteVector)]
   )
 
   /** Generate a deterministic filler to prevent intermediate nodes from knowing
@@ -221,7 +221,7 @@ object Sphinx {
     *     BadOnion error containing the hash of the invalid onion.
     */
   def peel(
-      privateKey: PrivateKey,
+      privateKey: ByteVector32,
       associatedData: Option[ByteVector32],
       packet: OnionRoutingPacket
   ): Either[BadOnion, DecryptedPacket] = packet.version match {
@@ -300,7 +300,7 @@ object Sphinx {
   def wrap(
       payload: ByteVector,
       associatedData: Option[ByteVector32],
-      ephemeralPublicKey: PublicKey,
+      ephemeralPublicKey: ByteVector,
       sharedSecret: ByteVector32,
       packet: Either[ByteVector, OnionRoutingPacket],
       onionPayloadFiller: ByteVector = ByteVector.empty
@@ -364,9 +364,9 @@ object Sphinx {
     *   used to parse returned failure messages if needed.
     */
   def create(
-      sessionKey: PrivateKey,
+      sessionKey: ByteVector32,
       packetPayloadLength: Int,
-      publicKeys: Seq[PublicKey],
+      publicKeys: Seq[ByteVector],
       payloads: Seq[ByteVector],
       associatedData: Option[ByteVector32]
   ): Try[PacketAndSecrets] = Try {
@@ -398,7 +398,7 @@ object Sphinx {
     @tailrec
     def loop(
         hopPayloads: Seq[ByteVector],
-        ephKeys: Seq[PublicKey],
+        ephKeys: Seq[ByteVector],
         sharedSecrets: Seq[ByteVector32],
         packet: OnionRoutingPacket
     ): OnionRoutingPacket = {
@@ -449,7 +449,7 @@ object Sphinx {
     *   friendly failure message.
     */
   case class DecryptedFailurePacket(
-      originNode: PublicKey,
+      originNode: ByteVector,
       failureMessage: FailureMessage
   )
 
@@ -518,7 +518,7 @@ object Sphinx {
       */
     def decrypt(
         packet: ByteVector,
-        sharedSecrets: Seq[(ByteVector32, PublicKey)]
+        sharedSecrets: Seq[(ByteVector32, ByteVector)]
     ): Try[DecryptedFailurePacket] = Try {
       require(
         packet.length == PacketLength,
@@ -528,7 +528,7 @@ object Sphinx {
       @tailrec
       def loop(
           packet: ByteVector,
-          secrets: Seq[(ByteVector32, PublicKey)]
+          secrets: Seq[(ByteVector32, ByteVector)]
       ): DecryptedFailurePacket = secrets match {
         case Nil =>
           throw new RuntimeException(
@@ -570,9 +570,9 @@ object Sphinx {
       *   private key and the blinding ephemeral key.
       */
     case class IntroductionNode(
-        publicKey: PublicKey,
-        blindedPublicKey: PublicKey,
-        blindingEphemeralKey: PublicKey,
+        publicKey: ByteVector,
+        blindedPublicKey: ByteVector,
+        blindingEphemeralKey: ByteVector,
         encryptedPayload: ByteVector
     )
 
@@ -583,7 +583,7 @@ object Sphinx {
       *   private key and the blinding ephemeral key.
       */
     case class BlindedNode(
-        blindedPublicKey: PublicKey,
+        blindedPublicKey: ByteVector,
         encryptedPayload: ByteVector
     )
 
@@ -596,8 +596,8 @@ object Sphinx {
       *   blinded nodes (including the introduction node).
       */
     case class BlindedRoute(
-        introductionNodeId: PublicKey,
-        blindingKey: PublicKey,
+        introductionNodeId: ByteVector,
+        blindingKey: ByteVector,
         blindedNodes: Seq[BlindedNode]
     ) {
       require(blindedNodes.nonEmpty, "blinded route must not be empty")
@@ -608,7 +608,7 @@ object Sphinx {
         blindedNodes.head.encryptedPayload
       )
       val subsequentNodes: Seq[BlindedNode] = blindedNodes.tail
-      val blindedNodeIds: Seq[PublicKey] = blindedNodes.map(_.blindedPublicKey)
+      val blindedNodeIds: Seq[ByteVector] = blindedNodes.map(_.blindedPublicKey)
       val encryptedPayloads: Seq[ByteVector] =
         blindedNodes.map(_.encryptedPayload)
     }
@@ -626,15 +626,15 @@ object Sphinx {
       *   a blinded route.
       */
     def create(
-        sessionKey: PrivateKey,
-        publicKeys: Seq[PublicKey],
+        sessionKey: ByteVector32,
+        publicKeys: Seq[ByteVector],
         payloads: Seq[ByteVector]
     ): BlindedRoute = {
       require(
         publicKeys.length == payloads.length,
         "a payload must be provided for each node in the blinded path"
       )
-      var e: PrivateKey = sessionKey
+      var e: ByteVector32 = sessionKey
       val (blindedHops, blindingKeys) = publicKeys
         .zip(payloads)
         .map { case (publicKey, payload) =>
@@ -673,9 +673,9 @@ object Sphinx {
       *   this node's blinded private key.
       */
     def derivePrivateKey(
-        privateKey: PrivateKey,
-        blindingEphemeralKey: PublicKey
-    ): PrivateKey = {
+        privateKey: ByteVector32,
+        blindingEphemeralKey: ByteVector
+    ): ByteVector32 = {
       val sharedSecret = computeSharedSecret(blindingEphemeralKey, privateKey)
       Crypto.multiplyPrivateKey(
         privateKey,
@@ -697,10 +697,10 @@ object Sphinx {
       *   node)
       */
     def decryptPayload(
-        privateKey: PrivateKey,
-        blindingEphemeralKey: PublicKey,
+        privateKey: ByteVector32,
+        blindingEphemeralKey: ByteVector,
         encryptedPayload: ByteVector
-    ): Try[(ByteVector, PublicKey)] = Try {
+    ): Try[(ByteVector, ByteVector)] = Try {
       val sharedSecret = computeSharedSecret(blindingEphemeralKey, privateKey)
       val rho = generateKey("rho", sharedSecret)
       val decrypted =

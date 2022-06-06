@@ -17,7 +17,7 @@ import codecs.LightningMessageCodecs._
 import scodec.bits.ByteVector
 import scodec.codecs._
 
-class ChannelClient(peerId: String)(implicit
+class ChannelClient(peerId: ByteVector)(implicit
     ac: castor.Context
 ) extends castor.SimpleActor[HostedServerMessage] {
   sealed trait State

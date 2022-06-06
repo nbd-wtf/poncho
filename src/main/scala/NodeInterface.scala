@@ -9,11 +9,10 @@ import scodec.codecs.uint16
 
 import codecs.HostedChannelCodecs._
 import codecs._
-import crypto.{PublicKey, PrivateKey}
 
 trait NodeInterface {
-  def getPrivateKey(): PrivateKey
-  def ourPubKey: PublicKey
+  def getPrivateKey(): ByteVector32
+  def ourPubKey: ByteVector
 
   def getPeerFromChannel(scid: ShortChannelId): ByteVector
   def inspectOutgoingPayment(
@@ -27,7 +26,7 @@ trait NodeInterface {
   ): Unit
   def sendOnion(
       paymentHash: ByteVector32,
-      firstHop: PublicKey,
+      firstHop: ByteVector,
       amount: MilliSatoshi,
       cltvExpiryDelta: CltvExpiryDelta,
       onion: ByteVector

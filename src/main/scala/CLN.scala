@@ -15,7 +15,6 @@ import scodec.bits.ByteVector
 import scodec.codecs.uint16
 
 import unixsocket.UnixSocket
-import crypto.{PublicKey, PrivateKey}
 import codecs.HostedChannelCodecs._
 import codecs._
 import secp256k1.Secp256k1
@@ -88,7 +87,7 @@ class CLN {
     )
   }
 
-  def getPrivateKey(): PrivateKey = {
+  def getPrivateKey(): ByteVector32 = {
     val salt = Array[UByte](0.toByte.toUByte)
     val info = "nodeid".getBytes().map(_.toUByte)
     val secret = Files.readAllBytes(hsmSecret).map(_.toUByte)
@@ -97,7 +96,7 @@ class CLN {
     ByteVector32(ByteVector(sk.map(_.toByte)))
   }
 
-  lazy val ourPubKey: PublicKey = ByteVector(
+  lazy val ourPubKey = ByteVector(
     Keys
       .loadPrivateKey(getPrivateKey().bytes.toArray.map(_.toUByte))
       .toOption
@@ -127,7 +126,7 @@ class CLN {
   def getCurrentBlock(): Future[BlockHeight] =
     rpc("getchaininfo").map(info => BlockHeight(info("headercount").num.toLong))
 
-  def getPeerFromChannel(scid: ShortChannelId): Future[Option[PublicKey]] =
+  def getPeerFromChannel(scid: ShortChannelId): Future[Option[ByteVector]] =
     rpc("listfunds").map(res =>
       res("channels").arr
         .find(chan =>
@@ -141,7 +140,7 @@ class CLN {
     )
 
   def inspectOutgoingPayment(
-      peerId: String,
+      peerId: ByteVector,
       htlcId: ULong,
       paymentHash: ByteVector32
   ): Future[UpstreamPaymentStatus] =
@@ -150,7 +149,7 @@ class CLN {
         _("payments").arr
           .filter(_.obj.contains("label"))
           .find(p => {
-            (peerId, htlcId.toLong) ==
+            (peerId.toHex, htlcId.toLong) ==
               upickle.default.read[Tuple2[String, Long]](p("label").str)
           })
           .flatMap(toStatus(_))
@@ -179,7 +178,7 @@ class CLN {
     }
 
   def sendCustomMessage(
-      peerId: String,
+      peerId: ByteVector,
       message: HostedServerMessage | HostedClientMessage
   ): Future[ujson.Value] = {
     val (tag, encoded) = message match {
@@ -195,22 +194,22 @@ class CLN {
       .toHex
     val payload = tagHex + lengthHex + encoded.toHex
 
-    Main.log(s"  ::> sending $message --> $peerId")
+    Main.log(s"  ::> sending $message --> ${peerId.toHex}")
 
     rpc(
       "sendcustommsg",
       ujson.Obj(
-        "node_id" -> peerId,
+        "node_id" -> peerId.toHex,
         "msg" -> payload
       )
     )
   }
 
   def sendOnion(
-      hostedPeerId: String,
+      hostedPeerId: ByteVector,
       htlcId: ULong,
       paymentHash: ByteVector32,
-      firstHop: PublicKey,
+      firstHop: ByteVector,
       amount: MilliSatoshi,
       cltvExpiryDelta: CltvExpiryDelta,
       onion: ByteVector
@@ -224,7 +223,7 @@ class CLN {
           ),
           "onion" -> onion.toHex,
           "payment_hash" -> paymentHash.toHex,
-          "label" -> upickle.default.write((hostedPeerId, htlcId.toLong))
+          "label" -> upickle.default.write((hostedPeerId.toHex, htlcId.toLong))
         )
         .toString}")
 
@@ -238,7 +237,7 @@ class CLN {
         ),
         "onion" -> onion.toHex,
         "payment_hash" -> paymentHash.toHex,
-        "label" -> upickle.default.write((hostedPeerId, htlcId.toLong))
+        "label" -> upickle.default.write((hostedPeerId.toHex, htlcId.toLong))
       )
     )
   }
@@ -302,7 +301,7 @@ class CLN {
       case "custommsg" => {
         reply(ujson.Obj("result" -> "continue"))
 
-        val peerId = data("peer_id").str
+        val peerId = ByteVector.fromValidHex(data("peer_id").str)
         val body = data("payload").str
         val tag = ByteVector
           .fromValidHex(body.take(4))
@@ -358,9 +357,8 @@ class CLN {
             )
             val nextOnion = ByteVector.fromValidHex(onion("next_onion").str)
 
-            val channel = Database.data.channels.find(
-              (peerId: String, chandata: ChannelData) =>
-                ChanTools.getShortChannelId(peerId) == scid
+            val channel = Database.data.channels.find((peerId, chandata) =>
+              ChanTools.getShortChannelId(peerId) == scid
             )
 
             channel match {
@@ -436,7 +434,9 @@ class CLN {
       case "sendpay_success" => {
         val successdata = data("sendpay_success")
         val label = successdata("label").str
-        val (peerId, htlcId) = upickle.default.read[Tuple2[String, Long]](label)
+        val (peerIdHex, htlcId) =
+          upickle.default.read[Tuple2[String, Long]](label)
+        val peerId = ByteVector.fromValidHex(peerIdHex)
         val channel = Database.data.channels.get(peerId)
         channel match {
           case Some(chandata) if chandata.isActive => {
@@ -449,7 +449,9 @@ class CLN {
       case "sendpay_failure" => {
         val failuredata = data("sendpay_failure")("data")
         val label = failuredata("label").str
-        val (peerId, htlcId) = upickle.default.read[Tuple2[String, Long]](label)
+        val (peerIdHex, htlcId) =
+          upickle.default.read[Tuple2[String, Long]](label)
+        val peerId = ByteVector.fromValidHex(peerIdHex)
         val channel = Database.data.channels.get(peerId)
         channel match {
           case Some(chandata) if chandata.isActive => {
@@ -498,7 +500,7 @@ class CLN {
         } match {
           case Some(Some(peerId), Some(msatoshi)) => {
             ChannelMaster
-              .getChannelServer(peerId)
+              .getChannelServer(ByteVector.fromValidHex(peerId))
               .proposeOverride(MilliSatoshi(msatoshi.toLong))
               .onComplete {
                 case Success(msg) => reply(msg)

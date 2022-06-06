@@ -25,16 +25,16 @@ case class FromLocal(upd: ChannelModifier)
 case class FromRemote(upd: ChannelModifier)
 
 object ChannelMaster {
-  val servers = mutable.Map.empty[String, ChannelServer]
-  val clients = mutable.Map.empty[String, ChannelClient]
-  def getChannelServer(peerId: String): ChannelServer = {
+  val servers = mutable.Map.empty[ByteVector, ChannelServer]
+  val clients = mutable.Map.empty[ByteVector, ChannelClient]
+  def getChannelServer(peerId: ByteVector): ChannelServer = {
     servers.getOrElseUpdate(peerId, { new ChannelServer(peerId) })
   }
-  def getChannelClient(peerId: String): ChannelClient = {
+  def getChannelClient(peerId: ByteVector): ChannelClient = {
     clients.getOrElseUpdate(peerId, { new ChannelClient(peerId) })
   }
 
-  def all: Map[String, ChannelData] = Database.data.channels
+  def all: Map[ByteVector, ChannelData] = Database.data.channels
 
   def channelsJSON: ujson.Arr = {
     val mapHtlc = (htlc: UpdateAddHtlc) =>
@@ -48,7 +48,7 @@ object ChannelMaster {
     ujson.Arr.from(
       all.toList.map((peerId, chandata) =>
         ujson.Obj(
-          "peer_id" -> peerId,
+          "peer_id" -> peerId.toHex,
           "channel_id" -> ChanTools.getChannelId(peerId).toHex,
           "short_channel_id" -> ChanTools.getShortChannelId(peerId).toString,
           "status" -> ujson.Obj(
@@ -77,20 +77,19 @@ object ChannelMaster {
 }
 
 object ChanTools {
-  def getChannelId(peerId: String): ByteVector32 =
-    Utils.getChannelId(Main.node.ourPubKey, ByteVector.fromValidHex(peerId))
+  def getChannelId(peerId: ByteVector): ByteVector32 =
+    Utils.getChannelId(Main.node.ourPubKey, peerId)
 
-  def getShortChannelId(peerId: String): ShortChannelId =
+  def getShortChannelId(peerId: ByteVector): ShortChannelId =
     Utils.getShortChannelId(
       Main.node.ourPubKey,
-      ByteVector.fromValidHex(peerId)
+      peerId
     )
 
-  def makeChannelUpdate(peerId: String): ChannelUpdate = {
-    val remoteNodeId = ByteVector.fromValidHex(peerId)
+  def makeChannelUpdate(peerId: ByteVector): ChannelUpdate = {
     val shortChannelId = getShortChannelId(peerId)
     val flags = ChannelUpdate.ChannelFlags(
-      isNode1 = Utils.isLessThan(Main.node.ourPubKey, remoteNodeId),
+      isNode1 = Utils.isLessThan(Main.node.ourPubKey, peerId),
       isEnabled = true
     )
     val timestamp: TimestampSecond = TimestampSecond.now()

@@ -9,7 +9,7 @@ import codecs._
 
 case class Data(
     htlcAcceptedIds: Map[String, String] = Map.empty,
-    channels: Map[String, ChannelData] = Map.empty
+    channels: Map[ByteVector, ChannelData] = Map.empty
 )
 
 case class ChannelData(

@@ -6,10 +6,6 @@ import sha256.{Hmac, Sha256}
 
 import codecs.{ByteVector32, ByteVector64}
 
-type PublicKey = ByteVector
-type PrivateKey = ByteVector32
-type Signature = ByteVector64
-
 case class Hmac256(key: ByteVector) {
   def mac(message: ByteVector): ByteVector32 =
     Crypto.hmac256(key, message)
@@ -38,7 +34,7 @@ object Crypto {
       )
     )
 
-  def getPublicKey(privateKey: PrivateKey): PublicKey =
+  def getPublicKey(privateKey: ByteVector32): ByteVector =
     ByteVector(
       secp256k1
         .PrivateKey(privateKey.bytes.toArray.map[UByte](_.toUByte))
@@ -47,7 +43,7 @@ object Crypto {
         .map[Byte](_.toByte)
     )
 
-  def sign(data: ByteVector, privateKey: PrivateKey): Signature =
+  def sign(data: ByteVector, privateKey: ByteVector32): ByteVector64 =
     ByteVector64(
       ByteVector(
         secp256k1
@@ -61,8 +57,8 @@ object Crypto {
 
   def verifySignature(
       data: ByteVector,
-      signature: Signature,
-      publicKey: PublicKey
+      signature: ByteVector64,
+      publicKey: ByteVector
   ): Boolean = {
     secp256k1
       .PublicKey(publicKey.toArray.map[UByte](_.toUByte))
@@ -75,7 +71,7 @@ object Crypto {
   }
 
   def multiplyPrivateKey(
-      key: PrivateKey,
+      key: ByteVector32,
       scalar: ByteVector32
   ): ByteVector32 =
     ByteVector32(
@@ -88,7 +84,7 @@ object Crypto {
       )
     )
 
-  def multiplyPublicKey(key: PublicKey, scalar: ByteVector32): ByteVector =
+  def multiplyPublicKey(key: ByteVector, scalar: ByteVector32): ByteVector =
     ByteVector(
       secp256k1
         .PublicKey(key.toArray.map[UByte](_.toUByte))
