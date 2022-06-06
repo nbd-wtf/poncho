@@ -61,6 +61,9 @@ case class CltvExpiry(private val underlying: BlockHeight)
   def -(other: CltvExpiry): CltvExpiryDelta = CltvExpiryDelta(
     (underlying - other.underlying).toInt
   )
+  def -(other: BlockHeight): CltvExpiryDelta = CltvExpiryDelta(
+    (underlying - other).toInt
+  )
   override def compare(other: CltvExpiry): Int =
     underlying.compareTo(other.underlying)
   def blockHeight: BlockHeight = underlying

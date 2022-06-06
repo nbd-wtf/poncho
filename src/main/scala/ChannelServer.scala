@@ -579,7 +579,7 @@ class ChannelServer(peerId: String)(implicit
                               firstHop = nodeid,
                               amount = payload.amountToForward,
                               cltvExpiryDelta =
-                                add.cltvExpiry - payload.outgoingCltv,
+                                payload.outgoingCltv - Main.currentBlock,
                               onion = nextOnion
                             )
                             .onComplete {
