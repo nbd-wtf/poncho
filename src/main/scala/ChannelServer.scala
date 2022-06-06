@@ -86,8 +86,7 @@ class ChannelServer(peerId: String)(implicit
                   lcss.copy(
                     localBalanceMsat = lcss.localBalanceMsat + htlc.amountMsat,
                     remoteUpdates = lcss.remoteUpdates + 1,
-                    outgoingHtlcs =
-                      lcss.outgoingHtlcs.filterNot(_.id == htlc.id)
+                    outgoingHtlcs = lcss.outgoingHtlcs.filterNot(_ == htlc)
                   )
                 }
                 case None => lcss
@@ -100,8 +99,7 @@ class ChannelServer(peerId: String)(implicit
                     remoteBalanceMsat =
                       lcss.remoteBalanceMsat + htlc.amountMsat,
                     remoteUpdates = lcss.remoteUpdates + 1,
-                    outgoingHtlcs =
-                      lcss.outgoingHtlcs.filterNot(_.id == htlc.id)
+                    outgoingHtlcs = lcss.outgoingHtlcs.filterNot(_ == htlc)
                   )
                 }
                 case None => lcss
@@ -128,8 +126,7 @@ class ChannelServer(peerId: String)(implicit
                     remoteBalanceMsat =
                       lcss.remoteBalanceMsat + htlc.amountMsat,
                     localUpdates = lcss.localUpdates + 1,
-                    incomingHtlcs =
-                      lcss.incomingHtlcs.filterNot(_.id == htlc.id)
+                    incomingHtlcs = lcss.incomingHtlcs.filterNot(_ == htlc)
                   )
                 }
                 case None => lcss
@@ -141,8 +138,7 @@ class ChannelServer(peerId: String)(implicit
                   lcss.copy(
                     localBalanceMsat = lcss.localBalanceMsat + htlc.amountMsat,
                     localUpdates = lcss.localUpdates + 1,
-                    incomingHtlcs =
-                      lcss.incomingHtlcs.filterNot(_.id == htlc.id)
+                    incomingHtlcs = lcss.incomingHtlcs.filterNot(_ == htlc)
                   )
                 }
                 case None => lcss
@@ -362,7 +358,7 @@ class ChannelServer(peerId: String)(implicit
         Timer.timeout(FiniteDuration(5, "seconds")) { () =>
           active.lcssNext.incomingHtlcs.foreach { htlc =>
             Main.node
-              .inspectOutgoingPayment(peerId, htlc)
+              .inspectOutgoingPayment(peerId, htlc.id, htlc.paymentHash)
               .foreach { result => upstreamPaymentResult(htlc.id, result) }
           }
         }
@@ -621,7 +617,6 @@ class ChannelServer(peerId: String)(implicit
             }
 
             // send our state update
-            // TODO: only send state_update when we haven't sent it yet
             sendMessage(lcssNext.stateUpdate)
 
             // update this channel state to the new lcss
@@ -888,7 +883,6 @@ class ChannelServer(peerId: String)(implicit
                 val updated =
                   active.addUncommittedUpdate(upd)
                 state = updated
-                sendMessage(updated.lcssNext.stateUpdate)
 
                 sendMessage(fail)
                   .onComplete {

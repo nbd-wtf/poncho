@@ -1,5 +1,6 @@
 import java.nio.file.{Files, Path, Paths}
 import scala.util.Try
+import scala.util.chaining._
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.Future
@@ -141,14 +142,15 @@ class CLN {
 
   def inspectOutgoingPayment(
       peerId: String,
-      htlc: UpdateAddHtlc
+      htlcId: ULong,
+      paymentHash: ByteVector32
   ): Future[UpstreamPaymentStatus] =
-    rpc("listsendpays", ujson.Obj("payment_hash" -> htlc.paymentHash.toHex))
+    rpc("listsendpays", ujson.Obj("payment_hash" -> paymentHash.toHex))
       .map(
         _("payments").arr
           .filter(_.obj.contains("label"))
           .find(p => {
-            (peerId, htlc.id.toLong) ==
+            (peerId, htlcId.toLong) ==
               upickle.default.read[Tuple2[String, Long]](p("label").str)
           })
           .flatMap(toStatus(_))
@@ -167,9 +169,10 @@ class CLN {
       case "failed" =>
         Some(
           Left(
-            if data.obj.contains("onionreply") then
-              Some(ByteVector.fromValidHex(data("onionreply").str))
-            else None
+            data.obj
+              .pipe(o => o.get("onionreply").orElse(o.get("erroronion")))
+              .map(_.str)
+              .map(ByteVector.fromValidHex(_))
           )
         )
       case _ => None
@@ -451,9 +454,24 @@ class CLN {
         channel match {
           case Some(chandata) if chandata.isActive => {
             val peer = ChannelMaster.getChannelServer(peerId)
-            peer.upstreamPaymentResult(htlcId.toULong, toStatus(failuredata))
+
+            if (failuredata("status").str == "pending") {
+              Timer.timeout(FiniteDuration(1, "seconds")) { () =>
+                inspectOutgoingPayment(
+                  peerId,
+                  htlcId.toULong,
+                  ByteVector32.fromValidHex(failuredata("payment_hash").str)
+                ).foreach { result =>
+                  peer.upstreamPaymentResult(htlcId.toULong, result)
+                }
+              }
+            } else {
+              peer.upstreamPaymentResult(htlcId.toULong, toStatus(failuredata))
+            }
           }
-          case _ => {}
+          case _ => {
+            Main.log("sendpay_failure but not for an active channel")
+          }
         }
       }
       case "connect" => {

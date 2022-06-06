@@ -89,31 +89,31 @@ case class LastCrossSignedState(
     )
     val hostFlag = if (isHost) 1 else 0
 
-    Crypto.sha256(
-      refundScriptPubKey ++
-        Protocol.writeUInt64(
-          initHostedChannel.channelCapacityMsat.toLong,
-          ByteOrder.LITTLE_ENDIAN
-        ) ++
-        Protocol.writeUInt64(
-          initHostedChannel.initialClientBalanceMsat.toLong,
-          ByteOrder.LITTLE_ENDIAN
-        ) ++
-        Protocol.writeUInt32(blockDay, ByteOrder.LITTLE_ENDIAN) ++
-        Protocol
-          .writeUInt64(localBalanceMsat.toLong, ByteOrder.LITTLE_ENDIAN) ++
-        Protocol
-          .writeUInt64(remoteBalanceMsat.toLong, ByteOrder.LITTLE_ENDIAN) ++
-        Protocol.writeUInt32(localUpdates, ByteOrder.LITTLE_ENDIAN) ++
-        Protocol.writeUInt32(remoteUpdates, ByteOrder.LITTLE_ENDIAN) ++
-        inPayments.foldLeft(ByteVector.empty) { case (acc, htlc) =>
-          acc ++ htlc
-        } ++
-        outPayments.foldLeft(ByteVector.empty) { case (acc, htlc) =>
-          acc ++ htlc
-        } :+
-        hostFlag.toByte
-    )
+    val message = refundScriptPubKey ++
+      Protocol.writeUInt64(
+        initHostedChannel.channelCapacityMsat.toLong,
+        ByteOrder.LITTLE_ENDIAN
+      ) ++
+      Protocol.writeUInt64(
+        initHostedChannel.initialClientBalanceMsat.toLong,
+        ByteOrder.LITTLE_ENDIAN
+      ) ++
+      Protocol.writeUInt32(blockDay, ByteOrder.LITTLE_ENDIAN) ++
+      Protocol
+        .writeUInt64(localBalanceMsat.toLong, ByteOrder.LITTLE_ENDIAN) ++
+      Protocol
+        .writeUInt64(remoteBalanceMsat.toLong, ByteOrder.LITTLE_ENDIAN) ++
+      Protocol.writeUInt32(localUpdates, ByteOrder.LITTLE_ENDIAN) ++
+      Protocol.writeUInt32(remoteUpdates, ByteOrder.LITTLE_ENDIAN) ++
+      inPayments.foldLeft(ByteVector.empty) { case (acc, htlc) =>
+        acc ++ htlc
+      } ++
+      outPayments.foldLeft(ByteVector.empty) { case (acc, htlc) =>
+        acc ++ htlc
+      } :+
+      hostFlag.toByte
+
+    Crypto.sha256(message)
   }
 
   def verifyRemoteSig(pubKey: PublicKey): Boolean =
