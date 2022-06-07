@@ -16,7 +16,7 @@ import codecs.HostedChannelCodecs._
 import codecs.LightningMessageCodecs._
 import crypto.Crypto
 
-import ChanTools.OnionParseResult
+import Utils.OnionParseResult
 import scala.concurrent.duration.FiniteDuration
 
 // -- questions:
@@ -26,14 +26,13 @@ import scala.concurrent.duration.FiniteDuration
 
 class ChannelServer(peerId: ByteVector)(implicit
     ac: castor.Context
-) extends castor.SimpleActor[HostedClientMessage] {
-  sealed trait State
+) extends Channel[HostedClientMessage, HostedServerMessage](peerId) {
   case class Opening(refundScriptPubKey: ByteVector) extends State
   case class Inactive() extends State
   case class Errored(lcssNext: Option[LastCrossSignedState]) extends State
   case class Overriding(target: LastCrossSignedState) extends State
   case class Active(
-      htlcResults: Map[ULong, Promise[HTLCResult]] = Map.empty,
+      htlcResults: Map[ULong, Promise[PaymentStatus]] = Map.empty,
       uncommittedUpdates: List[FromLocal | FromRemote] = List.empty
   ) extends State {
     // return a copy of this state with the update_add_htlc/update_fail_htlc/update_fulfill_htlc
@@ -47,7 +46,7 @@ class ChannelServer(peerId: ByteVector)(implicit
       )
 
     // this tells our upstream node to resolve or fail the htlc it is holding
-    def provideHtlcResult(id: ULong, result: HTLCResult): Unit =
+    def provideHtlcResult(id: ULong, result: PaymentStatus): Unit =
       this.htlcResults
         .get(id)
         .foreach(_.success(result))
@@ -160,11 +159,6 @@ class ChannelServer(peerId: ByteVector)(implicit
       case _                                          => Inactive()
     }
 
-  def stay = state
-
-  def sendMessage: HostedServerMessage => Future[ujson.Value] =
-    Main.node.sendCustomMessage(peerId, _)
-
   def run(msg: HostedClientMessage): Unit = {
     Main.log(s"[$this] at $state <-- $msg")
     state = (state, msg) match {
@@ -177,7 +171,7 @@ class ChannelServer(peerId: ByteVector)(implicit
           )
           sendMessage(
             Error(
-              ChanTools.getChannelId(peerId),
+              channelId,
               s"invalid chainHash (local=${Main.chainHash} remote=${msg.chainHash})"
             )
           )
@@ -226,7 +220,7 @@ class ChannelServer(peerId: ByteVector)(implicit
           )
           sendMessage(
             Error(
-              ChanTools.getChannelId(peerId),
+              channelId,
               Error.ERR_HOSTED_WRONG_BLOCKDAY
             )
           )
@@ -235,7 +229,7 @@ class ChannelServer(peerId: ByteVector)(implicit
           Main.log(s"[${peerId}] sent state_update with wrong signature.")
           sendMessage(
             Error(
-              ChanTools.getChannelId(peerId),
+              channelId,
               Error.ERR_HOSTED_WRONG_REMOTE_SIG
             )
           )
@@ -264,7 +258,7 @@ class ChannelServer(peerId: ByteVector)(implicit
           sendMessage(lcss.stateUpdate)
 
           // send a channel update
-          sendMessage(ChanTools.makeChannelUpdate(peerId))
+          sendMessage(getChannelUpdate)
 
           Active()
         }
@@ -289,7 +283,7 @@ class ChannelServer(peerId: ByteVector)(implicit
               s"[${peerId}] sent LastCrossSignedState with a signature that isn't ours"
             )
             Error(
-              ChanTools.getChannelId(peerId),
+              channelId,
               Error.ERR_HOSTED_WRONG_LOCAL_SIG
             )
           } else {
@@ -297,7 +291,7 @@ class ChannelServer(peerId: ByteVector)(implicit
               s"[${peerId}] sent LastCrossSignedState with an invalid signature"
             )
             Error(
-              ChanTools.getChannelId(peerId),
+              channelId,
               Error.ERR_HOSTED_WRONG_REMOTE_SIG
             )
           }
@@ -343,7 +337,7 @@ class ChannelServer(peerId: ByteVector)(implicit
 
           // all good, send the most recent lcss again and then the channel update
           sendMessage(lcssMostRecent)
-          sendMessage(ChanTools.makeChannelUpdate(peerId))
+          sendMessage(getChannelUpdate)
           stay
         }
       }
@@ -405,7 +399,7 @@ class ChannelServer(peerId: ByteVector)(implicit
           case f: UpdateFailHtlc if (f.reason.isEmpty) => {
             // fail the channel
             val err = Error(
-              ChanTools.getChannelId(peerId),
+              channelId,
               Error.ERR_HOSTED_WRONG_REMOTE_SIG
             )
             sendMessage(err)
@@ -432,7 +426,7 @@ class ChannelServer(peerId: ByteVector)(implicit
         val updated = active.addUncommittedUpdate(FromRemote(add))
 
         // check if fee and cltv delta etc are correct, otherwise return a failure
-        ChanTools
+        Utils
           .parseClientOnion(add)
           .map(_.packet) match {
           case Right(packet: PaymentOnion.ChannelRelayPayload) => {
@@ -442,7 +436,7 @@ class ChannelServer(peerId: ByteVector)(implicit
           case Left(_: Exception) => {
             // this means the htlc onion is too garbled, fail the channel
             val err = Error(
-              ChanTools.getChannelId(peerId),
+              channelId,
               Error.ERR_HOSTED_MANUAL_SUSPEND
             )
             Database.update { data =>
@@ -457,7 +451,10 @@ class ChannelServer(peerId: ByteVector)(implicit
           case Left(fail: FailureMessage) => {
             // we have a proper error, so fail this htlc on client
             Timer.timeout(FiniteDuration(1, "seconds")) { () =>
-              upstreamPaymentResult(add.id, Some(Left(Some(fail))))
+              upstreamPaymentResult(
+                add.id,
+                Some(Left(Some(NormalFailureMessage(fail))))
+              )
             }
 
             // still we first must acknowledge this received htlc, so we keep the updated state
@@ -505,7 +502,7 @@ class ChannelServer(peerId: ByteVector)(implicit
               case FromRemote(fail: UpdateFailHtlc) =>
                 active.provideHtlcResult(
                   fail.id,
-                  Some(Left(FailureOnion(fail.reason)))
+                  Some(Left(Some(FailureOnion(fail.reason))))
                 )
               case FromRemote(fail: UpdateFailMalformedHtlc) =>
                 // for c-lightning there is no way to return this correctly,
@@ -514,15 +511,17 @@ class ChannelServer(peerId: ByteVector)(implicit
                   fail.id,
                   Some(
                     Left(
-                      FailureCode(
-                        ByteVector(scala.math.BigInt(4103).toByteArray).toHex
+                      Some(
+                        NormalFailureMessage(
+                          TemporaryChannelFailure(getChannelUpdate)
+                        )
                       )
                     )
                   )
                 )
               case FromRemote(add: UpdateAddHtlc) => {
                 // send a payment through the upstream node
-                ChanTools.parseClientOnion(add) match {
+                Utils.parseClientOnion(add) match {
                   case Left(fail) => {
                     // this should never happen
                     Main.log(s"upstream node has relayed a broken add to us")
@@ -552,50 +551,89 @@ class ChannelServer(peerId: ByteVector)(implicit
                         )
                       ) => {
                     // a payment the client is sending through us to someone else
-
-                    // TODO handle payments from a client to another client
-                    // do it by just intercepting stuff here then calling addHTLC
-                    // must also handle errors/fulfills differently
-
-                    Main.node
-                      .getPeerFromChannel(
-                        ShortChannelId(payload.outgoingChannelId)
-                      )
-                      .onComplete {
-                        case Success(Some(nodeid)) =>
-                          Main.node
-                            .sendOnion(
-                              hostedPeerId = peerId,
-                              htlcId = add.id,
+                    //
+                    // first check if it's for another hosted channel we may have
+                    Database.data.channels
+                      .find((peerId, chandata) =>
+                        shortChannelId ==
+                          ShortChannelId(payload.outgoingChannelId)
+                      ) match {
+                      case Some((peerId, chandata)) => {
+                        // it is a local hosted channel
+                        // send it to the corresponding channel actor
+                        val chan = (if chandata.lcss.isHost then
+                                      ChannelMaster.getChannelServer
+                                    else ChannelMaster.getChannelClient)(peerId)
+                        chan
+                          .addHTLC(
+                            add.amountMsat,
+                            UpdateAddHtlc(
+                              channelId = chan.channelId,
+                              id = 0L.toULong, // will be replaced
+                              amountMsat = payload.amountToForward,
                               paymentHash = add.paymentHash,
-                              firstHop = nodeid,
-                              amount = payload.amountToForward,
-                              cltvExpiryDelta =
-                                payload.outgoingCltv - Main.currentBlock,
-                              onion = nextOnion
+                              cltvExpiry = payload.outgoingCltv,
+                              onionRoutingPacket = nextOnion
                             )
-                            .onComplete {
-                              case Failure(e) => {
-                                Main.log(s"sendonion failure: $e")
-                                upstreamPaymentResult(add.id, Some(Left(None)))
-                              }
-                              case Success(_) => {}
-                            }
-                        case Failure(err) => {
-                          Main.log(s"failed to get peer for channel: $err")
-                          upstreamPaymentResult(
-                            add.id,
-                            Some(Left(Some(UnknownNextPeer)))
                           )
-                        }
-                        case Success(None) => {
-                          Main.log("didn't find peer for channel")
-                          upstreamPaymentResult(
-                            add.id,
-                            Some(Left(Some(UnknownNextPeer)))
-                          )
-                        }
+                          .foreach { status =>
+                            upstreamPaymentResult(add.id, status)
+                          }
                       }
+                      case None =>
+                        // it is a normal channel on the upstream node
+                        // use sendonion
+                        Main.node
+                          .getPeerFromChannel(
+                            ShortChannelId(payload.outgoingChannelId)
+                          )
+                          .onComplete {
+                            case Success(Some(nodeid)) =>
+                              Main.node
+                                .sendOnion(
+                                  hostedPeerId = peerId,
+                                  htlcId = add.id,
+                                  paymentHash = add.paymentHash,
+                                  firstHop = nodeid,
+                                  amount = payload.amountToForward,
+                                  cltvExpiryDelta =
+                                    payload.outgoingCltv - Main.currentBlock,
+                                  onion = nextOnion
+                                )
+                                .onComplete {
+                                  case Failure(e) => {
+                                    Main.log(s"sendonion failure: $e")
+                                    upstreamPaymentResult(
+                                      add.id,
+                                      Some(Left(None))
+                                    )
+                                  }
+                                  case Success(_) => {}
+                                }
+                            case Failure(err) => {
+                              Main.log(s"failed to get peer for channel: $err")
+                              upstreamPaymentResult(
+                                add.id,
+                                Some(
+                                  Left(
+                                    Some(NormalFailureMessage(UnknownNextPeer))
+                                  )
+                                )
+                              )
+                            }
+                            case Success(None) => {
+                              Main.log("didn't find peer for channel")
+                              upstreamPaymentResult(
+                                add.id,
+                                Some(
+                                  Left(
+                                    Some(NormalFailureMessage(UnknownNextPeer))
+                                  )
+                                )
+                              )
+                            }
+                          }
+                    }
                   }
                 }
               }
@@ -621,7 +659,7 @@ class ChannelServer(peerId: ByteVector)(implicit
           } else {
             // a wrong signature, fail the channel
             val err = Error(
-              ChanTools.getChannelId(peerId),
+              channelId,
               Error.ERR_HOSTED_WRONG_REMOTE_SIG
             )
             Database.update { data =>
@@ -668,7 +706,7 @@ class ChannelServer(peerId: ByteVector)(implicit
             }
 
             // send our channel policies again just in case
-            sendMessage(ChanTools.makeChannelUpdate(peerId))
+            sendMessage(getChannelUpdate)
 
             // channel is active again
             Active()
@@ -693,8 +731,8 @@ class ChannelServer(peerId: ByteVector)(implicit
   def addHTLC(
       incoming: MilliSatoshi,
       prototype: UpdateAddHtlc
-  ): Future[HTLCResult] = {
-    var promise = Promise[HTLCResult]()
+  ): Future[PaymentStatus] = {
+    var promise = Promise[PaymentStatus]()
 
     Main.log(s"forwarding payment $state <-- $prototype")
     state match {
@@ -754,8 +792,10 @@ class ChannelServer(peerId: ByteVector)(implicit
           promise.success(
             Some(
               Left(
-                FailureCode(
-                  ByteVector(scala.math.BigInt(4103).toByteArray).toHex
+                Some(
+                  NormalFailureMessage(
+                    TemporaryChannelFailure(getChannelUpdate)
+                  )
                 )
               )
             )
@@ -796,11 +836,29 @@ class ChannelServer(peerId: ByteVector)(implicit
     }
 
     promise.future
+      .andThen { case Success(status) =>
+        status match {
+          case Some(Right(preimage)) =>
+            Main.log(
+              s"[add-htlc] $shortChannelId routed ${prototype.paymentHash} successfully: $preimage"
+            )
+          case Some(Left(Some(FailureOnion(_)))) =>
+            s"[add-htlc] $shortChannelId received failure onion for ${prototype.paymentHash}"
+          case Some(Left(_)) =>
+            Main.log(
+              s"[add-htlc] $shortChannelId failed ${prototype.paymentHash}"
+            )
+          case None =>
+            Main.log(
+              s"[add-htlc] $shortChannelId didn't handle ${prototype.paymentHash}"
+            )
+        }
+      }
   }
 
   def upstreamPaymentResult(
       htlcId: ULong,
-      status: UpstreamPaymentStatus
+      status: PaymentStatus
   ): Unit =
     if (status.isEmpty) {
       // payment still pending
@@ -809,7 +867,7 @@ class ChannelServer(peerId: ByteVector)(implicit
         (status.get, state) match {
           case (Right(preimage), active: Active) => {
             val fulfill = UpdateFulfillHtlc(
-              ChanTools.getChannelId(peerId),
+              channelId,
               htlcId,
               preimage
             )
@@ -841,7 +899,7 @@ class ChannelServer(peerId: ByteVector)(implicit
           case (Left(failure), active: Active) => {
             (for {
               htlc <- active.lcssNext.incomingHtlcs.find(_.id == htlcId)
-              OnionParseResult(packet, _, sharedSecret) <- ChanTools
+              OnionParseResult(packet, _, sharedSecret) <- Utils
                 .parseClientOnion(htlc)
                 .toOption
               fail = failure match {
@@ -854,12 +912,10 @@ class ChannelServer(peerId: ByteVector)(implicit
                   )
                 case _ =>
                   UpdateFailHtlc(
-                    ChanTools.getChannelId(peerId),
+                    channelId,
                     htlcId,
                     failure.getOrElse(
-                      TemporaryChannelFailure(
-                        ChanTools.makeChannelUpdate(peerId)
-                      )
+                      TemporaryChannelFailure(getChannelUpdate)
                     ) match {
                       case fm: FailureMessage =>
                         Sphinx.FailurePacket.create(sharedSecret, fm)

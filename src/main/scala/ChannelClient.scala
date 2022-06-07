@@ -19,8 +19,7 @@ import scodec.codecs._
 
 class ChannelClient(peerId: ByteVector)(implicit
     ac: castor.Context
-) extends castor.SimpleActor[HostedServerMessage] {
-  sealed trait State
+) extends Channel[HostedServerMessage, HostedClientMessage](peerId) {
   case class Inactive() extends State
 
   var state: State =
@@ -28,14 +27,14 @@ class ChannelClient(peerId: ByteVector)(implicit
       case _ => Inactive()
     }
 
-  def stay = state
-
-  def sendMessage: HostedClientMessage => Future[ujson.Value] =
-    Main.node.sendCustomMessage(peerId, _)
-
   def run(msg: HostedServerMessage): Unit = {
     state = (state, msg) match {
       case _ => stay
     }
   }
+
+  def addHTLC(
+      incoming: MilliSatoshi,
+      prototype: UpdateAddHtlc
+  ): Future[PaymentStatus] = Future { None }
 }

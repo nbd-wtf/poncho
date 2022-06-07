@@ -18,7 +18,7 @@ trait NodeInterface {
   def inspectOutgoingPayment(
       peerId: String,
       htlc: UpdateAddHtlc
-  ): Future[UpstreamPaymentStatus]
+  ): Future[PaymentStatus]
   def sendCustomMessage(
       peerId: String,
       tag: Int,

@@ -1,5 +1,6 @@
 import java.io.ByteArrayInputStream
 import java.nio.ByteOrder
+import scala.scalanative.unsigned._
 import scala.annotation.tailrec
 import scodec.bits.ByteVector
 
@@ -43,4 +44,52 @@ object Utils {
   ): ByteVector =
     if (Utils.isLessThan(pubkey1, pubkey2)) pubkey1 ++ pubkey2
     else pubkey2 ++ pubkey1
+
+  case class OnionParseResult(
+      packet: PaymentOnion.PaymentPacket,
+      nextOnion: ByteVector,
+      sharedSecret: ByteVector32
+  )
+
+  def parseClientOnion(add: UpdateAddHtlc): Either[
+    Exception | FailureMessage,
+    OnionParseResult
+  ] =
+    PaymentOnionCodecs.paymentOnionPacketCodec
+      .decode(add.onionRoutingPacket.toBitVector)
+      .toEither
+      .map(_.value) match {
+      case Left(err) =>
+        // return something here that indicates we must fail this channel
+        Left(Exception("unparseable onion"))
+      case Right(onion) =>
+        Sphinx.peel(
+          Main.node.getPrivateKey(),
+          Some(add.paymentHash),
+          onion
+        ) match {
+          case Left(badOnion) => Left(badOnion)
+          case Right(
+                dp @ Sphinx.DecryptedPacket(payload, nextPacket, sharedSecret)
+              ) => {
+            val decodedOurOnion = PaymentOnionCodecs
+              .paymentOnionPerHopPayloadCodec(dp.isLastPacket)
+              .decode(payload.bits)
+              .toEither
+              .map(_.value)
+            val encodedNextOnion = PaymentOnionCodecs.paymentOnionPacketCodec
+              .encode(nextPacket)
+              .toEither
+              .map(_.toByteVector)
+
+            (decodedOurOnion, encodedNextOnion) match {
+              case (Right(packet), Right(nextOnion)) =>
+                Right(OnionParseResult(packet, nextOnion, sharedSecret))
+              case (Left(e: OnionRoutingCodecs.MissingRequiredTlv), _) =>
+                Left(e.failureMessage)
+              case _ => Left(InvalidOnionPayload(0.toULong, 0))
+            }
+          }
+        }
+    }
 }

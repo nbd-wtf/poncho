@@ -143,7 +143,7 @@ class CLN {
       peerId: ByteVector,
       htlcId: ULong,
       paymentHash: ByteVector32
-  ): Future[UpstreamPaymentStatus] =
+  ): Future[PaymentStatus] =
     rpc("listsendpays", ujson.Obj("payment_hash" -> paymentHash.toHex))
       .map(
         _("payments").arr
@@ -155,7 +155,7 @@ class CLN {
           .flatMap(toStatus(_))
       )
 
-  private def toStatus(data: ujson.Value): UpstreamPaymentStatus =
+  private def toStatus(data: ujson.Value): PaymentStatus =
     data("status").str match {
       case "complete" =>
         Some(
@@ -172,6 +172,7 @@ class CLN {
               .pipe(o => o.get("onionreply").orElse(o.get("erroronion")))
               .map(_.str)
               .map(ByteVector.fromValidHex(_))
+              .map(FailureOnion(_))
           )
         )
       case _ => None
@@ -358,7 +359,7 @@ class CLN {
             val nextOnion = ByteVector.fromValidHex(onion("next_onion").str)
 
             val channel = Database.data.channels.find((peerId, chandata) =>
-              ChanTools.getShortChannelId(peerId) == scid
+              Utils.getShortChannelId(Main.node.ourPubKey, peerId) == scid
             )
 
             channel match {
@@ -368,51 +369,39 @@ class CLN {
                   .addHTLC(
                     incoming,
                     UpdateAddHtlc(
-                      channelId = ChanTools.getChannelId(peerId),
-                      id = 0L.toULong,
+                      channelId =
+                        Utils.getChannelId(Main.node.ourPubKey, peerId),
+                      id = 0L.toULong, // will be replaced
                       amountMsat = MilliSatoshi(amount),
                       paymentHash = hash,
                       cltvExpiry = cltv,
                       onionRoutingPacket = nextOnion
                     )
                   )
-                  .foreach {
-                    case Some(Right(preimage)) => {
-                      Main.log(
-                        s"[htlc] channel $scid succeed in handling $hash, preimage is ${preimage.toHex}"
-                      )
-                      reply(
-                        ujson
-                          .Obj(
-                            "result" -> "resolve",
-                            "payment_key" -> preimage.toHex
-                          )
-                      )
-                    }
-                    case Some(Left(FailureOnion(onion))) => {
-                      Main.log(s"[htlc] channel $scid failed $hash")
-                      reply(
+                  .foreach { status =>
+                    val response = status match {
+                      case Some(Right(preimage)) =>
+                        ujson.Obj(
+                          "result" -> "resolve",
+                          "payment_key" -> preimage.toHex
+                        )
+                      case Some(Left(Some(FailureOnion(onion)))) =>
                         ujson.Obj(
                           "result" -> "fail",
                           "failure_onion" -> onion.toString
                         )
-                      )
-                    }
-                    case Some(Left(FailureCode(code))) => {
-                      Main.log(s"[htlc] we've failed $hash for channel $scid")
-                      reply(
+                      case Some(Left(Some(NormalFailureMessage(message)))) =>
                         ujson.Obj(
                           "result" -> "fail",
-                          "failure_message" -> code
+                          "failure_message" -> message.codeHex
                         )
-                      )
+                      case Some(Left(None)) =>
+                        ujson
+                          .Obj("result" -> "fail", "failure_message" -> "1007")
+                      case None =>
+                        ujson.Obj("result" -> "continue")
                     }
-                    case None => {
-                      Main.log(
-                        s"[htlc] channel $scid decided to not handle $hash"
-                      )
-                      reply(ujson.Obj("result" -> "continue"))
-                    }
+                    reply(response)
                   }
               }
               case Some((_, chandata)) => {
