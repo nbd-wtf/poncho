@@ -19,7 +19,7 @@ import codecs.HostedChannelCodecs._
 import codecs._
 import secp256k1.Secp256k1
 
-class CLN {
+class CLN extends NodeInterface {
   private var initCallback = () => {}
   private var rpcAddr: String = ""
   private var hsmSecret: Path = Paths.get("")
@@ -126,19 +126,6 @@ class CLN {
   def getCurrentBlock(): Future[BlockHeight] =
     rpc("getchaininfo").map(info => BlockHeight(info("headercount").num.toLong))
 
-  def getPeerFromChannel(scid: ShortChannelId): Future[Option[ByteVector]] =
-    rpc("listfunds").map(res =>
-      res("channels").arr
-        .find(chan =>
-          if chan.obj.contains("short_channel_id") then
-            chan(
-              "short_channel_id"
-            ).str == scid.toString
-          else false
-        )
-        .map(peer => ByteVector.fromValidHex(peer("peer_id").str))
-    )
-
   def inspectOutgoingPayment(
       peerId: ByteVector,
       htlcId: ULong,
@@ -207,41 +194,86 @@ class CLN {
   }
 
   def sendOnion(
-      hostedPeerId: ByteVector,
+      chan: Channel[_, _],
       htlcId: ULong,
       paymentHash: ByteVector32,
-      firstHop: ByteVector,
+      firstHop: ShortChannelId,
       amount: MilliSatoshi,
       cltvExpiryDelta: CltvExpiryDelta,
       onion: ByteVector
-  ): Future[ujson.Value] = {
-    System.err.println(s"calling sendonion with ${ujson
-        .Obj(
-          "first_hop" -> ujson.Obj(
-            "id" -> firstHop.toHex,
-            "amount_msat" -> s"${amount.toLong}msat",
-            "delay" -> cltvExpiryDelta.toInt
-          ),
-          "onion" -> onion.toHex,
-          "payment_hash" -> paymentHash.toHex,
-          "label" -> upickle.default.write((hostedPeerId.toHex, htlcId.toLong))
-        )
-        .toString}")
-
-    rpc(
-      "sendonion",
-      ujson.Obj(
-        "first_hop" -> ujson.Obj(
-          "id" -> firstHop.toHex,
-          "amount_msat" -> s"${amount.toLong}msat",
-          "delay" -> cltvExpiryDelta.toInt
-        ),
-        "onion" -> onion.toHex,
-        "payment_hash" -> paymentHash.toHex,
-        "label" -> upickle.default.write((hostedPeerId.toHex, htlcId.toLong))
+  ): Unit =
+    rpc("listfunds")
+      .map(
+        _("channels").arr
+          .find(c =>
+            c.obj.contains("short_channel_id") &&
+              c("short_channel_id").str == firstHop.toString
+          )
+          .map(peer => ByteVector.fromValidHex(peer("peer_id").str))
       )
-    )
-  }
+      .onComplete {
+        case Failure(err) => {
+          Main.log(s"failed to get peer for channel: $err")
+          chan
+            .gotPaymentResult(
+              htlcId,
+              Some(
+                Left(
+                  Some(NormalFailureMessage(UnknownNextPeer))
+                )
+              )
+            )
+        }
+        case Success(None) => {
+          Main.log("didn't find peer for channel")
+          chan.gotPaymentResult(
+            htlcId,
+            Some(
+              Left(
+                Some(NormalFailureMessage(UnknownNextPeer))
+              )
+            )
+          )
+        }
+        case Success(Some(targetPeerId)) =>
+          System.err.println(s"calling sendonion with ${ujson
+              .Obj(
+                "first_hop" -> ujson.Obj(
+                  "id" -> targetPeerId.toHex,
+                  "amount_msat" -> s"${amount.toLong}msat",
+                  "delay" -> cltvExpiryDelta.toInt
+                ),
+                "onion" -> onion.toHex,
+                "payment_hash" -> paymentHash.toHex,
+                "label" -> upickle.default.write((chan.shortChannelId.toString, htlcId.toLong))
+              )
+              .toString}")
+
+          rpc(
+            "sendonion",
+            ujson.Obj(
+              "first_hop" -> ujson.Obj(
+                "id" -> targetPeerId.toHex,
+                "amount_msat" -> s"${amount.toLong}msat",
+                "delay" -> cltvExpiryDelta.toInt
+              ),
+              "onion" -> onion.toHex,
+              "payment_hash" -> paymentHash.toHex,
+              "label" -> upickle.default
+                .write((chan.shortChannelId.toString, htlcId.toLong))
+            )
+          )
+            .onComplete {
+              case Failure(e) => {
+                Main.log(s"sendonion failure: $e")
+                chan.gotPaymentResult(
+                  htlcId,
+                  Some(Left(None))
+                )
+              }
+              case Success(_) => {}
+            }
+      }
 
   def handleRPC(line: String): Unit = {
     val req = ujson.read(line)
@@ -347,19 +379,25 @@ class CLN {
             // just continue so our node will accept this payment
             reply(ujson.Obj("result" -> "continue"))
           } else {
-            val scid = ShortChannelId(onion("short_channel_id").str)
             val hash = ByteVector32.fromValidHex(htlc("payment_hash").str)
-            val incoming = MilliSatoshi(
+            val sourceChannel = ShortChannelId(htlc("short_channel_id").str)
+            val sourceAmount = MilliSatoshi(
               Integer.getInteger(htlc("amount").str.takeWhile(_.isDigit)).toLong
             )
-            val amount = onion("forward_amount").str.dropRight(4).toInt
-            val cltv = CltvExpiry(
+            val sourceId = htlc("id").num.toInt.toULong
+            val targetChannel = ShortChannelId(onion("short_channel_id").str)
+            val targetAmount =
+              MilliSatoshi(onion("forward_amount").str.dropRight(4).toInt)
+            val cltvExpiry = CltvExpiry(
               BlockHeight(onion("outgoing_cltv_value").num.toLong)
             )
             val nextOnion = ByteVector.fromValidHex(onion("next_onion").str)
 
             val channel = Database.data.channels.find((peerId, chandata) =>
-              Utils.getShortChannelId(Main.node.ourPubKey, peerId) == scid
+              Utils.getShortChannelId(
+                Main.node.ourPubKey,
+                peerId
+              ) == targetChannel
             )
 
             channel match {
@@ -367,16 +405,12 @@ class CLN {
                 val peer = ChannelMaster.getChannelServer(peerId)
                 peer
                   .addHTLC(
-                    incoming,
-                    UpdateAddHtlc(
-                      channelId =
-                        Utils.getChannelId(Main.node.ourPubKey, peerId),
-                      id = 0L.toULong, // will be replaced
-                      amountMsat = MilliSatoshi(amount),
-                      paymentHash = hash,
-                      cltvExpiry = cltv,
-                      onionRoutingPacket = nextOnion
-                    )
+                    incoming = HtlcIdentifier(sourceChannel, sourceId),
+                    incomingAmount = sourceAmount,
+                    outgoingAmount = targetAmount,
+                    paymentHash = hash,
+                    cltvExpiry = cltvExpiry,
+                    nextOnion = nextOnion
                   )
                   .foreach { status =>
                     val response = status match {
@@ -406,13 +440,13 @@ class CLN {
               }
               case Some((_, chandata)) => {
                 Main.log(
-                  s"[htlc] can't assign $hash to $scid as that channel is inactive"
+                  s"[htlc] can't assign $hash to $targetChannel as that channel is inactive"
                 )
                 reply(ujson.Obj("result" -> "continue"))
               }
               case None => {
                 Main.log(
-                  s"[htlc] can't assign $hash to $scid as that channel doesn't exist"
+                  s"[htlc] can't assign $hash to $targetChannel as that channel doesn't exist"
                 )
                 reply(ujson.Obj("result" -> "continue"))
               }
@@ -423,12 +457,12 @@ class CLN {
       case "sendpay_success" => {
         val successdata = data("sendpay_success")
         val label = successdata("label").str
-        val (peerIdHex, htlcId) =
-          upickle.default.read[Tuple2[String, Long]](label)
-        val peerId = ByteVector.fromValidHex(peerIdHex)
-        val channel = Database.data.channels.get(peerId)
-        channel match {
-          case Some(chandata) if chandata.isActive => {
+        val (scid, htlcId) = upickle.default.read[Tuple2[String, Long]](label)
+        Database.data.channels.find((p, _) =>
+          Utils.getShortChannelId(Main.node.ourPubKey, p) ==
+            ShortChannelId(scid)
+        ) match {
+          case Some(peerId, chandata) if chandata.isActive => {
             val peer = ChannelMaster.getChannelServer(peerId)
             peer.gotPaymentResult(htlcId.toULong, toStatus(successdata))
           }
@@ -438,12 +472,12 @@ class CLN {
       case "sendpay_failure" => {
         val failuredata = data("sendpay_failure")("data")
         val label = failuredata("label").str
-        val (peerIdHex, htlcId) =
-          upickle.default.read[Tuple2[String, Long]](label)
-        val peerId = ByteVector.fromValidHex(peerIdHex)
-        val channel = Database.data.channels.get(peerId)
-        channel match {
-          case Some(chandata) if chandata.isActive => {
+        val (scid, htlcId) = upickle.default.read[Tuple2[String, Long]](label)
+        val channel = Database.data.channels.find((p, _) =>
+          Utils.getShortChannelId(Main.node.ourPubKey, p) ==
+            ShortChannelId(scid)
+        ) match {
+          case Some(peerId, chandata) if chandata.isActive => {
             val peer = ChannelMaster.getChannelServer(peerId)
 
             if (failuredata("status").str == "pending") {

@@ -34,7 +34,16 @@ class ChannelClient(peerId: ByteVector)(implicit
   }
 
   def addHTLC(
-      incoming: MilliSatoshi,
-      prototype: UpdateAddHtlc
+      incoming: HtlcIdentifier,
+      incomingAmount: MilliSatoshi,
+      outgoingAmount: MilliSatoshi,
+      paymentHash: ByteVector32,
+      cltvExpiry: CltvExpiry,
+      nextOnion: ByteVector
   ): Future[PaymentStatus] = Future { None }
+
+  def gotPaymentResult(
+      htlcId: ULong,
+      status: PaymentStatus
+  ): Unit = {}
 }

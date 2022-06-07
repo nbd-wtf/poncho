@@ -12,12 +12,12 @@ import crypto.Crypto
 object ChannelMaster {
   val servers = mutable.Map.empty[ByteVector, ChannelServer]
   val clients = mutable.Map.empty[ByteVector, ChannelClient]
-  def getChannelServer(peerId: ByteVector): ChannelServer = {
+  def getChannel(peerId: ByteVector, isHost: Boolean): Channel[_, _] =
+    if isHost then getChannelServer(peerId) else getChannelClient(peerId)
+  def getChannelServer(peerId: ByteVector): ChannelServer =
     servers.getOrElseUpdate(peerId, { new ChannelServer(peerId) })
-  }
-  def getChannelClient(peerId: ByteVector): ChannelClient = {
+  def getChannelClient(peerId: ByteVector): ChannelClient =
     clients.getOrElseUpdate(peerId, { new ChannelClient(peerId) })
-  }
 
   def all: Map[ByteVector, ChannelData] = Database.data.channels
 

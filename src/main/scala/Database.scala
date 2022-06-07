@@ -7,9 +7,20 @@ import upickle.default._
 import crypto.Crypto
 import codecs._
 
+case class HtlcIdentifier(scid: ShortChannelId, id: ULong)
+
 case class Data(
-    htlcAcceptedIds: Map[String, String] = Map.empty,
-    channels: Map[ByteVector, ChannelData] = Map.empty
+    channels: Map[ByteVector, ChannelData] = Map.empty,
+
+    // this is a mapping between the channel id and the htlc id of the the stuff we've received to the
+    // channel id and htlc id we've sent for every payment that is in flight -- it allows us to know which
+    // one to fulfill/fail when the other has been fulfilled/failed, and also prevents us from adding the same
+    // htlc more than once when we restart and get the pending htlcs replayed on each channel
+    htlcForwards: Map[HtlcIdentifier, HtlcIdentifier] = Map.empty,
+
+    // this is a mapping between hash and preimage containing the
+    // the preimages we have received but that our hosted peer hasn't acknowledged yet
+    preimages: Map[ByteVector32, ByteVector32] = Map.empty
 )
 
 case class ChannelData(
@@ -47,6 +58,8 @@ object Picklers {
       .bimap[ByteVector64](_.toHex, ByteVector64.fromValidHex(_))
   given ReadWriter[MilliSatoshi] =
     readwriter[Long].bimap[MilliSatoshi](_.toLong, MilliSatoshi(_))
+  given ReadWriter[ShortChannelId] =
+    readwriter[String].bimap[ShortChannelId](_.toString, ShortChannelId(_))
   given ReadWriter[CltvExpiry] =
     readwriter[Long].bimap[CltvExpiry](_.toLong, CltvExpiry(_))
   given ReadWriter[ULong] =
@@ -72,7 +85,8 @@ object Picklers {
         _ => TlvStream.empty
       )
 
-  implicit val rw: ReadWriter[Data] = macroRW
+  given ReadWriter[Data] = macroRW
+  given ReadWriter[HtlcIdentifier] = macroRW
   given ReadWriter[ChannelData] = macroRW
 }
 

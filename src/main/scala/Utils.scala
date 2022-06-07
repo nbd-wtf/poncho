@@ -92,4 +92,26 @@ object Utils {
           }
         }
     }
+
+  def getOutgoingData(
+      htlc: UpdateAddHtlc
+  ): Option[(ShortChannelId, MilliSatoshi, CltvExpiry, ByteVector)] =
+    parseClientOnion(htlc) match {
+      case Right(
+            OnionParseResult(
+              payload: PaymentOnion.ChannelRelayPayload,
+              nextOnion: ByteVector,
+              _
+            )
+          ) =>
+        Some(
+          (
+            ShortChannelId(payload.outgoingChannelId),
+            payload.amountToForward,
+            payload.outgoingCltv,
+            nextOnion
+          )
+        )
+      case _ => None
+    }
 }

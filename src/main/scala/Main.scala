@@ -25,7 +25,7 @@ case class Config(
 object Main {
   import Picklers.given
   val isDev = true
-  val node = new CLN()
+  val node: NodeInterface = new CLN()
 
   log(s"database is at: ${Database.path}")
 
@@ -37,6 +37,43 @@ object Main {
       Timer.repeat(FiniteDuration(1, "minutes")) { () =>
         updateCurrentBlock()
       }
+
+      // as the node starts c-lightning will reply the htlc_accepted HTLCs on us,
+      // but we must do the same with the hosted-to-hosted HTLCs that are pending manually
+      for {
+        (sourcePeerId, sourceChannelData) <- Database.data.channels
+        in <- sourceChannelData.lcss.incomingHtlcs
+        sourcePeer = ChannelMaster.getChannel(
+          sourcePeerId,
+          sourceChannelData.lcss.isHost
+        )
+        (scid, amount, cltvExpiry, nextOnion) <- Utils.getOutgoingData(in)
+        out <- Database.data.htlcForwards.get(
+          HtlcIdentifier(sourcePeer.shortChannelId, in.id)
+        )
+        (targetPeerId, targetChannelData) <- Database.data.channels.find(
+          (p, _) => Utils.getShortChannelId(Main.node.ourPubKey, p) == scid
+        )
+        targetPeer = ChannelMaster.getChannel(
+          targetPeerId,
+          targetChannelData.lcss.isHost
+        )
+        _ = targetPeer
+          .addHTLC(
+            incoming = HtlcIdentifier(
+              Utils.getShortChannelId(Main.node.ourPubKey, sourcePeerId),
+              in.id
+            ),
+            incomingAmount = in.amountMsat,
+            outgoingAmount = amount,
+            paymentHash = in.paymentHash,
+            cltvExpiry = cltvExpiry,
+            nextOnion = nextOnion
+          )
+          .foreach { status =>
+            sourcePeer.gotPaymentResult(in.id, status)
+          }
+      } yield ()
     })
   }
 
@@ -63,6 +100,10 @@ object Main {
           if (block > Main.currentBlock) {
             Main.currentBlock = block
             log(s"updated current block: $block")
+
+            scala.concurrent.ExecutionContext.global.execute(() => {
+              // channels.onBlockUpdated()
+            })
           }
         }
         case Failure(err) => log(s"failed to get current blockday: $err")

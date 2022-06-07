@@ -14,25 +14,29 @@ trait NodeInterface {
   def getPrivateKey(): ByteVector32
   def ourPubKey: ByteVector
 
-  def getPeerFromChannel(scid: ShortChannelId): ByteVector
   def inspectOutgoingPayment(
-      peerId: String,
-      htlc: UpdateAddHtlc
+      peerId: ByteVector,
+      htlcId: ULong,
+      paymentHash: ByteVector32
   ): Future[PaymentStatus]
+
   def sendCustomMessage(
-      peerId: String,
-      tag: Int,
-      message: ByteVector
-  ): Unit
+      peerId: ByteVector,
+      message: HostedServerMessage | HostedClientMessage
+  ): Future[ujson.Value]
+
   def sendOnion(
+      chan: Channel[_, _],
+      htlcId: ULong,
       paymentHash: ByteVector32,
-      firstHop: ByteVector,
+      firstHop: ShortChannelId,
       amount: MilliSatoshi,
       cltvExpiryDelta: CltvExpiryDelta,
       onion: ByteVector
-  ): Future[ujson.Value]
+  ): Unit
+
   def getCurrentBlock(): Future[BlockHeight]
   def getChainHash(): Future[ByteVector32]
 
-  def main(): Unit
+  def main(onInit: () => Unit): Unit
 }

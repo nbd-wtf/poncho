@@ -1,3 +1,4 @@
+import scala.scalanative.unsigned._
 import scala.concurrent.Future
 import scodec.bits.ByteVector
 
@@ -22,20 +23,29 @@ trait Channel[
   trait State
 
   var state: State
-
-  def addHTLC(
-      incoming: MilliSatoshi,
-      prototype: UpdateAddHtlc
-  ): Future[PaymentStatus]
-
-  def sendMessage: Send => Future[ujson.Value] =
-    Main.node.sendCustomMessage(peerId, _)
-
   def stay = state
 
-  lazy val channelId = Utils.getChannelId(Main.node.ourPubKey, peerId)
+  def run(msg: Recv): Unit
 
+  lazy val channelId = Utils.getChannelId(Main.node.ourPubKey, peerId)
   lazy val shortChannelId = Utils.getShortChannelId(Main.node.ourPubKey, peerId)
+
+  def sendMessage(msg: Send): Future[ujson.Value] =
+    Main.node.sendCustomMessage(peerId, msg)
+
+  def addHTLC(
+      incoming: HtlcIdentifier,
+      incomingAmount: MilliSatoshi,
+      outgoingAmount: MilliSatoshi,
+      paymentHash: ByteVector32,
+      cltvExpiry: CltvExpiry,
+      nextOnion: ByteVector
+  ): Future[PaymentStatus]
+
+  def gotPaymentResult(
+      htlcId: ULong,
+      status: PaymentStatus
+  ): Unit
 
   def getChannelUpdate: ChannelUpdate = {
     val flags = ChannelUpdate.ChannelFlags(
