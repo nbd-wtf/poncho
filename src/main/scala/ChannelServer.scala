@@ -353,7 +353,7 @@ class ChannelServer(peerId: ByteVector)(implicit
           active.lcssNext.incomingHtlcs.foreach { htlc =>
             Main.node
               .inspectOutgoingPayment(peerId, htlc.id, htlc.paymentHash)
-              .foreach { result => upstreamPaymentResult(htlc.id, result) }
+              .foreach { result => gotPaymentResult(htlc.id, result) }
           }
         }
 
@@ -451,7 +451,7 @@ class ChannelServer(peerId: ByteVector)(implicit
           case Left(fail: FailureMessage) => {
             // we have a proper error, so fail this htlc on client
             Timer.timeout(FiniteDuration(1, "seconds")) { () =>
-              upstreamPaymentResult(
+              gotPaymentResult(
                 add.id,
                 Some(Left(Some(NormalFailureMessage(fail))))
               )
@@ -577,7 +577,7 @@ class ChannelServer(peerId: ByteVector)(implicit
                             )
                           )
                           .foreach { status =>
-                            upstreamPaymentResult(add.id, status)
+                            gotPaymentResult(add.id, status)
                           }
                       }
                       case None =>
@@ -603,7 +603,7 @@ class ChannelServer(peerId: ByteVector)(implicit
                                 .onComplete {
                                   case Failure(e) => {
                                     Main.log(s"sendonion failure: $e")
-                                    upstreamPaymentResult(
+                                    gotPaymentResult(
                                       add.id,
                                       Some(Left(None))
                                     )
@@ -612,7 +612,7 @@ class ChannelServer(peerId: ByteVector)(implicit
                                 }
                             case Failure(err) => {
                               Main.log(s"failed to get peer for channel: $err")
-                              upstreamPaymentResult(
+                              gotPaymentResult(
                                 add.id,
                                 Some(
                                   Left(
@@ -623,7 +623,7 @@ class ChannelServer(peerId: ByteVector)(implicit
                             }
                             case Success(None) => {
                               Main.log("didn't find peer for channel")
-                              upstreamPaymentResult(
+                              gotPaymentResult(
                                 add.id,
                                 Some(
                                   Left(
@@ -856,7 +856,7 @@ class ChannelServer(peerId: ByteVector)(implicit
       }
   }
 
-  def upstreamPaymentResult(
+  def gotPaymentResult(
       htlcId: ULong,
       status: PaymentStatus
   ): Unit =

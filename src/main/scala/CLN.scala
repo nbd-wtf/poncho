@@ -430,7 +430,7 @@ class CLN {
         channel match {
           case Some(chandata) if chandata.isActive => {
             val peer = ChannelMaster.getChannelServer(peerId)
-            peer.upstreamPaymentResult(htlcId.toULong, toStatus(successdata))
+            peer.gotPaymentResult(htlcId.toULong, toStatus(successdata))
           }
           case _ => {}
         }
@@ -453,11 +453,11 @@ class CLN {
                   htlcId.toULong,
                   ByteVector32.fromValidHex(failuredata("payment_hash").str)
                 ).foreach { result =>
-                  peer.upstreamPaymentResult(htlcId.toULong, result)
+                  peer.gotPaymentResult(htlcId.toULong, result)
                 }
               }
             } else {
-              peer.upstreamPaymentResult(htlcId.toULong, toStatus(failuredata))
+              peer.gotPaymentResult(htlcId.toULong, toStatus(failuredata))
             }
           }
           case _ => {
