@@ -351,7 +351,7 @@ class ChannelServer(peerId: ByteVector)(implicit
         Timer.timeout(FiniteDuration(5, "seconds")) { () =>
           active.lcssNext.incomingHtlcs.foreach { htlc =>
             Main.node
-              .inspectOutgoingPayment(peerId, htlc.id, htlc.paymentHash)
+              .inspectOutgoingPayment(shortChannelId, htlc.id, htlc.paymentHash)
               .foreach { result => gotPaymentResult(htlc.id, result) }
           }
         }
@@ -475,12 +475,10 @@ class ChannelServer(peerId: ByteVector)(implicit
           }
           case Left(fail: FailureMessage) => {
             // we have a proper error, so fail this htlc on client
-            Timer.timeout(FiniteDuration(1, "seconds")) { () =>
-              gotPaymentResult(
-                htlc.id,
-                Some(Left(Some(NormalFailureMessage(fail))))
-              )
-            }
+            gotPaymentResult(
+              htlc.id,
+              Some(Left(Some(NormalFailureMessage(fail))))
+            )
 
             // still we first must acknowledge this received htlc, so we keep the updated state
             updated
@@ -821,12 +819,12 @@ class ChannelServer(peerId: ByteVector)(implicit
         )
         if (
           (htlc.cltvExpiry.blockHeight - Main.currentBlock).toInt < Main.config.cltvExpiryDelta.toInt ||
-          (incomingAmount - htlc.amountMsat) >= requiredFee ||
+          (incomingAmount - htlc.amountMsat) < requiredFee ||
           updated.lcssNext.localBalanceMsat < MilliSatoshi(0L) ||
           updated.lcssNext.remoteBalanceMsat < MilliSatoshi(0L)
         ) {
           Main.log(
-            s"failing ${htlc.amountMsat < updated.lcssNext.initHostedChannel.htlcMinimumMsat} ${(htlc.cltvExpiry.blockHeight - Main.currentBlock).toInt >= Main.config.cltvExpiryDelta.toInt} ${(incomingAmount - htlc.amountMsat) >= requiredFee} ${updated.lcssNext.localBalanceMsat < MilliSatoshi(
+            s"failing ${(htlc.cltvExpiry.blockHeight - Main.currentBlock).toInt} < ${} == ${(htlc.cltvExpiry.blockHeight - Main.currentBlock).toInt < Main.config.cltvExpiryDelta.toInt}; ${incomingAmount - htlc.amountMsat} >= ${requiredFee} == ${(incomingAmount - htlc.amountMsat) >= requiredFee}; ${updated.lcssNext.localBalanceMsat < MilliSatoshi(
                 0L
               )} ${updated.lcssNext.remoteBalanceMsat < MilliSatoshi(0L)}"
           )
@@ -906,6 +904,8 @@ class ChannelServer(peerId: ByteVector)(implicit
       htlcId: ULong,
       status: PaymentStatus
   ): Unit =
+    Main.log(s"gotPaymentResult($htlcId, $status)")
+
     if (status.isEmpty) {
       // payment still pending
     } else
@@ -959,26 +959,27 @@ class ChannelServer(peerId: ByteVector)(implicit
                 .parseClientOnion(htlc)
                 .toOption
               fail = failure match {
-                case bo: BadOnion =>
+                case Some(NormalFailureMessage(bo: BadOnion)) =>
                   UpdateFailMalformedHtlc(
                     htlc.channelId,
                     htlc.id,
                     bo.onionHash,
                     bo.code
                   )
-                case _ =>
-                  UpdateFailHtlc(
-                    channelId,
-                    htlcId,
-                    failure.getOrElse(
+                case _ => {
+                  val reason = failure.getOrElse(
+                    NormalFailureMessage(
                       TemporaryChannelFailure(getChannelUpdate)
-                    ) match {
-                      case fm: FailureMessage =>
-                        Sphinx.FailurePacket.create(sharedSecret, fm)
-                      case fo: ByteVector =>
-                        Sphinx.FailurePacket.wrap(fo, sharedSecret)
-                    }
-                  )
+                    )
+                  ) match {
+                    case NormalFailureMessage(fm) =>
+                      Sphinx.FailurePacket.create(sharedSecret, fm)
+                    case FailureOnion(fo) =>
+                      Sphinx.FailurePacket.wrap(fo, sharedSecret)
+                  }
+
+                  UpdateFailHtlc(channelId, htlcId, reason)
+                }
               }
             } yield fail)
               .foreach { fail =>

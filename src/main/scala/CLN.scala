@@ -127,7 +127,7 @@ class CLN extends NodeInterface {
     rpc("getchaininfo").map(info => BlockHeight(info("headercount").num.toLong))
 
   def inspectOutgoingPayment(
-      peerId: ByteVector,
+      scid: ShortChannelId,
       htlcId: ULong,
       paymentHash: ByteVector32
   ): Future[PaymentStatus] =
@@ -135,10 +135,12 @@ class CLN extends NodeInterface {
       .map(
         _("payments").arr
           .filter(_.obj.contains("label"))
-          .find(p => {
-            (peerId.toHex, htlcId.toLong) ==
-              upickle.default.read[Tuple2[String, Long]](p("label").str)
-          })
+          .find(p =>
+            Try(
+              (scid.toString, htlcId.toLong) ==
+                upickle.default.read[Tuple2[String, Long]](p("label").str)
+            ).getOrElse(false)
+          )
           .flatMap(toStatus(_))
       )
 
@@ -462,46 +464,52 @@ class CLN extends NodeInterface {
       }
       case "sendpay_success" => {
         val successdata = data("sendpay_success")
-        val label = successdata("label").str
-        val (scid, htlcId) = upickle.default.read[Tuple2[String, Long]](label)
-        Database.data.channels.find((p, _) =>
-          Utils.getShortChannelId(Main.node.ourPubKey, p) ==
-            ShortChannelId(scid)
-        ) match {
-          case Some(peerId, chandata) if chandata.isActive => {
-            val peer = ChannelMaster.getChannelServer(peerId)
-            peer.gotPaymentResult(htlcId.toULong, toStatus(successdata))
+        if (successdata.obj.contains("label")) {
+          val label = successdata("label").str
+          val (scidStr, htlcId) =
+            upickle.default.read[Tuple2[String, Long]](label)
+          val scid = ShortChannelId(scidStr)
+          Database.data.channels.find((p, _) =>
+            Utils.getShortChannelId(Main.node.ourPubKey, p) == scid
+          ) match {
+            case Some(peerId, chandata) if chandata.isActive => {
+              val peer = ChannelMaster.getChannelServer(peerId)
+              peer.gotPaymentResult(htlcId.toULong, toStatus(successdata))
+            }
+            case _ => {}
           }
-          case _ => {}
         }
       }
       case "sendpay_failure" => {
         val failuredata = data("sendpay_failure")("data")
-        val label = failuredata("label").str
-        val (scid, htlcId) = upickle.default.read[Tuple2[String, Long]](label)
-        val channel = Database.data.channels.find((p, _) =>
-          Utils.getShortChannelId(Main.node.ourPubKey, p) ==
-            ShortChannelId(scid)
-        ) match {
-          case Some(peerId, chandata) if chandata.isActive => {
-            val peer = ChannelMaster.getChannelServer(peerId)
+        if (failuredata.obj.contains("label")) {
+          val label = failuredata("label").str
+          val (scidStr, htlcId) =
+            upickle.default.read[Tuple2[String, Long]](label)
+          val scid = ShortChannelId(scidStr)
+          val channel = Database.data.channels.find((p, _) =>
+            Utils.getShortChannelId(Main.node.ourPubKey, p) == scid
+          ) match {
+            case Some(peerId, chandata) if chandata.isActive => {
+              val peer = ChannelMaster.getChannelServer(peerId)
 
-            if (failuredata("status").str == "pending") {
-              Timer.timeout(FiniteDuration(1, "seconds")) { () =>
-                inspectOutgoingPayment(
-                  peerId,
-                  htlcId.toULong,
-                  ByteVector32.fromValidHex(failuredata("payment_hash").str)
-                ).foreach { result =>
-                  peer.gotPaymentResult(htlcId.toULong, result)
+              if (failuredata("status").str == "pending") {
+                Timer.timeout(FiniteDuration(1, "seconds")) { () =>
+                  inspectOutgoingPayment(
+                    scid,
+                    htlcId.toULong,
+                    ByteVector32.fromValidHex(failuredata("payment_hash").str)
+                  ).foreach { result =>
+                    peer.gotPaymentResult(htlcId.toULong, result)
+                  }
                 }
+              } else {
+                peer.gotPaymentResult(htlcId.toULong, toStatus(failuredata))
               }
-            } else {
-              peer.gotPaymentResult(htlcId.toULong, toStatus(failuredata))
             }
-          }
-          case _ => {
-            Main.log("sendpay_failure but not for an active channel")
+            case _ => {
+              Main.log("sendpay_failure but not for an active channel")
+            }
           }
         }
       }
