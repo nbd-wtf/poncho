@@ -240,7 +240,7 @@ class CLN extends NodeInterface {
               .Obj(
                 "first_hop" -> ujson.Obj(
                   "id" -> targetPeerId.toHex,
-                  "amount_msat" -> s"${amount.toLong}msat",
+                  "amount_msat" -> amount.toLong,
                   "delay" -> cltvExpiryDelta.toInt
                 ),
                 "onion" -> onion.toHex,
@@ -254,7 +254,7 @@ class CLN extends NodeInterface {
             ujson.Obj(
               "first_hop" -> ujson.Obj(
                 "id" -> targetPeerId.toHex,
-                "amount_msat" -> s"${amount.toLong}msat",
+                "amount_msat" -> amount.toLong,
                 "delay" -> cltvExpiryDelta.toInt
               ),
               "onion" -> onion.toHex,
@@ -382,12 +382,18 @@ class CLN extends NodeInterface {
             val hash = ByteVector32.fromValidHex(htlc("payment_hash").str)
             val sourceChannel = ShortChannelId(htlc("short_channel_id").str)
             val sourceAmount = MilliSatoshi(
-              Integer.getInteger(htlc("amount").str.takeWhile(_.isDigit)).toLong
+              if htlc.obj.contains("amount_msat") then
+                htlc("amount_msat").num.toLong
+              else htlc("amount").str.takeWhile(_.isDigit).toLong
             )
             val sourceId = htlc("id").num.toInt.toULong
             val targetChannel = ShortChannelId(onion("short_channel_id").str)
             val targetAmount =
-              MilliSatoshi(onion("forward_amount").str.dropRight(4).toInt)
+              MilliSatoshi(
+                if onion.obj.contains("forward_msat") then
+                  onion("forward_msat").num.toLong
+                else onion("forward_amount").str.takeWhile(_.isDigit).toLong
+              )
             val cltvExpiry = CltvExpiry(
               BlockHeight(onion("outgoing_cltv_value").num.toLong)
             )
