@@ -420,16 +420,42 @@ class ChannelServer(peerId: ByteVector)(implicit
       // client is sending an htlc through us
       case (
             active: Active,
-            add: UpdateAddHtlc
+            htlc: UpdateAddHtlc
           ) => {
-        val updated = active.addUncommittedUpdate(FromRemote(add))
+        val updated = active.addUncommittedUpdate(FromRemote(htlc))
 
         // check if fee and cltv delta etc are correct, otherwise return a failure
         Utils
-          .parseClientOnion(add)
+          .parseClientOnion(htlc)
           .map(_.packet) match {
           case Right(packet: PaymentOnion.ChannelRelayPayload) => {
-            // TODO check for fees, cltv expiry, sizes, counts etc
+            if (
+              // critical failures, fail the channel
+              htlc.amountMsat < packet.amountToForward ||
+              updated.lcssNext.incomingHtlcs.size > updated.lcssNext.initHostedChannel.maxAcceptedHtlcs ||
+              updated.lcssNext.incomingHtlcs
+                .map(_.amountMsat.toLong)
+                .sum > updated.lcssNext.initHostedChannel.maxHtlcValueInFlightMsat.toLong ||
+              updated.lcssNext.localBalanceMsat < MilliSatoshi(0L) ||
+              updated.lcssNext.remoteBalanceMsat < MilliSatoshi(0L)
+            ) {
+              val err = Error(
+                channelId,
+                Error.ERR_HOSTED_MANUAL_SUSPEND
+              )
+              Database.update { data =>
+                data
+                  .modify(_.channels.at(peerId).isActive)
+                  .setTo(false)
+                  .modify(_.channels.at(peerId).error)
+                  .setTo(Some(err))
+              }
+              Errored(Some(active.lcssNext))
+            } else if (
+              // non-critical failures, just fail the htlc
+              htlc.amountMsat < updated.lcssNext.initHostedChannel.htlcMinimumMsat
+            ) gotPaymentResult(htlc.id, Some(Left(None)))
+
             updated
           }
           case Left(_: Exception) => {
@@ -451,7 +477,7 @@ class ChannelServer(peerId: ByteVector)(implicit
             // we have a proper error, so fail this htlc on client
             Timer.timeout(FiniteDuration(1, "seconds")) { () =>
               gotPaymentResult(
-                add.id,
+                htlc.id,
                 Some(Left(Some(NormalFailureMessage(fail))))
               )
             }
@@ -794,7 +820,6 @@ class ChannelServer(peerId: ByteVector)(implicit
           Main.config.feeBase.toLong + (Main.config.feeProportionalMillionths * htlc.amountMsat.toLong / 1000000L)
         )
         if (
-          htlc.amountMsat < updated.lcssNext.initHostedChannel.htlcMinimumMsat ||
           (htlc.cltvExpiry.blockHeight - Main.currentBlock).toInt < Main.config.cltvExpiryDelta.toInt ||
           (incomingAmount - htlc.amountMsat) >= requiredFee ||
           updated.lcssNext.localBalanceMsat < MilliSatoshi(0L) ||
