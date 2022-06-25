@@ -903,7 +903,7 @@ class ChannelServer(peerId: ByteVector)(implicit
   def gotPaymentResult(
       htlcId: ULong,
       status: PaymentStatus
-  ): Unit =
+  ): Unit = {
     Main.log(s"gotPaymentResult($htlcId, $status)")
 
     if (status.isEmpty) {
@@ -1024,6 +1024,53 @@ class ChannelServer(peerId: ByteVector)(implicit
           }
         }
       })
+  }
+
+  def onBlockUpdated(block: BlockHeight): Unit = {
+    state match {
+      case active: Active => {
+        val lcss = Database.data.channels.get(peerId).get.lcss
+        val expiredOutgoingHtlcs = lcss.outgoingHtlcs
+          .filter(htlc => htlc.cltvExpiry.toLong < block.toLong)
+
+        if (!expiredOutgoingHtlcs.isEmpty) {
+          // if we have any HTLC, we fail the channel
+          sendMessage(
+            Error(
+              channelId,
+              Error.ERR_HOSTED_TIMED_OUT_OUTGOING_HTLC
+            )
+          )
+
+          // we also fail them on their upstream node
+          expiredOutgoingHtlcs
+            .map(out =>
+              Database.data.htlcForwards
+                .find((_, to) => to == out)
+                .map((from, _) => from)
+            )
+            .collect { case Some(htlc) => htlc }
+            .foreach(in =>
+              active.provideHtlcResult(
+                in.id,
+                Some(
+                  Left(
+                    Some(
+                      NormalFailureMessage(
+                        PermanentChannelFailure
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          Errored(Some(active.lcssNext))
+        } else stay
+
+      }
+      case _ => {}
+    }
+  }
 
   def proposeOverride(newLocalBalance: MilliSatoshi): Future[String] = {
     state match {

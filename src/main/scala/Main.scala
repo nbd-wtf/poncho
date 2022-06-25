@@ -101,9 +101,7 @@ object Main {
             Main.currentBlock = block
             log(s"updated current block: $block")
 
-            scala.concurrent.ExecutionContext.global.execute(() => {
-              // channels.onBlockUpdated()
-            })
+            ChannelMaster.channels.map(_.onBlockUpdated(block))
           }
         }
         case Failure(err) => log(s"failed to get current blockday: $err")

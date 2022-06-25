@@ -46,4 +46,6 @@ class ChannelClient(peerId: ByteVector)(implicit
       htlcId: ULong,
       status: PaymentStatus
   ): Unit = {}
+
+  def onBlockUpdated(block: BlockHeight): Unit = {}
 }

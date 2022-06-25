@@ -47,6 +47,8 @@ trait Channel[
       status: PaymentStatus
   ): Unit
 
+  def onBlockUpdated(block: BlockHeight): Unit
+
   def getChannelUpdate: ChannelUpdate = {
     val flags = ChannelUpdate.ChannelFlags(
       isNode1 = Utils.isLessThan(Main.node.ourPubKey, peerId),
