@@ -24,10 +24,11 @@ case class Data(
 )
 
 case class ChannelData(
-    isActive: Boolean,
-    lcss: LastCrossSignedState,
-    error: Option[Error] = None,
-    proposedOverride: Option[LastCrossSignedState] = None
+    lcss: Option[LastCrossSignedState] = None,
+    localErrors: List[Error] = List.empty,
+    remoteErrors: List[Error] = List.empty,
+    proposedOverride: Option[LastCrossSignedState] = None,
+    suspended: Boolean = false
 )
 
 object Database {

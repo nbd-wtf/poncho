@@ -1,9 +1,9 @@
-import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{Failure, Success}
 import scala.scalanative.loop.{Poll, Timer}
 import scala.scalanative.unsigned.given
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.Future
+import scala.concurrent.ExecutionContext.Implicits.global
 import scodec.bits.ByteVector
 import upickle.default._
 
@@ -27,7 +27,7 @@ object Main {
   val isDev = true
   val node: NodeInterface = new CLN()
 
-  log(s"database is at: ${Database.path}")
+  logger.info.item(Database.path).msg(s"database found")
 
   def main(args: Array[String]): Unit = {
     node.main(() => {
@@ -42,11 +42,8 @@ object Main {
       // but we must do the same with the hosted-to-hosted HTLCs that are pending manually
       for {
         (sourcePeerId, sourceChannelData) <- Database.data.channels
-        in <- sourceChannelData.lcss.incomingHtlcs
-        sourcePeer = ChannelMaster.getChannel(
-          sourcePeerId,
-          sourceChannelData.lcss.isHost
-        )
+        in <- sourceChannelData.lcss.map(_.incomingHtlcs).getOrElse(List.empty)
+        sourcePeer = ChannelMaster.getChannel(sourcePeerId)
         (scid, amount, cltvExpiry, nextOnion) <- Utils.getOutgoingData(in)
         out <- Database.data.htlcForwards.get(
           HtlcIdentifier(sourcePeer.shortChannelId, in.id)
@@ -54,10 +51,7 @@ object Main {
         (targetPeerId, targetChannelData) <- Database.data.channels.find(
           (p, _) => Utils.getShortChannelId(Main.node.ourPubKey, p) == scid
         )
-        targetPeer = ChannelMaster.getChannel(
-          targetPeerId,
-          targetChannelData.lcss.isHost
-        )
+        targetPeer = ChannelMaster.getChannel(targetPeerId)
         _ = targetPeer
           .addHTLC(
             incoming = HtlcIdentifier(
@@ -99,12 +93,13 @@ object Main {
         case Success(block) => {
           if (block > Main.currentBlock) {
             Main.currentBlock = block
-            log(s"updated current block: $block")
+            logger.info.item(block).msg("updated current block")
 
-            ChannelMaster.channels.map(_.onBlockUpdated(block))
+            ChannelMaster.channels.values.foreach(_.onBlockUpdated(block))
           }
         }
-        case Failure(err) => log(s"failed to get current blockday: $err")
+        case Failure(err) =>
+          logger.warn.item(err).msg("failed to get current blockday")
       }
   }
 
@@ -114,28 +109,33 @@ object Main {
       .getChainHash()
       .onComplete {
         case Success(chainHash) => Main.chainHash = chainHash
-        case Failure(err)       => log(s"failed to get chainhash: $err")
+        case Failure(err) => logger.err.item(err).msg("failed to get chainhash")
       }
   }
 
-  def log(message: String): Unit = {
-    if (node.isInstanceOf[CLN] && !Main.isDev) {
-      System.out.println(
-        ujson.Obj(
-          "jsonrpc" -> "2.0",
-          "method" -> "log",
-          "params" -> ujson.Obj(
-            "message" -> message
+  def log(message: String): Unit = logger.debug.msg(message)
+
+  def logger: nlog.Logger = {
+    def printer(message: String): Unit =
+      if (node.isInstanceOf[CLN] && !Main.isDev) {
+        System.out.println(
+          ujson.Obj(
+            "jsonrpc" -> "2.0",
+            "method" -> "log",
+            "params" -> ujson.Obj(
+              "message" -> message
+            )
           )
         )
-      )
-    } else {
-      System.err.println(
-        Console.BOLD + "> " +
-          Console.BLUE + "poncho" + Console.RESET +
-          Console.BOLD + ": " + Console.RESET +
-          Console.GREEN + message + Console.RESET
-      )
-    }
+      } else {
+        System.err.println(
+          Console.BOLD + "> " +
+            Console.BLUE + "poncho" + Console.RESET +
+            Console.BOLD + ": " + Console.RESET +
+            Console.GREEN + message + Console.RESET
+        )
+      }
+
+    new nlog.Logger(printer = printer)
   }
 }

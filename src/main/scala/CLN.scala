@@ -185,7 +185,6 @@ class CLN extends NodeInterface {
     val payload = tagHex + lengthHex + encoded.toHex
 
     Main.log(s"  ::> sending $message --> ${peerId.toHex}")
-
     rpc(
       "sendcustommsg",
       ujson.Obj(
@@ -196,7 +195,7 @@ class CLN extends NodeInterface {
   }
 
   def sendOnion(
-      chan: Channel[_, _],
+      chan: Channel,
       htlcId: ULong,
       paymentHash: ByteVector32,
       firstHop: ShortChannelId,
@@ -354,13 +353,10 @@ class CLN extends NodeInterface {
         ) match {
           case (Left(err1), Left(err2)) =>
             Main.log(s"failed to parse client messages: $err1 | $err2")
-          case (Right(msg), Left(_)) =>
-            ChannelMaster.getChannelClient(peerId).send(msg)
-          case (Left(_), Right(msg)) =>
-            ChannelMaster.getChannelServer(peerId).send(msg)
-          case (Right(msg1), Right(msg2)) =>
-            ChannelMaster.getChannelClient(peerId).send(msg1)
-            ChannelMaster.getChannelServer(peerId).send(msg2)
+          case (Right(msg), _) =>
+            ChannelMaster.getChannel(peerId).gotPeerMessage(msg)
+          case (_, Right(msg)) =>
+            ChannelMaster.getChannel(peerId).gotPeerMessage(msg)
         }
       }
       case "htlc_accepted" => {
@@ -401,17 +397,15 @@ class CLN extends NodeInterface {
             )
             val nextOnion = ByteVector.fromValidHex(onion("next_onion").str)
 
-            val channel = Database.data.channels.find((peerId, chandata) =>
+            Database.data.channels.find((peerId, chandata) =>
               Utils.getShortChannelId(
                 Main.node.ourPubKey,
                 peerId
               ) == targetChannel
-            )
-
-            channel match {
-              case Some((peerId, chandata)) if chandata.isActive => {
-                val peer = ChannelMaster.getChannelServer(peerId)
-                peer
+            ) match {
+              case Some((peerId, _)) => {
+                ChannelMaster
+                  .getChannel(peerId)
                   .addHTLC(
                     incoming = HtlcIdentifier(sourceChannel, sourceId),
                     incomingAmount = sourceAmount,
@@ -446,16 +440,7 @@ class CLN extends NodeInterface {
                     reply(response)
                   }
               }
-              case Some((_, chandata)) => {
-                Main.log(
-                  s"[htlc] can't assign $hash to $targetChannel as that channel is inactive"
-                )
-                reply(ujson.Obj("result" -> "continue"))
-              }
               case None => {
-                Main.log(
-                  s"[htlc] can't assign $hash to $targetChannel as that channel doesn't exist"
-                )
                 reply(ujson.Obj("result" -> "continue"))
               }
             }
@@ -472,9 +457,10 @@ class CLN extends NodeInterface {
           Database.data.channels.find((p, _) =>
             Utils.getShortChannelId(Main.node.ourPubKey, p) == scid
           ) match {
-            case Some(peerId, chandata) if chandata.isActive => {
-              val peer = ChannelMaster.getChannelServer(peerId)
-              peer.gotPaymentResult(htlcId.toULong, toStatus(successdata))
+            case Some(peerId, _) => {
+              ChannelMaster
+                .getChannel(peerId)
+                .gotPaymentResult(htlcId.toULong, toStatus(successdata))
             }
             case _ => {}
           }
@@ -490,8 +476,8 @@ class CLN extends NodeInterface {
           val channel = Database.data.channels.find((p, _) =>
             Utils.getShortChannelId(Main.node.ourPubKey, p) == scid
           ) match {
-            case Some(peerId, chandata) if chandata.isActive => {
-              val peer = ChannelMaster.getChannelServer(peerId)
+            case Some(peerId, _) => {
+              val channel = ChannelMaster.getChannel(peerId)
 
               if (failuredata("status").str == "pending") {
                 Timer.timeout(FiniteDuration(1, "seconds")) { () =>
@@ -500,11 +486,11 @@ class CLN extends NodeInterface {
                     htlcId.toULong,
                     ByteVector32.fromValidHex(failuredata("payment_hash").str)
                   ).foreach { result =>
-                    peer.gotPaymentResult(htlcId.toULong, result)
+                    channel.gotPaymentResult(htlcId.toULong, result)
                   }
                 }
               } else {
-                peer.gotPaymentResult(htlcId.toULong, toStatus(failuredata))
+                channel.gotPaymentResult(htlcId.toULong, toStatus(failuredata))
               }
             }
             case _ => {
@@ -537,7 +523,7 @@ class CLN extends NodeInterface {
         } match {
           case Some(Some(peerId), Some(msatoshi)) => {
             ChannelMaster
-              .getChannelServer(ByteVector.fromValidHex(peerId))
+              .getChannel(ByteVector.fromValidHex(peerId))
               .proposeOverride(MilliSatoshi(msatoshi.toLong))
               .onComplete {
                 case Success(msg) => reply(msg)

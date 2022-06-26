@@ -26,7 +26,7 @@ trait NodeInterface {
   ): Future[ujson.Value]
 
   def sendOnion(
-      chan: Channel[_, _],
+      chan: Channel,
       htlcId: ULong,
       paymentHash: ByteVector32,
       firstHop: ShortChannelId,
