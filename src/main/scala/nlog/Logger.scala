@@ -58,6 +58,7 @@ class Log(
           case it                   => s"$it"
         }
         .mkString(" ")
-    parent.getPrinter(s"[$lvl] $msg -- $its")
+    val sep = if items.size > 0 then " -- " else ""
+    parent.getPrinter(s"[$lvl] ${text}${sep}${its}")
   }
 }

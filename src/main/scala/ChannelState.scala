@@ -19,6 +19,7 @@ import Utils.OnionParseResult
 import scala.concurrent.duration.FiniteDuration
 
 trait ChannelStatus
+case object Opening extends ChannelStatus
 case object Active extends ChannelStatus
 case object Overriding extends ChannelStatus
 case object NotOpened extends ChannelStatus
@@ -34,7 +35,8 @@ case class ChannelState(
   def data = Database.data.channels.get(peerId).getOrElse(ChannelData())
   def lcss = data.lcss.get
   def status =
-    if data.lcss.isEmpty then NotOpened
+    if openingRefundScriptPubKey.isDefined then Opening
+    else if data.lcss.isEmpty then NotOpened
     else if data.proposedOverride.isDefined then Overriding
     else if !data.localErrors.isEmpty then Errored
     else if data.suspended then Suspended
@@ -151,12 +153,13 @@ case class ChannelState(
 
   override def toString: String = {
     val printable = status match {
+      case Opening    => s"(${openingRefundScriptPubKey.get.toHex})"
       case Active     => s"($lcss, $htlcResults, $uncommittedUpdates)"
       case Overriding => s"(${data.proposedOverride.get})"
       case Errored    => s"(${data.localErrors})"
       case _          => ""
     }
 
-    s"Channel[$peerId]${status.getClass.getSimpleName}$status"
+    s"Channel[${peerId.toHex}]${status.getClass.getSimpleName}$printable"
   }
 }

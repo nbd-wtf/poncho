@@ -38,7 +38,7 @@ class Channel(peerId: ByteVector) {
   lazy val shortChannelId = Utils.getShortChannelId(Main.node.ourPubKey, peerId)
 
   var state = ChannelState(peerId)
-  val logger = Main.logger.attach.item("peer", peerId).logger
+  val logger = Main.logger.attach.item("peer", peerId.toHex).logger
 
   def sendMessage(
       msg: HostedClientMessage | HostedServerMessage
@@ -313,7 +313,10 @@ class Channel(peerId: ByteVector) {
   ): Unit = {
     val localLogger = logger.attach.item(state.status).logger
 
-    localLogger.debug.item(state).item("message", message).msg("gotPeerMessage")
+    localLogger.debug
+      .item("state", state)
+      .item("message", message)
+      .msg("gotPeerMessage")
 
     message match {
       // someone wants a new hosted channel from us
@@ -355,12 +358,9 @@ class Channel(peerId: ByteVector) {
       }
 
       // final step of channel open process
-      case msg: StateUpdate if state.openingRefundScriptPubKey.isDefined => {
-        // step out of the "opening" state
-        state = state.copy(openingRefundScriptPubKey = None)
-
-        // build last cross-signed state
-        val lcss = LastCrossSignedState(
+      case msg: StateUpdate if state.status == Opening => {
+        // build last cross-signed state for the beginning of channel
+        val lcssInitial = LastCrossSignedState(
           isHost = true,
           refundScriptPubKey = state.openingRefundScriptPubKey.get,
           initHostedChannel = Main.ourInit,
@@ -377,6 +377,9 @@ class Channel(peerId: ByteVector) {
         )
           .withLocalSigOfRemote(Main.node.getPrivateKey())
 
+        // step out of the "opening" state
+        state = state.copy(openingRefundScriptPubKey = None)
+
         // check if everything is ok
         if ((msg.blockDay - Main.currentBlockDay).abs > 1) {
           localLogger.warn
@@ -389,7 +392,7 @@ class Channel(peerId: ByteVector) {
               Error.ERR_HOSTED_WRONG_BLOCKDAY
             )
           )
-        } else if (!lcss.verifyRemoteSig(peerId)) {
+        } else if (!lcssInitial.verifyRemoteSig(peerId)) {
           localLogger.warn.msg("peer sent state_update with wrong signature.")
           sendMessage(
             Error(
@@ -402,11 +405,11 @@ class Channel(peerId: ByteVector) {
           Database.update { data =>
             data
               .modify(_.channels)
-              .using(_ + (peerId -> ChannelData(lcss = Some(lcss))))
+              .using(_ + (peerId -> ChannelData(lcss = Some(lcssInitial))))
           }
 
           // send our signed state update
-          sendMessage(lcss.stateUpdate)
+          sendMessage(lcssInitial.stateUpdate)
 
           // send a channel update
           sendMessage(getChannelUpdate)
@@ -894,7 +897,6 @@ class Channel(peerId: ByteVector) {
           channelId,
           Error.ERR_HOSTED_TIMED_OUT_OUTGOING_HTLC
         )
-
         sendMessage(err)
 
         // we also fail them on their upstream node
@@ -905,7 +907,7 @@ class Channel(peerId: ByteVector) {
               .map((from, _) => from)
           )
           .collect { case Some(htlc) => htlc }
-          .foreach(in =>
+          .foreach { in =>
             state.provideHtlcResult(
               in.id,
               Some(
@@ -918,11 +920,12 @@ class Channel(peerId: ByteVector) {
                 )
               )
             )
-          )
 
-        Database.update { data =>
-          data.modify(_.channels.at(peerId).localErrors).using(_ :+ err)
-        }
+            // and saved errors on the channel state
+            Database.update { data =>
+              data.modify(_.channels.at(peerId).localErrors).using(_ :+ err)
+            }
+          }
       }
     }
   }
