@@ -491,8 +491,7 @@ class Channel(peerId: ByteVector) {
           state.lcssNext.incomingHtlcs.foreach { htlc =>
             Main.node
               .inspectOutgoingPayment(
-                shortChannelId,
-                htlc.id,
+                HtlcIdentifier(shortChannelId, htlc.id),
                 htlc.paymentHash
               )
               .foreach { result => gotPaymentResult(htlc.id, result) }

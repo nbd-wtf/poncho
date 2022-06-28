@@ -25,7 +25,9 @@ case class Config(
 object Main {
   import Picklers.given
   val isDev = true
-  val node: NodeInterface = new CLN()
+
+  var node: NodeInterface = new CLN()
+  var isReady: Boolean = false
 
   logger.info.item(Database.path).msg(s"database found")
 
@@ -34,8 +36,11 @@ object Main {
       // wait for this callback so we know the RPC is ready and we can call these things
       setChainHash()
       updateCurrentBlock()
-      Timer.repeat(FiniteDuration(1, "minutes")) { () =>
-        updateCurrentBlock()
+
+      if (args.headOption != Some("oneshot")) {
+        Timer.repeat(FiniteDuration(1, "minutes")) { () =>
+          updateCurrentBlock()
+        }
       }
 
       // as the node starts c-lightning will reply the htlc_accepted HTLCs on us,
@@ -108,7 +113,10 @@ object Main {
     node
       .getChainHash()
       .onComplete {
-        case Success(chainHash) => Main.chainHash = chainHash
+        case Success(chainHash) => {
+          Main.chainHash = chainHash
+          isReady = true
+        }
         case Failure(err) => logger.err.item(err).msg("failed to get chainhash")
       }
   }

@@ -127,8 +127,7 @@ class CLN extends NodeInterface {
     rpc("getchaininfo").map(info => BlockHeight(info("headercount").num.toLong))
 
   def inspectOutgoingPayment(
-      scid: ShortChannelId,
-      htlcId: ULong,
+      identifier: HtlcIdentifier,
       paymentHash: ByteVector32
   ): Future[PaymentStatus] =
     rpc("listsendpays", ujson.Obj("payment_hash" -> paymentHash.toHex))
@@ -137,7 +136,7 @@ class CLN extends NodeInterface {
           .filter(_.obj.contains("label"))
           .find(p =>
             Try(
-              (scid.toString, htlcId.toLong) ==
+              (identifier.scid.toString, identifier.id.toLong) ==
                 upickle.default.read[Tuple2[String, Long]](p("label").str)
             ).getOrElse(false)
           )
@@ -482,8 +481,7 @@ class CLN extends NodeInterface {
               if (failuredata("status").str == "pending") {
                 Timer.timeout(FiniteDuration(1, "seconds")) { () =>
                   inspectOutgoingPayment(
-                    scid,
-                    htlcId.toULong,
+                    HtlcIdentifier(scid, htlcId.toULong),
                     ByteVector32.fromValidHex(failuredata("payment_hash").str)
                   ).foreach { result =>
                     channel.gotPaymentResult(htlcId.toULong, result)

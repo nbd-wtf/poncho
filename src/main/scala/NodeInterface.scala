@@ -15,8 +15,7 @@ trait NodeInterface {
   def ourPubKey: ByteVector
 
   def inspectOutgoingPayment(
-      scid: ShortChannelId,
-      htlcId: ULong,
+      identifier: HtlcIdentifier,
       paymentHash: ByteVector32
   ): Future[PaymentStatus]
 

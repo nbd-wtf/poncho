@@ -34,12 +34,17 @@ case class ChannelData(
 object Database {
   import Picklers.given
 
-  val path: Path = Paths.get("poncho.db").toAbsolutePath()
-  if (!Files.exists(path)) {
-    Files.createFile(path)
-    Files.write(path, write(Data()).getBytes)
+  var path: Path = Paths.get("poncho.db").toAbsolutePath()
+  var data: Data = _
+  loadData()
+
+  def loadData(): Unit = {
+    if (!Files.exists(path)) {
+      Files.createFile(path)
+      Files.write(path, write(Data()).getBytes)
+    }
+    data = read[Data](path)
   }
-  var data: Data = read[Data](path)
 
   def update(change: Data => Data) = {
     val newData = change(data)
