@@ -7,6 +7,7 @@ version               := "0.1.0"
 libraryDependencies   ++= Seq(
   "com.github.lolgab" %%% "native-loop-core" % "0.2.1",
   "com.softwaremill.quicklens" %%% "quicklens" % "1.8.8",
+  "org.scodec" %%% "scodec-bits" % "1.1.32",
   "com.lihaoyi" %%% "upickle" % "1.6.0",
   "com.lihaoyi" %%% "ujson" % "1.6.0",
   "com.fiatjaf" %%% "sn-sha256" % "0.3.0",
