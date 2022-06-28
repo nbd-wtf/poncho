@@ -20,6 +20,7 @@ import scala.concurrent.duration.FiniteDuration
 
 trait ChannelStatus
 case object Opening extends ChannelStatus
+case object Invoking extends ChannelStatus
 case object Active extends ChannelStatus
 case object Overriding extends ChannelStatus
 case object NotOpened extends ChannelStatus
@@ -30,12 +31,14 @@ case class ChannelState(
     peerId: ByteVector,
     htlcResults: Map[ULong, Promise[PaymentStatus]] = Map.empty,
     uncommittedUpdates: List[FromLocal | FromRemote] = List.empty,
-    openingRefundScriptPubKey: Option[ByteVector] = None
+    openingRefundScriptPubKey: Option[ByteVector] = None,
+    invoking: Option[ByteVector | LastCrossSignedState] = None
 ) {
   def data = Database.data.channels.get(peerId).getOrElse(ChannelData())
   def lcss = data.lcss.get
   def status =
     if openingRefundScriptPubKey.isDefined then Opening
+    else if invoking.isDefined then Invoking
     else if data.lcss.isEmpty then NotOpened
     else if data.proposedOverride.isDefined then Overriding
     else if !data.localErrors.isEmpty then Errored

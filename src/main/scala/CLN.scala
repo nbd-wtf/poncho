@@ -123,6 +123,9 @@ class CLN extends NodeInterface {
       })
       .map(ByteVector32.fromValidHex(_))
 
+  def getAddress(): Future[String] =
+    rpc("newaddr").map(info => info("bech32").str)
+
   def getCurrentBlock(): Future[BlockHeight] =
     rpc("getchaininfo").map(info => BlockHeight(info("headercount").num.toLong))
 
@@ -307,6 +310,11 @@ class CLN extends NodeInterface {
                 "name" -> "hc-override",
                 "usage" -> "peerid msatoshi",
                 "description" -> "Propose overriding the state of the channel with {peerid} with the next local balance being equal to {msatoshi}."
+              ),
+              ujson.Obj(
+                "name" -> "hc-request-channel",
+                "usage" -> "peerid",
+                "description" -> "Request a hosted channel from another hosted channel provider."
               )
             ),
             "notifications" -> ujson.Arr(),
@@ -523,6 +531,29 @@ class CLN extends NodeInterface {
             ChannelMaster
               .getChannel(ByteVector.fromValidHex(peerId))
               .proposeOverride(MilliSatoshi(msatoshi.toLong))
+              .onComplete {
+                case Success(msg) => reply(msg)
+                case Failure(err) => replyError(err.toString)
+              }
+          }
+          case _ => {
+            replyError("invalid parameters")
+          }
+        }
+      }
+
+      case "hc-request-channel" => {
+        val params = data match {
+          case _: ujson.Obj =>
+            Some(data("peerid").strOpt)
+          case _: ujson.Arr =>
+            Some(data(0).strOpt)
+          case _ => None
+        } match {
+          case Some(Some(peerId)) => {
+            ChannelMaster
+              .getChannel(ByteVector.fromValidHex(peerId))
+              .requestHostedChannel()
               .onComplete {
                 case Success(msg) => reply(msg)
                 case Failure(err) => replyError(err.toString)

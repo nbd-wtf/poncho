@@ -34,6 +34,7 @@ trait NodeInterface {
       onion: ByteVector
   ): Unit
 
+  def getAddress(): Future[String]
   def getCurrentBlock(): Future[BlockHeight]
   def getChainHash(): Future[ByteVector32]
 

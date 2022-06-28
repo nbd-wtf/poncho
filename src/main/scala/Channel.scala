@@ -357,7 +357,7 @@ class Channel(peerId: ByteVector) {
         }
       }
 
-      // final step of channel open process
+      // final step of channel open process from the server side
       case msg: StateUpdate if state.status == Opening => {
         // build last cross-signed state for the beginning of channel
         val lcssInitial = LastCrossSignedState(
@@ -370,8 +370,8 @@ class Channel(peerId: ByteVector) {
           remoteBalanceMsat = Main.ourInit.initialClientBalanceMsat,
           localUpdates = 0L,
           remoteUpdates = 0L,
-          incomingHtlcs = Nil,
-          outgoingHtlcs = Nil,
+          incomingHtlcs = List.empty,
+          outgoingHtlcs = List.empty,
           localSigOfRemote = ByteVector64.Zeroes,
           remoteSigOfLocal = msg.localSigOfRemoteLCSS
         )
@@ -382,24 +382,14 @@ class Channel(peerId: ByteVector) {
 
         // check if everything is ok
         if ((msg.blockDay - Main.currentBlockDay).abs > 1) {
+          // we don't get a channel, but also do not send any errors
           localLogger.warn
             .item("local", Main.currentBlockDay)
             .item("remote", msg.blockDay)
             .msg("peer sent state_update with wrong blockday")
-          sendMessage(
-            Error(
-              channelId,
-              Error.ERR_HOSTED_WRONG_BLOCKDAY
-            )
-          )
         } else if (!lcssInitial.verifyRemoteSig(peerId)) {
-          localLogger.warn.msg("peer sent state_update with wrong signature.")
-          sendMessage(
-            Error(
-              channelId,
-              Error.ERR_HOSTED_WRONG_REMOTE_SIG
-            )
-          )
+          // we don't get a channel, but also do not send any errors
+          localLogger.warn.msg("peer sent state_update with wrong signature")
         } else {
           // all good, save this channel to the database and consider it opened
           Database.update { data =>
@@ -416,7 +406,69 @@ class Channel(peerId: ByteVector) {
         }
       }
 
-      // when the client tries to invoke it we return the error
+      // we're invoking a channel and the server is ok with it
+      case init: InitHostedChannel
+          if state.status == Invoking && state.invoking.get
+            .isInstanceOf[ByteVector] => {
+        // we just accept anything they offer, we don't care
+        val spk = state.invoking.get.asInstanceOf[ByteVector]
+        val lcss = LastCrossSignedState(
+          isHost = false,
+          refundScriptPubKey = spk,
+          initHostedChannel = init,
+          blockDay = Main.currentBlockDay,
+          localBalanceMsat = init.initialClientBalanceMsat,
+          remoteBalanceMsat =
+            init.channelCapacityMsat - init.initialClientBalanceMsat,
+          localUpdates = 0L,
+          remoteUpdates = 0L,
+          incomingHtlcs = List.empty,
+          outgoingHtlcs = List.empty,
+          localSigOfRemote = ByteVector64.Zeroes,
+          remoteSigOfLocal = ByteVector64.Zeroes
+        ).withLocalSigOfRemote(Main.node.getPrivateKey())
+        state = state.copy(invoking = Some(lcss))
+
+        sendMessage(
+          StateUpdate(
+            blockDay = Main.currentBlockDay,
+            localUpdates = 0L,
+            remoteUpdates = 0L,
+            localSigOfRemoteLCSS = lcss.localSigOfRemote
+          )
+        )
+      }
+
+      // final step of channel open process from the client side
+      case msg: StateUpdate
+          if state.status == Invoking && state.invoking.get
+            .isInstanceOf[LastCrossSignedState] => {
+        // we'll check if lcss they sent is the same we just signed
+        val lcssInitial = state.invoking.get
+          .asInstanceOf[LastCrossSignedState]
+          .copy(remoteSigOfLocal = msg.localSigOfRemoteLCSS)
+
+        // step out of the "invoking" state
+        state = state.copy(invoking = None)
+
+        if (lcssInitial.verifyRemoteSig(peerId) == false) {
+          // their lcss or signature is wrong, stop all here, we won't get a channel
+          // but also do not send any errors
+          localLogger.warn.msg("peer sent state_update with wrong signature")
+        } else {
+          // all good, save this channel to the database and consider it opened
+          Database.update { data =>
+            data
+              .modify(_.channels)
+              .using(_ + (peerId -> ChannelData(lcss = Some(lcssInitial))))
+          }
+
+          // send a channel update
+          sendMessage(getChannelUpdate)
+        }
+      }
+
+      // if errored, when the client tries to invoke it we return the error
       case _: InvokeHostedChannel if state.status == Errored =>
         sendMessage(state.data.localErrors.head)
 
@@ -929,6 +981,33 @@ class Channel(peerId: ByteVector) {
     }
   }
 
+  // opening a channel, as a client, to another hosted channel provider
+  def requestHostedChannel(): Future[String] = {
+    if (state.status != NotOpened) {
+      Future.failed(
+        throw new Exception(
+          "can't open a channel that is already open."
+        )
+      )
+    } else {
+      Main.node
+        .getAddress()
+        .map(Bech32.decodeWitnessAddress(_)._3)
+        .flatMap(spk => {
+          state = state.copy(invoking = Some(spk))
+          sendMessage(
+            InvokeHostedChannel(
+              chainHash = Main.chainHash,
+              refundScriptPubKey = spk,
+              secret = ByteVector.empty
+            )
+          )
+        })
+        .map(res => res("status").str)
+    }
+  }
+
+  // proposing to override a channel state, as a host, to the hosted client peer
   def proposeOverride(newLocalBalance: MilliSatoshi): Future[String] = {
     if (state.status != Errored || state.status != Overriding) {
       Future.failed(
@@ -947,8 +1026,8 @@ class Channel(peerId: ByteVector) {
         .getOrElse(
           state.lcss
             .copy(
-              incomingHtlcs = Nil,
-              outgoingHtlcs = Nil,
+              incomingHtlcs = List.empty,
+              outgoingHtlcs = List.empty,
               localUpdates = state.lcss.localUpdates + 1,
               remoteUpdates = state.lcss.remoteUpdates + 1,
               remoteSigOfLocal = ByteVector64.Zeroes
