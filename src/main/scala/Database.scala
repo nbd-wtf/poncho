@@ -31,20 +31,15 @@ case class ChannelData(
     suspended: Boolean = false
 )
 
-object Database {
+class Database(val path: Path = Paths.get("poncho.db").toAbsolutePath()) {
   import Picklers.given
 
-  var path: Path = Paths.get("poncho.db").toAbsolutePath()
-  var data: Data = _
-  loadData()
-
-  def loadData(): Unit = {
-    if (!Files.exists(path)) {
-      Files.createFile(path)
-      Files.write(path, write(Data()).getBytes)
-    }
-    data = read[Data](path)
+  if (!Files.exists(path)) {
+    path.toFile().getParentFile().mkdirs()
+    Files.createFile(path)
+    Files.write(path, write(Data()).getBytes)
   }
+  var data = read[Data](path)
 
   def update(change: Data => Data) = {
     val newData = change(data)

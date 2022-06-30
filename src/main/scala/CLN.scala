@@ -19,7 +19,7 @@ import codecs.HostedChannelCodecs._
 import codecs._
 import secp256k1.Secp256k1
 
-class CLN extends NodeInterface {
+class CLN(master: ChannelMaster) extends NodeInterface {
   private var initCallback = () => {}
   private var rpcAddr: String = ""
   private var hsmSecret: Path = Paths.get("")
@@ -96,7 +96,7 @@ class CLN extends NodeInterface {
     ByteVector32(ByteVector(sk.map(_.toByte)))
   }
 
-  lazy val ourPubKey = ByteVector(
+  lazy val publicKey = ByteVector(
     Keys
       .loadPrivateKey(getPrivateKey().bytes.toArray.map(_.toUByte))
       .toOption
@@ -186,7 +186,7 @@ class CLN extends NodeInterface {
       .toHex
     val payload = tagHex + lengthHex + encoded.toHex
 
-    Main.log(s"  ::> sending $message --> ${peerId.toHex}")
+    master.log(s"  ::> sending $message --> ${peerId.toHex}")
     rpc(
       "sendcustommsg",
       ujson.Obj(
@@ -216,7 +216,7 @@ class CLN extends NodeInterface {
       )
       .onComplete {
         case Failure(err) => {
-          Main.log(s"failed to get peer for channel: $err")
+          master.log(s"failed to get peer for channel: $err")
           chan
             .gotPaymentResult(
               htlcId,
@@ -228,7 +228,7 @@ class CLN extends NodeInterface {
             )
         }
         case Success(None) => {
-          Main.log("didn't find peer for channel")
+          master.log("didn't find peer for channel")
           chan.gotPaymentResult(
             htlcId,
             Some(
@@ -268,7 +268,7 @@ class CLN extends NodeInterface {
           )
             .onComplete {
               case Failure(e) => {
-                Main.log(s"sendonion failure: $e")
+                master.log(s"sendonion failure: $e")
                 chan.gotPaymentResult(
                   htlcId,
                   Some(Left(None))
@@ -359,11 +359,11 @@ class CLN extends NodeInterface {
           decodeClientMessage(tag, payload).toEither
         ) match {
           case (Left(err1), Left(err2)) =>
-            Main.log(s"failed to parse client messages: $err1 | $err2")
+            master.log(s"failed to parse client messages: $err1 | $err2")
           case (Right(msg), _) =>
-            ChannelMaster.getChannel(peerId).gotPeerMessage(msg)
+            master.getChannel(peerId).gotPeerMessage(msg)
           case (_, Right(msg)) =>
-            ChannelMaster.getChannel(peerId).gotPeerMessage(msg)
+            master.getChannel(peerId).gotPeerMessage(msg)
         }
       }
       case "htlc_accepted" => {
@@ -404,14 +404,14 @@ class CLN extends NodeInterface {
             )
             val nextOnion = ByteVector.fromValidHex(onion("next_onion").str)
 
-            Database.data.channels.find((peerId, chandata) =>
+            master.database.data.channels.find((peerId, chandata) =>
               Utils.getShortChannelId(
-                Main.node.ourPubKey,
+                publicKey,
                 peerId
               ) == targetChannel
             ) match {
               case Some((peerId, _)) => {
-                ChannelMaster
+                master
                   .getChannel(peerId)
                   .addHTLC(
                     incoming = HtlcIdentifier(sourceChannel, sourceId),
@@ -461,11 +461,11 @@ class CLN extends NodeInterface {
           val (scidStr, htlcId) =
             upickle.default.read[Tuple2[String, Long]](label)
           val scid = ShortChannelId(scidStr)
-          Database.data.channels.find((p, _) =>
-            Utils.getShortChannelId(Main.node.ourPubKey, p) == scid
+          master.database.data.channels.find((p, _) =>
+            Utils.getShortChannelId(publicKey, p) == scid
           ) match {
             case Some(peerId, _) => {
-              ChannelMaster
+              master
                 .getChannel(peerId)
                 .gotPaymentResult(htlcId.toULong, toStatus(successdata))
             }
@@ -480,11 +480,11 @@ class CLN extends NodeInterface {
           val (scidStr, htlcId) =
             upickle.default.read[Tuple2[String, Long]](label)
           val scid = ShortChannelId(scidStr)
-          val channel = Database.data.channels.find((p, _) =>
-            Utils.getShortChannelId(Main.node.ourPubKey, p) == scid
+          val channel = master.database.data.channels.find((p, _) =>
+            Utils.getShortChannelId(publicKey, p) == scid
           ) match {
             case Some(peerId, _) => {
-              val channel = ChannelMaster.getChannel(peerId)
+              val channel = master.getChannel(peerId)
 
               if (failuredata("status").str == "pending") {
                 Timer.timeout(FiniteDuration(1, "seconds")) { () =>
@@ -500,7 +500,7 @@ class CLN extends NodeInterface {
               }
             }
             case _ => {
-              Main.log("sendpay_failure but not for an active channel")
+              master.log("sendpay_failure but not for an active channel")
             }
           }
         }
@@ -508,16 +508,16 @@ class CLN extends NodeInterface {
       case "connect" => {
         val id = data("id").str
         val address = data("address")("address").str
-        Main.log(s"$id connected: $address")
+        master.log(s"$id connected: $address")
       }
       case "disconnect" => {
         val id = data("id").str
-        Main.log(s"$id disconnected")
+        master.log(s"$id disconnected")
       }
 
       // custom rpc methods
       case "hc-list" =>
-        reply(ChannelMaster.channelsJSON)
+        reply(master.channelsJSON)
 
       case "hc-override" => {
         val params = data match {
@@ -528,7 +528,7 @@ class CLN extends NodeInterface {
           case _ => None
         } match {
           case Some(Some(peerId), Some(msatoshi)) => {
-            ChannelMaster
+            master
               .getChannel(ByteVector.fromValidHex(peerId))
               .proposeOverride(MilliSatoshi(msatoshi.toLong))
               .onComplete {
@@ -551,7 +551,7 @@ class CLN extends NodeInterface {
           case _ => None
         } match {
           case Some(Some(peerId)) => {
-            ChannelMaster
+            master
               .getChannel(ByteVector.fromValidHex(peerId))
               .requestHostedChannel()
               .onComplete {

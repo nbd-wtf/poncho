@@ -12,7 +12,7 @@ import codecs._
 
 trait NodeInterface {
   def getPrivateKey(): ByteVector32
-  def ourPubKey: ByteVector
+  def publicKey: ByteVector
 
   def inspectOutgoingPayment(
       identifier: HtlcIdentifier,

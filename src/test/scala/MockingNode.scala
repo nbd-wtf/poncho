@@ -9,7 +9,7 @@ import crypto.Crypto
 class MockingNode(seed: Integer) extends NodeInterface {
   def getPrivateKey(): ByteVector32 =
     Crypto.sha256(ByteVector(Array.fill(seed)(5.toByte)))
-  def ourPubKey: ByteVector = Crypto.getPublicKey(getPrivateKey())
+  def publicKey: ByteVector = Crypto.getPublicKey(getPrivateKey())
 
   val mockOutgoingPayments =
     scala.collection.mutable.Map.empty[HtlcIdentifier, PaymentStatus]
@@ -51,6 +51,10 @@ class MockingNode(seed: Integer) extends NodeInterface {
         "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000"
       )
     )
+  )
+
+  def getAddress(): Future[String] = Future(
+    "bc1qza8062nxd2wf25l7sr7854kjrahtsj50ypquwm"
   )
 
   def main(onInit: () => Unit): Unit = {

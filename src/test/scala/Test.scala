@@ -11,13 +11,16 @@ import codecs._
 import crypto.Crypto
 
 object ChannelTests extends TestSuite {
-  Database.path = Paths.get("/tmp/ponchotest.db")
-  Files.deleteIfExists(Database.path)
-  Database.loadData()
-
-  val mockNode = new MockingNode(1)
-  Main.node = mockNode
-  Main.main(Array("oneshot"))
+  def start(id: Integer): ChannelMaster = {
+    val dbpath = Paths.get(s"/tmp/ponchotest/$id.db")
+    Files.deleteIfExists(dbpath)
+    val cm = new ChannelMaster() {
+      override val database = new Database(dbpath)
+      override val node = new MockingNode(id)
+    }
+    cm.run(isTest = true)
+    cm
+  }
 
   def waitUntil(
       cond: => Boolean,
@@ -34,163 +37,74 @@ object ChannelTests extends TestSuite {
 
   val refundScriptPubKey = ByteVector(Array[Byte](0, 1, 2, 3))
 
-  // 1111111...
-  val peer1sk = ByteVector32(ByteVector(Array.fill(32)(1.toByte)))
-  val peer1pk = Crypto.getPublicKey(peer1sk)
-  val channel1 = ChannelMaster.getChannel(peer1pk)
-
   val tests = Tests {
     test("opening a channel") {
-      waitUntil(Main.isReady).map { _ =>
-        openChannel()
+      val client = start(1)
+      val host = start(2)
+      val fromClient = client.getChannel(host.node.publicKey)
+      val fromHost = host.getChannel(client.node.publicKey)
+
+      (for {
+        _ <- waitUntil(client.isReady)
+        _ <- waitUntil(host.isReady)
+        _ <- fromClient.requestHostedChannel()
+        _ <- waitUntil(fromClient.status == Active)
+      } yield ()) map { _ =>
+        val clientNode = client.node.asInstanceOf[MockingNode]
+        clientNode.mockCustomMessageSent.size ==> 2
+
+        assert(fromHost.state.openingRefundScriptPubKey == None)
+        assert(fromHost.currentData.lcss.isDefined)
+        assert(fromHost.lcssStored.refundScriptPubKey == refundScriptPubKey)
+        val hostNode = host.node.asInstanceOf[MockingNode]
+        hostNode.mockCustomMessageSent.size ==> 3
+        assert(hostNode.mockCustomMessageSent.head.isInstanceOf[ChannelUpdate])
+        assert(
+          hostNode.mockCustomMessageSent.drop(1).head.isInstanceOf[StateUpdate]
+        )
+
+        ()
       }
     }
 
-    test("peer receives a payment") {
-      waitUntil(Main.isReady).map { _ =>
-        openChannel()
-        forwardToPeer()
+    test("hc receives a payment") {
+      val preimage =
+        Crypto.sha256(ByteVector32(ByteVector(Array.fill(32)(8.toByte))))
+
+      val client = start(1)
+      val host = start(2)
+      val fromClient = client.getChannel(host.node.publicKey)
+      val fromHost = host.getChannel(client.node.publicKey)
+
+      (for {
+        _ <- waitUntil(client.isReady)
+        _ <- waitUntil(host.isReady)
+        _ <- fromClient.requestHostedChannel()
+        _ <- waitUntil(fromClient.status == Active)
+
+        // a payment comes from the outer universe destined to the hc
+        _ <- fromHost.addHTLC(
+          incoming = HtlcIdentifier(ShortChannelId("1x1x1"), 4.toULong),
+          incomingAmount = MilliSatoshi(88100000L),
+          outgoingAmount = MilliSatoshi(88000000L),
+          paymentHash = Crypto.sha256(preimage),
+          cltvExpiry = CltvExpiry(88),
+          nextOnion = ByteVector.view(Array.empty[Byte])
+        )
+      } yield ()) map { _ =>
+        println(fromClient.lcssStored)
+        val clientNode = client.node.asInstanceOf[MockingNode]
+        println(clientNode.mockCustomMessageSent)
+
+        println(fromHost.lcssStored)
+        val hostNode = host.node.asInstanceOf[MockingNode]
+        println(hostNode.mockCustomMessageSent.size)
+        hostNode.mockCustomMessageSent.size ==> 6
+        assert(hostNode.mockCustomMessageSent.head.isInstanceOf[StateUpdate])
+        hostNode.mockCustomMessageSent.size ==> 7
+
+        ()
       }
     }
-
-    test("peer sends a payment") {
-      waitUntil(Main.isReady).map { _ =>
-        openChannel()
-        forwardToPeer()
-        forwardFromPeer()
-      }
-    }
-
   }
-
-  def openChannel(): Unit = {
-    channel1
-      .gotPeerMessage(
-        InvokeHostedChannel(
-          chainHash = ByteVector32(
-            ByteVector.fromValidHex(
-              "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000"
-            )
-          ),
-          refundScriptPubKey = refundScriptPubKey,
-          secret = ByteVector.empty
-        )
-      )
-
-    mockNode.mockCustomMessageSent.size ==> 1
-    assert(
-      mockNode.mockCustomMessageSent.head.isInstanceOf[InitHostedChannel]
-    )
-
-    channel1.gotPeerMessage(
-      makePeerStateUpdate(peer1sk, 0, 0, MilliSatoshi(0L))
-    )
-
-    mockNode.mockCustomMessageSent.size ==> 3
-    assert(mockNode.mockCustomMessageSent.head.isInstanceOf[ChannelUpdate])
-    assert(
-      mockNode.mockCustomMessageSent.drop(1).head.isInstanceOf[StateUpdate]
-    )
-    assert(channel1.state.openingRefundScriptPubKey == None)
-    assert(channel1.state.data.lcss.isDefined)
-    assert(channel1.state.lcss.refundScriptPubKey == refundScriptPubKey)
-  }
-
-  def forwardToPeer(): Unit = {
-    val preimage =
-      Crypto.sha256(ByteVector32(ByteVector(Array.fill(32)(8.toByte))))
-
-    // we receive a payment from the outer universe destined to our peer
-    channel1.addHTLC(
-      incoming = HtlcIdentifier(ShortChannelId(1, 2, 3), 4),
-      incomingAmount = MilliSatoshi(88100000L),
-      outgoingAmount = MilliSatoshi(88000000L),
-      paymentHash = Crypto.sha256(preimage),
-      cltvExpiry = CltvExpiry(88),
-      nextOnion =
-    )
-
-    // we shouldn't forward the payment yet, but wait for the StateUpdate
-    mockNode.mockOnionSent.size ==> 0
-    mockNode.mockCustomMessageSent.size ==> 3
-
-    channel1
-      .gotPeerMessage(
-        makePeerStateUpdate(
-          peer1sk,
-          1,
-          2,
-          MilliSatoshi(0),
-          htlcsToHost = List(htlc)
-        )
-      )
-
-    // now we should have forwarded and also replied with a StateUpdate
-    mockNode.mockOnionSent.size ==> 1
-    mockNode.mockCustomMessageSent.size ==> 4
-  }
-
-  def forwardFromPeer(): Unit = {
-    val preimage =
-      Crypto.sha256(ByteVector32(ByteVector(Array.fill(32)(8.toByte))))
-
-    // peer will send a request to forward an HTLC
-    val htlc = UpdateAddHtlc(
-      channelId = Utils.getChannelId(Main.node.ourPubKey, peer1pk),
-      id = 1L.toULong,
-      amountMsat = MilliSatoshi(88000000L),
-      paymentHash = preimage,
-      cltvExpiry = CltvExpiry(88),
-      onionRoutingPacket = ByteVector(Array.empty[Byte])
-    )
-
-    channel1.gotPeerMessage(htlc)
-
-    // we shouldn't forward the payment yet, but wait for the StateUpdate
-    mockNode.mockOnionSent.size ==> 0
-    mockNode.mockCustomMessageSent.size ==> 3
-
-    channel1
-      .gotPeerMessage(
-        makePeerStateUpdate(
-          peer1sk,
-          1,
-          2,
-          MilliSatoshi(0),
-          htlcsToHost = List(htlc)
-        )
-      )
-
-    // now we should have forwarded and also replied with a StateUpdate
-    mockNode.mockOnionSent.size ==> 1
-    mockNode.mockCustomMessageSent.size ==> 4
-  }
-
-  def makePeerStateUpdate(
-      peersk: ByteVector32,
-      localUpdates: Long,
-      remoteUpdates: Long,
-      localBalance: MilliSatoshi,
-      htlcsToPeer: List[UpdateAddHtlc] = List.empty,
-      htlcsToHost: List[UpdateAddHtlc] = List.empty
-  ): StateUpdate =
-    StateUpdate(
-      blockDay = Main.currentBlockDay,
-      localUpdates = localUpdates,
-      remoteUpdates = remoteUpdates,
-      localSigOfRemoteLCSS = LastCrossSignedState(
-        isHost = false,
-        refundScriptPubKey = refundScriptPubKey,
-        initHostedChannel = Main.ourInit,
-        blockDay = Main.currentBlockDay,
-        localBalanceMsat = localBalance,
-        remoteBalanceMsat = Main.ourInit.channelCapacityMsat - localBalance,
-        localUpdates = localUpdates,
-        remoteUpdates = remoteUpdates,
-        incomingHtlcs = htlcsToPeer,
-        outgoingHtlcs = htlcsToHost,
-        localSigOfRemote = ByteVector64.Zeroes,
-        remoteSigOfLocal = ByteVector64.Zeroes
-      ).withLocalSigOfRemote(peersk).localSigOfRemote
-    )
 }

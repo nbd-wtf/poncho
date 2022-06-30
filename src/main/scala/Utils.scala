@@ -51,7 +51,7 @@ object Utils {
       sharedSecret: ByteVector32
   )
 
-  def parseClientOnion(add: UpdateAddHtlc): Either[
+  def parseClientOnion(privateKey: ByteVector32, add: UpdateAddHtlc): Either[
     Exception | FailureMessage,
     OnionParseResult
   ] =
@@ -64,7 +64,7 @@ object Utils {
         Left(Exception("unparseable onion"))
       case Right(onion) =>
         Sphinx.peel(
-          Main.node.getPrivateKey(),
+          privateKey,
           Some(add.paymentHash),
           onion
         ) match {
@@ -94,9 +94,10 @@ object Utils {
     }
 
   def getOutgoingData(
+      privateKey: ByteVector32,
       htlc: UpdateAddHtlc
   ): Option[(ShortChannelId, MilliSatoshi, CltvExpiry, ByteVector)] =
-    parseClientOnion(htlc) match {
+    parseClientOnion(privateKey, htlc) match {
       case Right(
             OnionParseResult(
               payload: PaymentOnion.ChannelRelayPayload,
