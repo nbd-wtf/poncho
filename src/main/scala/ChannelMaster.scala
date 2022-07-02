@@ -25,7 +25,7 @@ class ChannelMaster { self =>
   def getChannel(peerId: ByteVector): Channel =
     channels.getOrElseUpdate(peerId, { new Channel(self, peerId) })
 
-  lazy val logger: nlog.Logger = {
+  val logger: nlog.Logger = {
     def printer(message: String): Unit =
       if (node.isInstanceOf[CLN] && !self.isDev) {
         System.out.println(
