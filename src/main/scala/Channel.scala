@@ -262,7 +262,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           sendMessage(fulfill)
             .onComplete {
               case Success(_) => {
-                sendMessage(updated.lcssNext.stateUpdate)
+                if (status == Active) sendMessage(updated.lcssNext.stateUpdate)
               }
               case Failure(err) => {
                 // client is offline and can't take our update_fulfill_htlc,
@@ -313,7 +313,8 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               sendMessage(fail)
                 .onComplete {
                   case Success(_) => {
-                    sendMessage(state.lcssNext.stateUpdate)
+                    if (status == Active)
+                      sendMessage(state.lcssNext.stateUpdate)
                   }
                   case Failure(err) => {
                     // client is offline and can't take our update_fulfill_htlc,
