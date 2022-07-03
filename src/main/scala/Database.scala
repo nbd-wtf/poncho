@@ -25,11 +25,19 @@ case class Data(
 
 case class ChannelData(
     lcss: Option[LastCrossSignedState] = None,
-    localErrors: List[Error] = List.empty,
+    localErrors: List[DetailedError] = List.empty,
     remoteErrors: List[Error] = List.empty,
     proposedOverride: Option[LastCrossSignedState] = None,
     suspended: Boolean = false
 )
+
+case class DetailedError(
+    error: Error,
+    htlc: Option[UpdateAddHtlc],
+    reason: String
+) {
+  override def toString: String = s"${error.description} | $reason: $htlc"
+}
 
 class Database(val path: Path = Paths.get("poncho.db").toAbsolutePath()) {
   import Picklers.given
@@ -89,6 +97,7 @@ object Picklers {
   given ReadWriter[Data] = macroRW
   given ReadWriter[HtlcIdentifier] = macroRW
   given ReadWriter[ChannelData] = macroRW
+  given ReadWriter[DetailedError] = macroRW
 }
 
 object OptionPickler extends upickle.AttributeTagged {

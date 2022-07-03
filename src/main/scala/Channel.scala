@@ -492,7 +492,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
       // if errored, when the client tries to invoke it we return the error
       case _: InvokeHostedChannel if status == Errored =>
-        sendMessage(currentData.localErrors.head)
+        sendMessage(currentData.localErrors.head.error)
 
       // a client was just turned on and is sending this to sync states
       case msg: LastCrossSignedState => {
@@ -501,28 +501,29 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           msg.reverse.verifyRemoteSig(peerId)
 
         if (!isLocalSigOk || !isRemoteSigOk) {
-          val err = if (!isLocalSigOk) {
-            localLogger.warn.msg(
+          val (err, reason) = if (!isLocalSigOk) {
+            (
+              Error(
+                channelId,
+                Error.ERR_HOSTED_WRONG_LOCAL_SIG
+              ),
               "peer sent LastCrossSignedState with a signature that isn't ours"
             )
-            Error(
-              channelId,
-              Error.ERR_HOSTED_WRONG_LOCAL_SIG
-            )
           } else {
-            localLogger.warn.msg(
+            (
+              Error(
+                channelId,
+                Error.ERR_HOSTED_WRONG_REMOTE_SIG
+              ),
               "peer sent LastCrossSignedState with an invalid signature"
             )
-            Error(
-              channelId,
-              Error.ERR_HOSTED_WRONG_REMOTE_SIG
-            )
           }
+          localLogger.warn.msg(reason)
           sendMessage(err)
           master.database.update { data =>
             data
               .modify(_.channels.at(peerId).localErrors)
-              .using(_ :+ err)
+              .using(_ :+ DetailedError(err, None, reason))
           }
         } else if (status == Active) {
           val lcssMostRecent =
@@ -613,7 +614,13 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             master.database.update { data =>
               data
                 .modify(_.channels.at(peerId).localErrors)
-                .using(_ :+ err)
+                .using(
+                  _ :+ DetailedError(
+                    err,
+                    lcssStored.outgoingHtlcs.find(htlc => htlc.id == f.id),
+                    "peer sent UpdateFailHtlc with empty 'reason'"
+                  )
+                )
             }
           }
           case _ =>
@@ -649,7 +656,13 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               master.database.update { data =>
                 data
                   .modify(_.channels.at(peerId).localErrors)
-                  .using(_ :+ err)
+                  .using(
+                    _ :+ DetailedError(
+                      err,
+                      Some(htlc),
+                      "peer sent an htlc that went above some limit"
+                    )
+                  )
               }
             } else if (
               // non-critical failures, just fail the htlc
@@ -672,7 +685,13 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             master.database.update { data =>
               data
                 .modify(_.channels.at(peerId).localErrors)
-                .using(_ :+ err)
+                .using(
+                  _ :+ DetailedError(
+                    err,
+                    Some(htlc),
+                    "peer sent an htlc with a garbled onion"
+                  )
+                )
             }
           }
           case Left(fail: FailureMessage) => {
@@ -689,7 +708,14 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           }
 
           // decide later what to do here (could be a payment directed to us etc)
-          case _ => {}
+          case _ => {
+            scala.concurrent.ExecutionContext.global.execute(() =>
+              gotPaymentResult(
+                htlc.id,
+                Some(Left(None))
+              )
+            )
+          }
         }
       }
 
@@ -721,7 +747,13 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             master.database.update { data =>
               data
                 .modify(_.channels.at(peerId).localErrors)
-                .using(_ :+ err)
+                .using(
+                  _ :+ DetailedError(
+                    err,
+                    None,
+                    "peer sent a wrong state update or one with a broken signature"
+                  )
+                )
             }
           } else {
             // grab state before saving the update
@@ -947,9 +979,13 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             // add a local error here so this channel is marked as "Errored" for future purposes
             .modify(_.channels.at(peerId).localErrors)
             .using(
-              _ :+ Error(
-                channelId,
-                Error.ERR_HOSTED_CLOSED_BY_REMOTE_PEER
+              _ :+ DetailedError(
+                Error(
+                  channelId,
+                  Error.ERR_HOSTED_CLOSED_BY_REMOTE_PEER
+                ),
+                None,
+                "peer sent an error"
               )
             )
         }
@@ -975,6 +1011,21 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         )
         sendMessage(err)
 
+        // store one error for each htlc failed in this manner
+        expiredOutgoingHtlcs.foreach { htlc =>
+          master.database.update { data =>
+            data
+              .modify(_.channels.at(peerId).localErrors)
+              .using(
+                _ :+ DetailedError(
+                  err,
+                  Some(htlc),
+                  "outgoing htlc has expired"
+                )
+              )
+          }
+        }
+
         // we also fail them on their upstream node
         expiredOutgoingHtlcs
           .map(out =>
@@ -984,6 +1035,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           )
           .collect { case Some(htlc) => htlc }
           .foreach { in =>
+            // resolve htlcs with error for peer
             state.provideHtlcResult(
               in.id,
               Some(
@@ -997,10 +1049,6 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               )
             )
 
-            // and saved errors on the channel state
-            master.database.update { data =>
-              data.modify(_.channels.at(peerId).localErrors).using(_ :+ err)
-            }
           }
       }
     }
