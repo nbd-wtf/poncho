@@ -39,19 +39,58 @@ case class DetailedError(
   override def toString: String = s"${error.description} | $reason: $htlc"
 }
 
-class Database(val path: Path = Paths.get("poncho.db").toAbsolutePath()) {
+class Database(val path: Path = Paths.get("poncho").toAbsolutePath()) {
   import Picklers.given
 
-  if (!Files.exists(path)) {
-    path.toFile().getParentFile().mkdirs()
-    Files.createFile(path)
-    Files.write(path, write(Data()).getBytes)
-  }
-  var data = read[Data](path)
+  val channelsDir = path.resolve("channels")
+  val htlcForwardsFile = path.resolve("htlc-forwards.json")
+  val preimagesFile = path.resolve("preimages.json")
 
+  if (!Files.exists(channelsDir)) {
+    channelsDir.toFile().mkdirs()
+  }
+  if (!Files.exists(htlcForwardsFile)) {
+    Files.createFile(htlcForwardsFile)
+    Files.write(htlcForwardsFile, write(Data().htlcForwards.toList).getBytes)
+  }
+  if (!Files.exists(preimagesFile)) {
+    Files.createFile(preimagesFile)
+    Files.write(preimagesFile, write(Data().preimages).getBytes)
+  }
+
+  var data = Data(
+    channels = channelsDir
+      .toFile()
+      .list()
+      .filter(_.matches("[a-f0-9]{64}.json"))
+      .map(f => (ByteVector.fromValidHex(f.take(64)), read[ChannelData](f)))
+      .toMap,
+    htlcForwards =
+      read[List[(HtlcIdentifier, HtlcIdentifier)]](htlcForwardsFile).toMap,
+    preimages = read[Map[ByteVector32, ByteVector32]](preimagesFile)
+  )
+
+  // update will overwrite only the files that changed during the `change` operation
   def update(change: Data => Data) = {
     val newData = change(data)
-    writeToOutputStream(newData, Files.newOutputStream(path))
+
+    newData.channels
+      .filter((key, chandata) =>
+        !data.channels.contains(key) || data.channels(key) != chandata
+      )
+      .foreach { (key, chandata) =>
+        val data = newData.channels(key)
+        val file = channelsDir.resolve(key.toHex ++ ".json")
+        Files.write(file, write(chandata).getBytes)
+      }
+
+    if (newData.htlcForwards != data.htlcForwards) {
+      Files.write(htlcForwardsFile, write(newData.htlcForwards.toList).getBytes)
+    }
+    if (newData.preimages != data.preimages) {
+      Files.write(preimagesFile, write(newData.preimages).getBytes)
+    }
+
     data = newData
   }
 }
