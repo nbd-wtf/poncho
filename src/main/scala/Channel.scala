@@ -19,11 +19,6 @@ import crypto.Crypto
 
 import Utils.OnionParseResult
 
-// -- questions:
-// should we fail all pending incoming htlcs on our actual normal node side whenever we fail the channel (i.e. send an Error message -- or receive an error message?)
-//   answer: no, as they can still be resolve manually.
-//   instead we should fail them whenever the timeout expires on the hosted channel side
-
 type PaymentStatus = Option[Either[Option[PaymentFailure], ByteVector32]]
 
 sealed trait PaymentFailure
