@@ -97,49 +97,50 @@ class ChannelMaster { self =>
       }
   }
 
-  def channelsJSON: ujson.Arr = {
-    val mapHtlc = (htlc: UpdateAddHtlc) =>
+  def channelJSON(chan: (ByteVector, Channel)): ujson.Obj = {
+    val mapHtlc = (htlc: UpdateAddHtlc) => {
       ujson.Obj(
         "id" -> htlc.id.toLong.toInt,
         "amount" -> htlc.amountMsat.toLong.toInt,
         "hash" -> htlc.paymentHash.toHex,
-        "cltv" -> htlc.cltvExpiry.toLong.toInt
+        "cltv" -> htlc.cltvExpiry.toLong.toInt,
+        "released_uncommitted_preimage" -> database.data.preimages
+          .get(htlc.paymentHash)
+          .map(_.toHex)
       )
+    }
 
-    ujson.Arr.from(
-      channels.toList.map((peerId, channel) => {
-        val chandata = channel.currentData
+    val (peerId, channel) = chan
+    val chandata = channel.currentData
 
+    ujson.Obj(
+      "peer_id" -> peerId.toHex,
+      "channel_id" -> Utils.getChannelId(self.node.publicKey, peerId).toHex,
+      "short_channel_id" -> Utils
+        .getShortChannelId(self.node.publicKey, peerId)
+        .toString,
+      "status" -> channel.status.getClass.getSimpleName.toLowerCase,
+      "data" -> channel.currentData.lcss.map(lcss =>
         ujson.Obj(
-          "peer_id" -> peerId.toHex,
-          "channel_id" -> Utils.getChannelId(self.node.publicKey, peerId).toHex,
-          "short_channel_id" -> Utils
-            .getShortChannelId(self.node.publicKey, peerId)
-            .toString,
-          "status" -> channel.status.getClass.getSimpleName.toLowerCase,
-          "data" -> channel.currentData.lcss.map(lcss =>
-            ujson.Obj(
-              "blockday" -> lcss.blockDay.toInt,
-              "local_errors" -> channel.currentData.localErrors
-                .map(dtlerr => ujson.Str(dtlerr.toString)),
-              "remote_errors" -> channel.currentData.localErrors
-                .map(dtlerr => ujson.Str(dtlerr.toString)),
-              "is_host" -> lcss.isHost,
-              "balance" -> ujson.Obj(
-                "total" -> lcss.initHostedChannel.channelCapacityMsat.toLong.toInt,
-                "local" -> lcss.localBalanceMsat.toLong.toInt,
-                "remote" -> lcss.remoteBalanceMsat.toLong.toInt
-              ),
-              "incoming_htlcs" -> ujson.Arr.from(
-                lcss.incomingHtlcs.map(mapHtlc)
-              ),
-              "outgoing_htlcs" -> ujson.Arr.from(
-                lcss.outgoingHtlcs.map(mapHtlc)
-              )
-            )
+          "blockday" -> lcss.blockDay.toInt,
+          "local_errors" -> channel.currentData.localErrors
+            .map(dtlerr => ujson.Str(dtlerr.toString)),
+          "remote_errors" -> channel.currentData.localErrors
+            .map(dtlerr => ujson.Str(dtlerr.toString)),
+          "is_host" -> lcss.isHost,
+          "balance" -> ujson.Obj(
+            "total" -> lcss.initHostedChannel.channelCapacityMsat.toLong.toInt,
+            "local" -> lcss.localBalanceMsat.toLong.toInt,
+            "remote" -> lcss.remoteBalanceMsat.toLong.toInt
+          ),
+          "incoming_htlcs" -> ujson.Arr.from(
+            lcss.incomingHtlcs.map(mapHtlc)
+          ),
+          "outgoing_htlcs" -> ujson.Arr.from(
+            lcss.outgoingHtlcs.map(mapHtlc)
           )
         )
-      })
+      )
     )
   }
 

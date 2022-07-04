@@ -517,7 +517,20 @@ class CLN(master: ChannelMaster) extends NodeInterface {
 
       // custom rpc methods
       case "hc-list" =>
-        reply(master.channelsJSON)
+        reply(master.channels.toList.map(master.channelJSON))
+
+      case "hc-channel" =>
+        (for {
+          peerHex <- data match {
+            case o: ujson.Obj => o.value.get("peerId").flatMap(_.strOpt)
+            case a: ujson.Arr => a.value.headOption.flatMap(_.strOpt)
+            case _            => None
+          }
+          peerId <- ByteVector.fromHex(peerHex)
+          channel <- master.channels.get(peerId)
+        } yield reply(
+          master.channelJSON((peerId, channel))
+        )) getOrElse replyError("couldn't find that channel")
 
       case "hc-override" => {
         val params = data match {
