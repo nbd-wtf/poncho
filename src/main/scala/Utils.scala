@@ -2,7 +2,7 @@ import java.io.ByteArrayInputStream
 import java.nio.ByteOrder
 import scala.scalanative.unsigned._
 import scala.annotation.tailrec
-import scodec.bits.ByteVector
+import scodec.bits.{ByteVector, BitVector}
 
 import crypto.Crypto
 import codecs._
@@ -12,6 +12,12 @@ class PonchoException(s: String) extends java.lang.Exception {
 }
 
 object Utils {
+  def generateFeatureBits(indexes: Set[Int]): String = {
+    var buf = BitVector.fill(indexes.max + 1)(high = false).bytes.bits
+    indexes.foreach { i => buf = buf.set(i) }
+    buf.reverse.bytes.toHex
+  }
+
   @tailrec
   final def isLessThan(a: ByteVector, b: ByteVector): Boolean = {
     if (a.isEmpty && b.isEmpty) false

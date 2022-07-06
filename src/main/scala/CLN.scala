@@ -319,8 +319,9 @@ class CLN(master: ChannelMaster) extends NodeInterface {
             ),
             "notifications" -> ujson.Arr(),
             "featurebits" -> ujson.Obj(
-              // "init" -> 32972 /* hosted_channels */ .toHexString,
-              // "node" -> 32972 /* hosted_channels */ .toHexString
+              "init" -> Utils.generateFeatureBits(Set(32973)),
+              "node" -> Utils.generateFeatureBits(Set(32973)),
+              "channel" -> Utils.generateFeatureBits(Set(32975))
             )
           )
         )
