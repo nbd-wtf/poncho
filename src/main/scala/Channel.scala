@@ -545,6 +545,8 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
       // a client is telling us they are online
       case msg: InvokeHostedChannel if status == Active => {
+        sendMessage(lcssStored)
+
         // investigate the situation of any payments that might be pending
         Timer.timeout(FiniteDuration(3, "seconds")) { () =>
           state.lcssNext.incomingHtlcs.foreach { htlc =>
