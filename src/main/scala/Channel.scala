@@ -550,21 +550,28 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       // a client is telling us they are online
       case msg: InvokeHostedChannel if status == Active => {
         // investigate the situation of any payments that might be pending
-        Timer.timeout(FiniteDuration(5, "seconds")) { () =>
+        Timer.timeout(FiniteDuration(3, "seconds")) { () =>
           state.lcssNext.incomingHtlcs.foreach { htlc =>
-            // try the upstream node
-            master.node
-              .inspectOutgoingPayment(
-                HtlcIdentifier(shortChannelId, htlc.id),
-                htlc.paymentHash
-              )
-              .foreach { result => gotPaymentResult(htlc.id, result) }
-
-          // try cached preimages (if the payment was sent to another hosted peer)
-          master.database.data.preimages
-            .get(htlc.paymentHash)
-            .foreach { preimage =>
-              gotPaymentResult(htlc.id, Some(Right(preimage)))
+            // try cached preimages first
+            master.database.data.preimages.get(htlc.paymentHash) match {
+              case Some(preimage) =>
+                gotPaymentResult(htlc.id, Some(Right(preimage)))
+              case None =>
+                master.database.data.htlcForwards
+                  .get(HtlcIdentifier(shortChannelId, htlc.id)) match {
+                  case Some(HtlcIdentifier(outScid, outId)) =>
+                    // it went to another HC peer, so do nothing, just wait for it to resolve
+                    // (if it had resolved already we would have the resolution on the preimages)
+                    {}
+                  case None =>
+                    // it went to the upstream node, so ask that
+                    master.node
+                      .inspectOutgoingPayment(
+                        HtlcIdentifier(shortChannelId, htlc.id),
+                        htlc.paymentHash
+                      )
+                      .foreach { result => gotPaymentResult(htlc.id, result) }
+                }
             }
           }
         }

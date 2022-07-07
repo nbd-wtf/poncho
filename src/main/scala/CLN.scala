@@ -134,16 +134,22 @@ class CLN(master: ChannelMaster) extends NodeInterface {
       paymentHash: ByteVector32
   ): Future[PaymentStatus] =
     rpc("listsendpays", ujson.Obj("payment_hash" -> paymentHash.toHex))
-      .map(
-        _("payments").arr
+      .map(response =>
+        response("payments").arr
           .filter(_.obj.contains("label"))
           .find(p =>
             Try(
               (identifier.scid.toString, identifier.id.toLong) ==
                 upickle.default.read[Tuple2[String, Long]](p("label").str)
             ).getOrElse(false)
-          )
-          .flatMap(toStatus(_))
+          ) match {
+          case None =>
+            // no outgoing payments found, this means the payment was never attempted
+            Some(Left(None))
+          case Some(matched) =>
+            // we have a match, now translate what the upstream node says about it to our PaymentStatus
+            toStatus(matched)
+        }
       )
 
   private def toStatus(data: ujson.Value): PaymentStatus =
