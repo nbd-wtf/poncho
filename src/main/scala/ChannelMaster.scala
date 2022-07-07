@@ -213,8 +213,8 @@ class ChannelMaster { self =>
           "blockday" -> lcss.blockDay.toInt,
           "local_errors" -> channel.currentData.localErrors
             .map(dtlerr => ujson.Str(dtlerr.toString)),
-          "remote_errors" -> channel.currentData.localErrors
-            .map(dtlerr => ujson.Str(dtlerr.toString)),
+          "remote_errors" -> channel.currentData.remoteErrors
+            .map(err => ujson.Str(err.toString)),
           "is_host" -> lcss.isHost,
           "balance" -> ujson.Obj(
             "total" -> lcss.initHostedChannel.channelCapacityMsat.toLong.toInt,

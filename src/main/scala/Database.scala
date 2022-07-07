@@ -40,7 +40,7 @@ case class DetailedError(
     htlc: Option[UpdateAddHtlc],
     reason: String
 ) {
-  override def toString: String = s"${error.description} | $reason: $htlc"
+  override def toString: String = s"${error.description} | $reason | $htlc"
 }
 
 class Database(val path: Path = Paths.get("poncho").toAbsolutePath()) {
