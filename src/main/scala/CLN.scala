@@ -414,7 +414,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
               case Some((peerId, _)) => {
                 master
                   .getChannel(peerId)
-                  .addHTLC(
+                  .addHtlc(
                     incoming = HtlcIdentifier(sourceChannel, sourceId),
                     incomingAmount = sourceAmount,
                     outgoingAmount = targetAmount,

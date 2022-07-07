@@ -138,7 +138,7 @@ class ChannelMaster { self =>
           targetPeer = self.getChannel(targetPeerId)
           // ~ and send the HTLC to it
           _ = targetPeer
-            .addHTLC(
+            .addHtlc(
               incoming = HtlcIdentifier(
                 Utils.getShortChannelId(self.node.publicKey, sourcePeerId),
                 in.id

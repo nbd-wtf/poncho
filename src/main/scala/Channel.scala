@@ -64,7 +64,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
   // a update_add_htlc we've received from the upstream node
   // (for c-lightning this comes from the "htlc_accepted" hook)
-  def addHTLC(
+  def addHtlc(
       incoming: HtlcIdentifier,
       incomingAmount: MilliSatoshi,
       outgoingAmount: MilliSatoshi,
@@ -878,7 +878,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                         // send it to the corresponding channel actor
                         master
                           .getChannel(targetPeerId)
-                          .addHTLC(
+                          .addHtlc(
                             incoming = HtlcIdentifier(shortChannelId, htlc.id),
                             incomingAmount = htlc.amountMsat,
                             outgoingAmount = payload.amountToForward,

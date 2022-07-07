@@ -83,7 +83,7 @@ object ChannelTests extends TestSuite {
         _ <- waitUntil(fromClient.status == Active)
 
         // a payment comes from the outer universe destined to the hc
-        _ <- fromHost.addHTLC(
+        _ <- fromHost.addHtlc(
           incoming = HtlcIdentifier(ShortChannelId("1x1x1"), 4.toULong),
           incomingAmount = MilliSatoshi(88100000L),
           outgoingAmount = MilliSatoshi(88000000L),
