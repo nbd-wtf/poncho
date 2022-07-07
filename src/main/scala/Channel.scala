@@ -478,7 +478,11 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       case _: InvokeHostedChannel if status == Errored =>
         sendMessage(currentData.localErrors.head.error)
 
-      // a client was just turned on and is sending this to sync states
+      // a client is telling us they are online
+      case msg: InvokeHostedChannel if status == Active =>
+        sendMessage(lcssStored)
+
+      // after we've sent our last_cross_signed_state above, the client replies with theirs
       case msg: LastCrossSignedState => {
         val isLocalSigOk = msg.verifyRemoteSig(master.node.publicKey)
         val isRemoteSigOk =
@@ -540,44 +544,39 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           // all good, send the most recent lcss again and then the channel update
           sendMessage(lcssMostRecent)
           sendMessage(getChannelUpdate)
-        }
-      }
 
-      // a client is telling us they are online
-      case msg: InvokeHostedChannel if status == Active => {
-        sendMessage(lcssStored)
-
-        // investigate the situation of any payments that might be pending
-        Timer.timeout(FiniteDuration(3, "seconds")) { () =>
-          state.lcssNext.incomingHtlcs.foreach { htlc =>
-            // try cached preimages first
-            localLogger.debug
-              .item("in", htlc)
-              .msg("we have one pending incoming htlc")
-            master.database.data.preimages.get(htlc.paymentHash) match {
-              case Some(preimage) =>
-                gotPaymentResult(htlc.id, Some(Right(preimage)))
-              case None =>
-                localLogger.debug.msg("no preimage")
-                master.database.data.htlcForwards
-                  .get(HtlcIdentifier(shortChannelId, htlc.id)) match {
-                  case Some(outgoing @ HtlcIdentifier(outScid, outId)) =>
-                    // it went to another HC peer, so just wait for it to resolve
-                    // (if it had resolved already we would have the resolution on the preimages)
-                    {
-                      localLogger.debug
-                        .item("out", outgoing)
-                        .msg("it went to another hc peer")
-                    }
-                  case None =>
-                    // it went to the upstream node, so ask that
-                    master.node
-                      .inspectOutgoingPayment(
-                        HtlcIdentifier(shortChannelId, htlc.id),
-                        htlc.paymentHash
-                      )
-                      .foreach { result => gotPaymentResult(htlc.id, result) }
-                }
+          // investigate the situation of any payments that might be pending
+          Timer.timeout(FiniteDuration(3, "seconds")) { () =>
+            state.lcssNext.incomingHtlcs.foreach { htlc =>
+              // try cached preimages first
+              localLogger.debug
+                .item("in", htlc)
+                .msg("we have one pending incoming htlc")
+              master.database.data.preimages.get(htlc.paymentHash) match {
+                case Some(preimage) =>
+                  gotPaymentResult(htlc.id, Some(Right(preimage)))
+                case None =>
+                  localLogger.debug.msg("no preimage")
+                  master.database.data.htlcForwards
+                    .get(HtlcIdentifier(shortChannelId, htlc.id)) match {
+                    case Some(outgoing @ HtlcIdentifier(outScid, outId)) =>
+                      // it went to another HC peer, so just wait for it to resolve
+                      // (if it had resolved already we would have the resolution on the preimages)
+                      {
+                        localLogger.debug
+                          .item("out", outgoing)
+                          .msg("it went to another hc peer")
+                      }
+                    case None =>
+                      // it went to the upstream node, so ask that
+                      master.node
+                        .inspectOutgoingPayment(
+                          HtlcIdentifier(shortChannelId, htlc.id),
+                          htlc.paymentHash
+                        )
+                        .foreach { result => gotPaymentResult(htlc.id, result) }
+                  }
+              }
             }
           }
         }
