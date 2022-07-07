@@ -22,7 +22,7 @@ class Attacher(parent: Logger) {
 }
 
 class Logger(
-    items: Items = List.empty,
+    val items: Items = List.empty,
     printer: String => Unit = System.err.println
 ) {
   def debug = new Log(this, Debug)
@@ -50,15 +50,15 @@ class Log(
   }
 
   def msg(text: String): Unit = {
-    val lvl = level.getClass.getSimpleName.toLowerCase
+    val lvl = level.getClass.getSimpleName.toUpperCase()
     val its =
       items
         .map {
-          case (l: String, it: Any) => s"$l=$it"
-          case it                   => s"$it"
+          case (l: String, it: Any) => s"[$l]=$it"
+          case it                   => s"{$it}"
         }
         .mkString(" ")
     val sep = if items.size > 0 then " -- " else ""
-    parent.getPrinter(s"[$lvl] ${text}${sep}${its}")
+    parent.getPrinter(s"$lvl ${text}${sep}${its}")
   }
 }

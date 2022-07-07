@@ -1,6 +1,8 @@
 import java.nio.file.{Files, Path, Paths}
 import scala.collection.immutable.Map
+import scala.concurrent.duration.FiniteDuration
 import scala.scalanative.unsigned._
+import scala.scalanative.loop.Timer
 import scodec.bits.ByteVector
 import upickle.default._
 
@@ -62,8 +64,13 @@ class Database(val path: Path = Paths.get("poncho").toAbsolutePath()) {
     channels = channelsDir
       .toFile()
       .list()
-      .filter(_.matches("[a-f0-9]{64}.json"))
-      .map(f => (ByteVector.fromValidHex(f.take(64)), read[ChannelData](f)))
+      .filter(_.matches("[a-f0-9]{66}.json"))
+      .map(filename =>
+        (
+          ByteVector.fromValidHex(filename.take(66)),
+          read[ChannelData](channelsDir.resolve(filename))
+        )
+      )
       .toMap,
     htlcForwards =
       read[List[(HtlcIdentifier, HtlcIdentifier)]](htlcForwardsFile).toMap,

@@ -7,6 +7,7 @@ import scala.util.{Failure, Success}
 import scala.collection.mutable
 import scodec.bits.ByteVector
 import upickle.default._
+import com.softwaremill.quicklens._
 import scodec.bits.ByteVector
 import scodec.{DecodeResult}
 
@@ -97,6 +98,93 @@ class ChannelMaster { self =>
       }
   }
 
+  def run(isTest: Boolean = false): Unit = {
+    node.main(() => {
+      // wait for this callback so we know the RPC is ready and we can call these things
+      setChainHash()
+      updateCurrentBlock()
+
+      if (!isTest) {
+        Timer.repeat(FiniteDuration(1, "minutes")) { () =>
+          updateCurrentBlock()
+        }
+      }
+
+      // as the node starts c-lightning will reply the htlc_accepted HTLCs on us,
+      // but we must do the same with the hosted-to-hosted HTLCs that are pending manually
+      Timer.timeout(FiniteDuration(10, "seconds")) { () =>
+        for {
+          // ~ for all channels
+          (sourcePeerId, sourceChannelData) <- database.data.channels
+          // ~ get all that have incoming HTLCs in-flight
+          in <- sourceChannelData.lcss
+            .map(_.incomingHtlcs)
+            .getOrElse(List.empty)
+          sourcePeer = self.getChannel(sourcePeerId)
+          // ~ from these find all that are outgoing to other channels using data from our database
+          out <- database.data.htlcForwards.get(
+            HtlcIdentifier(sourcePeer.shortChannelId, in.id)
+          )
+          // ~ parse outgoing data from the onion
+          (scid, amount, cltvExpiry, nextOnion) <- Utils.getOutgoingData(
+            self.node.getPrivateKey(),
+            in
+          )
+          // ~ use that to get the target channel parameters
+          (targetPeerId, targetChannelData) <- database.data.channels.find(
+            (p, _) => Utils.getShortChannelId(self.node.publicKey, p) == scid
+          )
+          // ~ get/instantiate the target channel
+          targetPeer = self.getChannel(targetPeerId)
+          // ~ and send the HTLC to it
+          _ = targetPeer
+            .addHTLC(
+              incoming = HtlcIdentifier(
+                Utils.getShortChannelId(self.node.publicKey, sourcePeerId),
+                in.id
+              ),
+              incomingAmount = in.amountMsat,
+              outgoingAmount = amount,
+              paymentHash = in.paymentHash,
+              cltvExpiry = cltvExpiry,
+              nextOnion = nextOnion
+            )
+            .foreach { status =>
+              sourcePeer.gotPaymentResult(in.id, status)
+            }
+        } yield ()
+      }
+    })
+  }
+
+  def cleanupPreimages(): Unit =
+    database.update { data =>
+      // remove any preimages we were keeping track of but are now committed
+      // we don't care about these preimages anymore since we have the signature of the peer
+      // in the updated state, which is much more powerful
+      data
+        .modify(_.preimages)
+        .using(preimages => {
+          // ~ get the hashes of all payments in-flight accross all hosted channels
+          val inflightHashes = channels
+            .map((_, chan) => chan.currentData.lcss)
+            .collect({ case Some(lcss) => lcss })
+            .flatMap(lcss =>
+              (lcss.incomingHtlcs ++ lcss.outgoingHtlcs).map(_.paymentHash)
+            )
+            .toSet
+
+          // ~ get the hashes we have in our current preimages list that are not relevant
+          //   i.e. are not in the in-flight list from above
+          val irrelevantPreimages =
+            preimages.filterNot((hash, _) => inflightHashes.contains(hash))
+          val irrelevantHashes = irrelevantPreimages.map((hash, _) => hash)
+
+          // ~ delete these as we don't care about them anymore
+          preimages -- irrelevantHashes
+        })
+    }
+
   def channelJSON(chan: (ByteVector, Channel)): ujson.Obj = {
     val mapHtlc = (htlc: UpdateAddHtlc) => {
       ujson.Obj(
@@ -143,53 +231,4 @@ class ChannelMaster { self =>
       )
     )
   }
-
-  def run(isTest: Boolean = false): Unit = {
-    node.main(() => {
-      // wait for this callback so we know the RPC is ready and we can call these things
-      setChainHash()
-      updateCurrentBlock()
-
-      if (!isTest) {
-        Timer.repeat(FiniteDuration(1, "minutes")) { () =>
-          updateCurrentBlock()
-        }
-      }
-
-      // as the node starts c-lightning will reply the htlc_accepted HTLCs on us,
-      // but we must do the same with the hosted-to-hosted HTLCs that are pending manually
-      for {
-        (sourcePeerId, sourceChannelData) <- database.data.channels
-        in <- sourceChannelData.lcss.map(_.incomingHtlcs).getOrElse(List.empty)
-        sourcePeer = self.getChannel(sourcePeerId)
-        (scid, amount, cltvExpiry, nextOnion) <- Utils.getOutgoingData(
-          self.node.getPrivateKey(),
-          in
-        )
-        out <- database.data.htlcForwards.get(
-          HtlcIdentifier(sourcePeer.shortChannelId, in.id)
-        )
-        (targetPeerId, targetChannelData) <- database.data.channels.find(
-          (p, _) => Utils.getShortChannelId(self.node.publicKey, p) == scid
-        )
-        targetPeer = self.getChannel(targetPeerId)
-        _ = targetPeer
-          .addHTLC(
-            incoming = HtlcIdentifier(
-              Utils.getShortChannelId(self.node.publicKey, sourcePeerId),
-              in.id
-            ),
-            incomingAmount = in.amountMsat,
-            outgoingAmount = amount,
-            paymentHash = in.paymentHash,
-            cltvExpiry = cltvExpiry,
-            nextOnion = nextOnion
-          )
-          .foreach { status =>
-            sourcePeer.gotPaymentResult(in.id, status)
-          }
-      } yield ()
-    })
-  }
-
 }

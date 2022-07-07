@@ -72,28 +72,35 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       cltvExpiry: CltvExpiry,
       nextOnion: ByteVector
   ): Future[PaymentStatus] = {
+    System.err.println(s"LOGGER ITEMS: ${logger.items}")
+
     val localLogger =
-      master.logger.attach.item(status).item("hash", paymentHash).logger
+      logger.attach.item(status).item("hash", paymentHash).logger
+    System.err.println(s"LOCALLOGGER ITEMS: ${localLogger.items}")
     localLogger.debug
       .item("incoming", incoming)
       .item("in-amount", incomingAmount)
       .item("out-amount", outgoingAmount)
       .item("cltv", cltvExpiry)
-      .msg("addHTLC")
+      .msg("adding HTLC")
 
     var promise = Promise[PaymentStatus]()
 
-    if (status != Active) {
-      master.log("can't add an HTLC in a channel that isn't active")
+    val preimage = master.database.data.preimages.get(paymentHash)
+    if (preimage.isDefined) {
+      localLogger.warn
+        .item("preimage", preimage.get.toHex)
+        .msg("HTLC was already resolved, and we have the preimage right here")
+      promise.success(Some(Right(preimage.get)))
+    } else if (status != Active) {
+      localLogger.warn.msg("can't add an HTLC in a channel that isn't active")
       promise.success(None)
     } else if (
       state.lcssNext.incomingHtlcs
         .exists(_.paymentHash == paymentHash)
     ) {
       // reject htlc as outgoing if it's already incoming, sanity check
-      master.log(
-        s"${paymentHash} is already incoming, can't add it as outgoing"
-      )
+      localLogger.err.msg("htlc is already incoming, can't add it as outgoing")
       promise.success(None)
     } else if (
       master.database.data.htlcForwards
@@ -101,7 +108,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
     ) {
       // do not add htlc to state if it's already there (otherwise the state will be invalid)
       // this is likely to be hit on reboots as the upstream node will replay pending htlcs on us
-      master.log("won't forward the htlc as it's already there")
+      localLogger.debug.msg("won't forward the htlc as it's already there")
 
       // but we still want to update the callbacks we're keeping track of (because we've rebooted!)
       val htlc = (for {
@@ -140,11 +147,6 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         updated.lcssNext.localBalanceMsat < MilliSatoshi(0L) ||
         updated.lcssNext.remoteBalanceMsat < MilliSatoshi(0L)
       ) {
-        master.log(
-          s"failing ${(htlc.cltvExpiry.blockHeight - master.currentBlock).toInt} < ${} == ${(htlc.cltvExpiry.blockHeight - master.currentBlock).toInt < master.config.cltvExpiryDelta.toInt}; ${incomingAmount - htlc.amountMsat} >= ${requiredFee} == ${(incomingAmount - htlc.amountMsat) >= requiredFee}; ${updated.lcssNext.localBalanceMsat < MilliSatoshi(
-              0L
-            )} ${updated.lcssNext.remoteBalanceMsat < MilliSatoshi(0L)}"
-        )
         promise.success(
           Some(
             Left(
@@ -182,8 +184,8 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               // client is offline and can't take our update_add_htlc,
               // so we fail it on upstream
               // and remove it from the list of uncommitted updates
-              master.log(s"failed to send update_add_htlc to $peerId: $err")
-              promise.success(None)
+              localLogger.warn.item(err).msg("failed to send update_add_htlc")
+              promise.success(Some(Left(None)))
               state = state.removeUncommitedUpdate(upd)
             }
           }
@@ -194,45 +196,38 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       .andThen { case Success(status) =>
         status match {
           case Some(Right(preimage)) =>
-            master.log(
-              s"[add-htlc] $shortChannelId routed ${paymentHash} successfully: $preimage"
-            )
+            localLogger.info
+              .item("preimage", preimage)
+              .msg("routed successfully")
           case Some(Left(Some(FailureOnion(_)))) =>
-            master.log(
-              s"[add-htlc] $shortChannelId received failure onion for ${paymentHash}"
-            )
+            localLogger.info.msg("received failure onion")
           case Some(Left(_)) =>
-            master.log(s"[add-htlc] $shortChannelId failed ${paymentHash}")
+            localLogger.debug.msg("received generic failure")
           case None =>
-            master.log(
-              s"[add-htlc] $shortChannelId didn't handle ${paymentHash}"
-            )
+            localLogger.warn.msg("didn't handle")
         }
       }
   }
 
-  def gotPaymentResult(
-      htlcId: ULong,
-      status: PaymentStatus
-  ): Unit = {
+  def gotPaymentResult(htlcId: ULong, res: PaymentStatus): Unit = {
     val localLogger = logger.attach
       .item(status)
       .item("htlc", htlcId)
-      .item("payment", status)
+      .item("result", res)
       .logger
 
     localLogger.debug.item(state).msg("gotPaymentResult")
 
-    if (status.isEmpty) {
+    if (res.isEmpty) {
       // payment still pending
     } else if (status != Active && status != Errored && status != Suspended) {
       // these are the 3 states in which we will still accept results, otherwise do nothing
-      localLogger.warn
-        .msg(
-          "got a payment result, but we are not in an acceptable channel state"
-        )
+      // (the other states are effectively states in which no payment could have ever been relayed)
+      localLogger.err.msg(
+        "not in an acceptable status to accept payment result"
+      )
     } else
-      status.get match {
+      res.get match {
         case Right(preimage) => {
           // since this comes from the upstream node it is assumed the preimage is valid
           val fulfill = UpdateFulfillHtlc(
@@ -576,8 +571,6 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         lcssStored.outgoingHtlcs.find(_.id == msg.id) match {
           case Some(htlc)
               if Crypto.sha256(msg.paymentPreimage) == htlc.paymentHash => {
-            master.log(s"resolving htlc ${htlc.paymentHash}")
-
             // call our htlc callback so our upstream node is notified
             // we do this to guarantee our money as soon as possible
             state.provideHtlcResult(
@@ -717,19 +710,21 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
       // after an HTLC has been sent or received or failed or fulfilled and we've updated our local state,
       // this should be the confirmation that the other side has also updated it correctly
-      // account for situations in which peer is behind us (ignore?) and for when we're behind (keep track of the forward state?)
+      // question: account for situations in which peer is behind us (ignore?) and for when we're behind?
+      //   actually no, these mismatched states will never happen because TCP guarantees the order of messages
+      //   -- we must handle them synchronously!
+      //   -- if any concurrency is to be added it must be between channels, not inside the same channel.
       case msg: StateUpdate
           if status == Active && !state.uncommittedUpdates.isEmpty => {
         // this will only be triggered if there are uncommitted updates
         // otherwise it will be ignored so the client is free to spam us with
         // valid and up-to-date state_updates and we won't even notice
-        master.log(s"updating our local state after a transition")
+        localLogger.debug.msg("updating our local state after a transition")
         if (
           msg.totalUpdates == state.lcssNext.totalUpdates &&
           msg.blockDay == state.lcssNext.blockDay
         ) {
-          master.log("we and the client are now even")
-
+          localLogger.debug.msg("we and the client are now even")
           // verify signature
           val lcssNext =
             state.lcssNext.copy(remoteSigOfLocal = msg.localSigOfRemoteLCSS)
@@ -756,7 +751,18 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             val lcssPrev = lcssStored
 
             // update new last_cross_signed_state on the database
-            master.log(s"saving on db: $lcssNext")
+            System.err.println(s"saving on db: $lcssNext")
+            System.err.println(
+              s"will remove these htlcForwards entries: ${master.database.data.htlcForwards.values
+                  .filter({ case HtlcIdentifier(scid, _) =>
+                    scid == shortChannelId
+                  })
+                  .filter({ case HtlcIdentifier(_, id) =>
+                    lcssPrev.incomingHtlcs
+                      .filterNot(htlc => lcssNext.incomingHtlcs.contains(htlc))
+                      .exists(htlc => htlc.id == id)
+                  })}"
+            )
             master.database.update { data =>
               data
                 .modify(_.channels.at(peerId))
@@ -766,40 +772,29 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                 // (htlcs that were relayed from this channel to elsewhere will be handled on their side)
                 .modify(_.htlcForwards)
                 .using(fwd =>
-                  fwd -- fwd.values // here we grab just the values, i.e. just the "to" part of the mapping
+                  fwd -- fwd.values // ~ here we grab just the values, i.e. just the "to" part of the mapping
                     .filter({ case HtlcIdentifier(scid, _) =>
-                      scid == shortChannelId // then we just leave the ones relayed to this channel
+                      scid == shortChannelId // ~ then we just leave the ones relayed to this channel
                     })
                     .filter({ case HtlcIdentifier(_, id) =>
-                      lcssPrev.incomingHtlcs // then we just leave the ones that were in the previous lcss
-                        .filterNot(htlc => // but are not in the next (which was just saved)
+                      lcssPrev.incomingHtlcs // ~ then we just leave the ones that were in the previous lcss
+                        .filterNot(htlc => // ~ but are not in the next (which was just saved)
                           lcssNext.incomingHtlcs.contains(htlc)
                         )
                         .exists(htlc =>
                           htlc.id == id
-                        ) // from these we only leave one if it was on the mapping
+                        ) // ~ from these we only leave one if it was on the mapping
                     })
                   // for all effects this will remove from `fwd` all entries that had the value
                   // equal to an HtlcIdentifier that corresponding to this channel that was inflight
                   // before but isn't anymore
                 )
-                //
-                // and remove any preimages we were keeping track of but are now committed
-                // we don't care about these preimages anymore since we have the signature of the peer
-                // in the updated state, which is much more powerful
-                .modify(_.preimages)
-                .using(preimages =>
-                  preimages -- // removing the following list of payment hashes:
-                    ((lcssPrev.incomingHtlcs // all incoming update_add_htlcs that were in the previous lcss
-                      .filterNot(htlc => // but are not in the next lcss (which was just saved)
-                        lcssNext.incomingHtlcs.contains(htlc)
-                      )) ++ (lcssPrev.outgoingHtlcs
-                      .filterNot(htlc => // idem for outgoing
-                        lcssNext.outgoingHtlcs.contains(htlc)
-                      )))
-                      .map(_.paymentHash) // grabbing the payment hash
-                )
             }
+
+            // time to do some cleaning up -- non-priority
+            scala.concurrent.ExecutionContext.global.execute(() =>
+              master.cleanupPreimages()
+            )
 
             // act on each pending message, relaying them as necessary
             state.uncommittedUpdates.foreach {
@@ -835,8 +830,11 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                 ) match {
                   case Left(fail) => {
                     // this should never happen
-                    localLogger.warn.msg(
-                      "upstream node has relayed a broken update_add_htlc to us"
+                    localLogger.err.msg(
+                      "this should never happen because we had parsed the onion already"
+                    )
+                    scala.concurrent.ExecutionContext.global.execute(() =>
+                      gotPaymentResult(htlc.id, Some(Left(None)))
                     )
                   }
                   case Right(
@@ -855,6 +853,10 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                     localLogger.warn
                       .item("payload", payload)
                       .msg("we're receiving a payment from the client?")
+
+                    scala.concurrent.ExecutionContext.global.execute(() =>
+                      gotPaymentResult(htlc.id, Some(Left(None)))
+                    )
                   }
                   case Right(
                         OnionParseResult(
@@ -884,9 +886,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                             cltvExpiry = payload.outgoingCltv,
                             nextOnion = nextOnion
                           )
-                          .foreach { status =>
-                            gotPaymentResult(htlc.id, status)
-                          }
+                          .foreach { res => gotPaymentResult(htlc.id, res) }
                       }
                       case None =>
                         // it is a normal channel on the upstream node
