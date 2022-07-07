@@ -25,7 +25,12 @@ sealed trait PaymentFailure
 case class FailureOnion(onion: ByteVector) extends PaymentFailure
 case class NormalFailureMessage(message: FailureMessage) extends PaymentFailure
 
-case class FromLocal(upd: ChannelModifier)
+case class FromLocal(
+    upd: ChannelModifier,
+
+    // this exists to match the htlc incoming and outgoing at the .htlcForwards table
+    relatedIncoming: Option[HtlcIdentifier]
+)
 case class FromRemote(upd: ChannelModifier)
 
 trait ChannelStatus
@@ -131,7 +136,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       )
 
       // prepare modification to new lcss to be our next
-      val upd = FromLocal(htlc)
+      val upd = FromLocal(htlc, Some(incoming))
       val updated = state.addUncommittedUpdate(upd)
 
       // check a bunch of things, if any fail return a temporary_channel_failure
@@ -157,15 +162,6 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         )
       } else {
         // will send update_add_htlc to hosted client
-        //
-        // but first we update the database with the mapping between received and sent htlcs
-        master.database.update { data =>
-          data
-            .modify(_.htlcForwards)
-            .using(
-              _ + (incoming -> HtlcIdentifier(shortChannelId, htlc.id))
-            )
-        }
         // and we update the state to include this uncommitted htlc
         // and add to the callbacks we're keeping track of for the upstream node
         state =
@@ -234,7 +230,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           )
 
           // migrate our state to one containing this uncommitted update
-          val upd = FromLocal(fulfill)
+          val upd = FromLocal(fulfill, None)
           val updated = state.addUncommittedUpdate(upd)
           state = updated
 
@@ -294,7 +290,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           } yield fail)
             .foreach { fail =>
               // prepare updated state
-              val upd = FromLocal(fail)
+              val upd = FromLocal(fail, None)
               state = state.addUncommittedUpdate(upd)
 
               sendMessage(fail)
@@ -553,16 +549,24 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         Timer.timeout(FiniteDuration(3, "seconds")) { () =>
           state.lcssNext.incomingHtlcs.foreach { htlc =>
             // try cached preimages first
+            localLogger.debug
+              .item("in", htlc)
+              .msg("we have one pending incoming htlc")
             master.database.data.preimages.get(htlc.paymentHash) match {
               case Some(preimage) =>
                 gotPaymentResult(htlc.id, Some(Right(preimage)))
               case None =>
+                localLogger.debug.msg("no preimage")
                 master.database.data.htlcForwards
                   .get(HtlcIdentifier(shortChannelId, htlc.id)) match {
-                  case Some(HtlcIdentifier(outScid, outId)) =>
-                    // it went to another HC peer, so do nothing, just wait for it to resolve
+                  case Some(outgoing @ HtlcIdentifier(outScid, outId)) =>
+                    // it went to another HC peer, so just wait for it to resolve
                     // (if it had resolved already we would have the resolution on the preimages)
-                    {}
+                    {
+                      localLogger.debug
+                        .item("out", outgoing)
+                        .msg("it went to another hc peer")
+                    }
                   case None =>
                     // it went to the upstream node, so ask that
                     master.node
@@ -835,7 +839,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                 // we've already relayed this to the upstream node eagerly, so do nothing
               }
               case FromRemote(htlc: UpdateAddHtlc) => {
-                // send a payment through the upstream node
+                // send a payment through the upstream node -- or to another hosted channel
                 Utils.parseClientOnion(
                   master.node.getPrivateKey(),
                   htlc
@@ -919,9 +923,20 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                   }
                 }
               }
-              case FromLocal(_) => {
-                // we do not take any action reactively with updates we originated
-                // since we have sent them already before sending our state updates
+              case FromLocal(htlc: UpdateAddHtlc, Some(in: HtlcIdentifier)) => {
+                // here we update the database with the mapping between received and sent htlcs
+                // (now that we are sure the peer has accepted our update_add_htlc)
+                master.database.update { data =>
+                  data
+                    .modify(_.htlcForwards)
+                    .using(
+                      _ + (in -> HtlcIdentifier(shortChannelId, htlc.id))
+                    )
+                }
+              }
+              case _: FromLocal => {
+                // we mostly (except for the action above) do not take any action reactively with
+                // updates we originated since we have sent them already before sending our state updates
               }
             }
 
@@ -1258,7 +1273,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                 case None => lcss
               }
             }
-            case FromLocal(add: UpdateAddHtlc) => {
+            case FromLocal(add: UpdateAddHtlc, _) => {
               lcss.copy(
                 localBalanceMsat = lcss.localBalanceMsat - add.amountMsat,
                 localUpdates = lcss.localUpdates + 1,
@@ -1266,7 +1281,8 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               )
             }
             case FromLocal(
-                  fail: (UpdateFailHtlc | UpdateFailMalformedHtlc)
+                  fail: (UpdateFailHtlc | UpdateFailMalformedHtlc),
+                  _
                 ) => {
               val htlcId = fail match {
                 case x: UpdateFailHtlc          => x.id;
@@ -1285,7 +1301,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                 case None => lcss
               }
             }
-            case FromLocal(fulfill: UpdateFulfillHtlc) => {
+            case FromLocal(fulfill: UpdateFulfillHtlc, _) => {
               lcss.incomingHtlcs.find(_.id == fulfill.id) match {
                 case Some(htlc) => {
                   lcss.copy(
