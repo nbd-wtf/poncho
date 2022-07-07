@@ -555,12 +555,20 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         // investigate the situation of any payments that might be pending
         Timer.timeout(FiniteDuration(5, "seconds")) { () =>
           state.lcssNext.incomingHtlcs.foreach { htlc =>
+            // try the upstream node
             master.node
               .inspectOutgoingPayment(
                 HtlcIdentifier(shortChannelId, htlc.id),
                 htlc.paymentHash
               )
               .foreach { result => gotPaymentResult(htlc.id, result) }
+
+          // try cached preimages (if the payment was sent to another hosted peer)
+          master.database.data.preimages
+            .get(htlc.paymentHash)
+            .foreach { preimage =>
+              gotPaymentResult(htlc.id, Some(Right(preimage)))
+            }
           }
         }
       }
