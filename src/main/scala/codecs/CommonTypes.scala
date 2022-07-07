@@ -51,7 +51,7 @@ case class MilliSatoshi(private val underlying: Long)
 
   def truncateToSatoshi: Satoshi = Satoshi(underlying / 1000)
   def toLong: Long = underlying
-  override def toString = s"$underlying msat"
+  override def toString = s"${underlying}msat"
 }
 
 case class CltvExpiry(private val underlying: BlockHeight)
@@ -79,7 +79,7 @@ case class ByteVector32(bytes: ByteVector) {
   require(bytes.size == 32, s"size must be 32 bytes, is ${bytes.size} bytes")
   def reverse: ByteVector32 = ByteVector32(bytes.reverse)
   def toHex = bytes.toHex
-  override def toString: String = bytes.toHex
+  override def toString: String = s"${bytes.toHex.take(5)}…"
 }
 
 object ByteVector32 {

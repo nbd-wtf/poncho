@@ -9,7 +9,9 @@ import upickle.default._
 import crypto.Crypto
 import codecs._
 
-case class HtlcIdentifier(scid: ShortChannelId, id: ULong)
+case class HtlcIdentifier(scid: ShortChannelId, id: ULong) {
+  override def toString(): String = s"HtlcIdentifier($id@$scid)"
+}
 
 case class Data(
     channels: Map[ByteVector, ChannelData] = Map.empty,

@@ -523,6 +523,8 @@ class CLN(master: ChannelMaster) extends NodeInterface {
         val id = data("id").str
         val address = data("address")("address").str
         master.log(s"$id connected: $address")
+        // TODO: send InvokeHostedChannel to all hosted peers from which we are clients
+        //       and related flows -- for example sending LastCrossSignedState etc
       }
       case "disconnect" => {
         val id = data("id").str

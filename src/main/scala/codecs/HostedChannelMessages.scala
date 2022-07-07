@@ -27,6 +27,7 @@ case class InvokeHostedChannel(
     secret: ByteVector = ByteVector.empty
 ) extends HostedClientMessage {
   val finalSecret: ByteVector = secret.take(128)
+  override def toString(): String = s"InvokeHostedChannel()"
 }
 
 case class InitHostedChannel(
@@ -36,7 +37,10 @@ case class InitHostedChannel(
     channelCapacityMsat: MilliSatoshi,
     initialClientBalanceMsat: MilliSatoshi,
     features: List[Int] = Nil
-) extends HostedServerMessage
+) extends HostedServerMessage {
+  override def toString(): String =
+    s"InitHostedChannel(${channelCapacityMsat})"
+}
 
 case class HostedChannelBranding(
     rgbColor: Color,
@@ -59,6 +63,9 @@ case class LastCrossSignedState(
     localSigOfRemote: ByteVector64
 ) extends HostedServerMessage
     with HostedClientMessage {
+  override def toString(): String =
+    s"LastCrossSignedState($blockDay, balances=${localBalanceMsat}/${remoteBalanceMsat}, updates=$localUpdates/$remoteUpdates, incomingHtlcs=$incomingHtlcs, outgoingHtlcs=$outgoingHtlcs)"
+
   def totalUpdates: Long = localUpdates + remoteUpdates
 
   lazy val reverse: LastCrossSignedState =
@@ -145,6 +152,8 @@ case class StateUpdate(
 ) extends HostedServerMessage
     with HostedClientMessage {
   def totalUpdates: Long = localUpdates + remoteUpdates
+  override def toString(): String =
+    s"StateUpdate($blockDay, updates=$localUpdates/$remoteUpdates)"
 }
 
 case class StateOverride(
@@ -270,7 +279,10 @@ case class UpdateAddHtlc(
     tlvStream: TlvStream[UpdateAddHtlcTlv] = TlvStream.empty
 ) extends HostedClientMessage
     with HostedServerMessage
-    with ChannelModifier
+    with ChannelModifier {
+  override def toString(): String =
+    s"UpdateAddHtlc($id@${channelId.toHex.take(5)}, hash=${paymentHash}, ${amountMsat} until ${cltvExpiry.toLong})"
+}
 
 case class UpdateFulfillHtlc(
     channelId: ByteVector32,
@@ -279,7 +291,10 @@ case class UpdateFulfillHtlc(
     tlvStream: TlvStream[UpdateFulfillHtlcTlv] = TlvStream.empty
 ) extends HostedClientMessage
     with HostedServerMessage
-    with ChannelModifier
+    with ChannelModifier {
+  override def toString(): String =
+    s"UpdateFulfillHtlc($$id@${channelId.toHex.take(5)})"
+}
 
 case class UpdateFailHtlc(
     channelId: ByteVector32,
@@ -288,7 +303,10 @@ case class UpdateFailHtlc(
     tlvStream: TlvStream[UpdateFailHtlcTlv] = TlvStream.empty
 ) extends HostedClientMessage
     with HostedServerMessage
-    with ChannelModifier
+    with ChannelModifier {
+  override def toString(): String =
+    s"UpdateFailHtlc($$id@${channelId.toHex.take(5)})"
+}
 
 case class UpdateFailMalformedHtlc(
     channelId: ByteVector32,
@@ -298,7 +316,10 @@ case class UpdateFailMalformedHtlc(
     tlvStream: TlvStream[UpdateFailMalformedHtlcTlv] = TlvStream.empty
 ) extends HostedClientMessage
     with HostedServerMessage
-    with ChannelModifier
+    with ChannelModifier {
+  override def toString(): String =
+    s"UpdateFailMalformedHtlc($$id@${channelId.toHex.take(5)})"
+}
 
 case class ChannelAnnouncement(
     nodeSignature1: ByteVector64,

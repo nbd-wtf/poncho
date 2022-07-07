@@ -60,7 +60,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
     else if currentData.suspended then Suspended
     else Active
 
-  val logger = master.logger.attach.item("peer", peerId.toHex).logger
+  val logger = master.logger.attach.item("peer", peerId.toHex.take(7)).logger
 
   def sendMessage(
       msg: HostedClientMessage | HostedServerMessage
@@ -83,7 +83,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       .item("incoming", incoming)
       .item("in-amount", incomingAmount)
       .item("out-amount", outgoingAmount)
-      .item("cltv", cltvExpiry)
+      .item("cltv", cltvExpiry.toLong)
       .msg("adding HTLC")
 
     var promise = Promise[PaymentStatus]()
@@ -1320,14 +1320,15 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
     override def toString: String = {
       val printable = status match {
-        case Opening    => s"(${openingRefundScriptPubKey.get.toHex})"
-        case Active     => s"($lcssStored, $htlcResults, $uncommittedUpdates)"
+        case Opening => s"(${openingRefundScriptPubKey.get.toHex})"
+        case Active =>
+          s"(lcss=$lcssStored, expecting=$htlcResults, uncommitted=$uncommittedUpdates)"
         case Overriding => s"(${currentData.proposedOverride.get})"
         case Errored    => s"(${currentData.localErrors})"
         case _          => ""
       }
 
-      s"Channel[${peerId.toHex}]${status.getClass.getSimpleName}$printable"
+      s"Channel[${peerId.toHex.take(7)}]${status.getClass.getSimpleName}$printable"
     }
   }
 }

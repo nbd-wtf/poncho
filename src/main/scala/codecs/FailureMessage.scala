@@ -18,6 +18,8 @@ sealed trait FailureMessage {
     failureMessageCodec.encode(this).flatMap(uint16.decode).require.value
 
   def codeHex: String = ByteVector(scala.math.BigInt(code).toByteArray).toHex
+
+  override def toString(): String = message
 }
 sealed trait BadOnion extends FailureMessage { def onionHash: ByteVector32 }
 sealed trait Perm extends FailureMessage
