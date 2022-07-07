@@ -172,7 +172,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             case Success(_) =>
               // success here means the client did get our update_add_htlc,
               // so send our signed state_update
-              sendMessage(updated.lcssNext.stateUpdate)
+              sendMessage(updated.lcssNext.stateUpdate(master.node.privateKey))
             case Failure(err) => {
               // client is offline and can't take our update_add_htlc,
               // so we fail it on upstream
@@ -209,7 +209,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       .item("result", res)
       .logger
 
-    localLogger.debug.item(state).msg("gotPaymentResult")
+    localLogger.debug.item(state).msg("got payment result")
 
     if (res.isEmpty) {
       // payment still pending
@@ -245,7 +245,10 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           sendMessage(fulfill)
             .onComplete {
               case Success(_) => {
-                if (status == Active) sendMessage(updated.lcssNext.stateUpdate)
+                if (status == Active)
+                  sendMessage(
+                    updated.lcssNext.stateUpdate(master.node.privateKey)
+                  )
               }
               case Failure(err) => {
                 // client is offline and can't take our update_fulfill_htlc,
@@ -262,7 +265,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           (for {
             htlc <- state.lcssNext.incomingHtlcs.find(_.id == htlcId)
             OnionParseResult(packet, _, sharedSecret) <- Utils
-              .parseClientOnion(master.node.getPrivateKey(), htlc)
+              .parseClientOnion(master.node.privateKey, htlc)
               .toOption
             fail = failure match {
               case Some(NormalFailureMessage(bo: BadOnion)) =>
@@ -297,7 +300,9 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                 .onComplete {
                   case Success(_) => {
                     if (status == Active)
-                      sendMessage(state.lcssNext.stateUpdate)
+                      sendMessage(
+                        state.lcssNext.stateUpdate(master.node.privateKey)
+                      )
                   }
                   case Failure(err) => {
                     // client is offline and can't take our update_fulfill_htlc,
@@ -322,7 +327,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
     localLogger.debug
       .item("state", state)
       .item("message", message)
-      .msg("gotPeerMessage")
+      .msg("  <:: got peer message")
 
     message match {
       // someone wants a new hosted channel from us
@@ -381,7 +386,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           localSigOfRemote = ByteVector64.Zeroes,
           remoteSigOfLocal = msg.localSigOfRemoteLCSS
         )
-          .withLocalSigOfRemote(master.node.getPrivateKey())
+          .withLocalSigOfRemote(master.node.privateKey)
 
         // step out of the "opening" state
         state = state.copy(openingRefundScriptPubKey = None)
@@ -405,7 +410,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           }
 
           // send our signed state update
-          sendMessage(lcssInitial.stateUpdate)
+          sendMessage(lcssInitial.stateUpdate(master.node.privateKey))
 
           // send a channel update
           sendMessage(getChannelUpdate)
@@ -432,7 +437,8 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           outgoingHtlcs = List.empty,
           localSigOfRemote = ByteVector64.Zeroes,
           remoteSigOfLocal = ByteVector64.Zeroes
-        ).withLocalSigOfRemote(master.node.getPrivateKey())
+        )
+          .withLocalSigOfRemote(master.node.privateKey)
         state = state.copy(invoking = Some(lcss))
 
         sendMessage(
@@ -641,7 +647,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
         // check if fee and cltv delta etc are correct, otherwise return a failure
         Utils
-          .parseClientOnion(master.node.getPrivateKey(), htlc)
+          .parseClientOnion(master.node.privateKey, htlc)
           .map(_.packet) match {
           case Right(packet: PaymentOnion.ChannelRelayPayload) => {
             if (
@@ -738,10 +744,13 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         // valid and up-to-date state_updates and we won't even notice
         localLogger.debug.msg("updating our local state after a transition")
         if (
-          msg.totalUpdates == state.lcssNext.totalUpdates &&
+          msg.remoteUpdates == state.lcssNext.localUpdates &&
+          msg.localUpdates == state.lcssNext.remoteUpdates &&
           msg.blockDay == state.lcssNext.blockDay
         ) {
-          localLogger.debug.msg("we and the client are now even")
+          localLogger.debug
+            .item("total-updates", state.lcssNext.totalUpdates)
+            .msg("we and the client are now even")
           // verify signature
           val lcssNext =
             state.lcssNext.copy(remoteSigOfLocal = msg.localSigOfRemoteLCSS)
@@ -842,7 +851,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               case FromRemote(htlc: UpdateAddHtlc) => {
                 // send a payment through the upstream node -- or to another hosted channel
                 Utils.parseClientOnion(
-                  master.node.getPrivateKey(),
+                  master.node.privateKey,
                   htlc
                 ) match {
                   case Left(fail) => {
@@ -937,12 +946,12 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               }
               case _: FromLocal => {
                 // we mostly (except for the action above) do not take any action reactively with
-                // updates we originated since we have sent them already before sending our state updates
+                // updates we originated since we have sent them already before sending our state update
               }
             }
 
             // send our state update
-            sendMessage(lcssNext.stateUpdate)
+            sendMessage(lcssNext.stateUpdate(master.node.privateKey))
 
             // update this channel FSM state to the new lcss
             // plus clean up htlcResult promises that were already fulfilled
@@ -975,7 +984,9 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         ) {
           // it seems that the peer has agreed to our override proposal
           val lcss = currentData.proposedOverride.get
+            .withLocalSigOfRemote(master.node.privateKey)
             .copy(remoteSigOfLocal = msg.localSigOfRemoteLCSS)
+
           if (lcss.verifyRemoteSig(peerId)) {
             // update state on the database
             master.database.update { data =>
@@ -1132,7 +1143,8 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               outgoingHtlcs = List.empty,
               localUpdates = lcssStored.localUpdates + 1,
               remoteUpdates = lcssStored.remoteUpdates + 1,
-              remoteSigOfLocal = ByteVector64.Zeroes
+              remoteSigOfLocal = ByteVector64.Zeroes,
+              localSigOfRemote = ByteVector64.Zeroes
             )
         )
         .copy(
@@ -1141,7 +1153,6 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             lcssStored.initHostedChannel.channelCapacityMsat - newLocalBalance,
           blockDay = master.currentBlockDay
         )
-        .withLocalSigOfRemote(master.node.getPrivateKey())
 
       master.database.update { data =>
         data
@@ -1149,7 +1160,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           .setTo(Some(lcssOverride))
       }
 
-      sendMessage(lcssOverride.stateOverride)
+      sendMessage(lcssOverride.stateOverride(master.node.privateKey))
         .map((v: ujson.Value) => v("status").str)
     }
   }
@@ -1183,7 +1194,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       )
     )
 
-    val sig = Crypto.sign(witness, master.node.getPrivateKey())
+    val sig = Crypto.sign(witness, master.node.privateKey)
     ChannelUpdate(
       signature = sig,
       chainHash = master.chainHash,
@@ -1225,7 +1236,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         .foreach(_.success(result))
 
     // calculates what will be our next state once we commit these uncommitted updates
-    lazy val lcssNext: LastCrossSignedState = {
+    def lcssNext: LastCrossSignedState = {
       val base = lcssStored
         .copy(
           blockDay = master.currentBlockDay,
@@ -1316,7 +1327,6 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             }
           }
         )
-        .withLocalSigOfRemote(master.node.getPrivateKey())
     }
 
     override def toString: String = {

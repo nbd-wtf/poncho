@@ -89,7 +89,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
     )
   }
 
-  def getPrivateKey(): ByteVector32 = {
+  lazy val privateKey: ByteVector32 = {
     val salt = Array[UByte](0.toByte.toUByte)
     val info = "nodeid".getBytes().map(_.toUByte)
     val secret = Files.readAllBytes(hsmSecret).map(_.toUByte)
@@ -100,7 +100,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
 
   lazy val publicKey = ByteVector(
     Keys
-      .loadPrivateKey(getPrivateKey().bytes.toArray.map(_.toUByte))
+      .loadPrivateKey(privateKey.bytes.toArray.map(_.toUByte))
       .toOption
       .get
       .publicKey()

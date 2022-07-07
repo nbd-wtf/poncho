@@ -127,20 +127,21 @@ case class LastCrossSignedState(
     Crypto.verifySignature(hostedSigHash, remoteSigOfLocal, pubKey)
 
   def withLocalSigOfRemote(priv: ByteVector32): LastCrossSignedState = {
-    val localSignature = Crypto.sign(reverse.hostedSigHash, priv)
-    copy(localSigOfRemote = localSignature)
+    copy(localSigOfRemote = signRemote(priv))
   }
 
-  def stateUpdate: StateUpdate =
-    StateUpdate(blockDay, localUpdates, remoteUpdates, localSigOfRemote)
+  def signRemote(priv: ByteVector32) = Crypto.sign(reverse.hostedSigHash, priv)
 
-  def stateOverride: StateOverride =
+  def stateUpdate(priv: ByteVector32): StateUpdate =
+    StateUpdate(blockDay, localUpdates, remoteUpdates, signRemote(priv))
+
+  def stateOverride(priv: ByteVector32): StateOverride =
     StateOverride(
       blockDay,
       localBalanceMsat,
       localUpdates,
       remoteUpdates,
-      localSigOfRemote
+      signRemote(priv)
     )
 }
 

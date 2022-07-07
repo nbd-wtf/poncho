@@ -11,7 +11,7 @@ import codecs.HostedChannelCodecs._
 import codecs._
 
 trait NodeInterface {
-  def getPrivateKey(): ByteVector32
+  def privateKey: ByteVector32
   def publicKey: ByteVector
 
   def inspectOutgoingPayment(

@@ -127,7 +127,7 @@ class ChannelMaster { self =>
           )
           // ~ parse outgoing data from the onion
           (scid, amount, cltvExpiry, nextOnion) <- Utils.getOutgoingData(
-            self.node.getPrivateKey(),
+            self.node.privateKey,
             in
           )
           // ~ use that to get the target channel parameters
