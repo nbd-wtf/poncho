@@ -11,7 +11,7 @@ import scala.util.{Failure, Success}
 import secp256k1.Keys
 import sha256.Hkdf
 import ujson._
-import scodec.bits.ByteVector
+import scodec.bits.{ByteVector, BitVector}
 import scodec.codecs.uint16
 
 import unixsocket.UnixSocket
@@ -20,6 +20,8 @@ import codecs._
 import secp256k1.Secp256k1
 
 class CLN(master: ChannelMaster) extends NodeInterface {
+  import Picklers.given
+
   private var initCallback = () => {}
   private var rpcAddr: String = ""
   private var hsmSecret: Path = Paths.get("")
@@ -308,6 +310,11 @@ class CLN(master: ChannelMaster) extends NodeInterface {
             ),
             "rpcmethods" -> ujson.Arr(
               ujson.Obj(
+                "name" -> "parse-lcss",
+                "usage" -> "last_cross_signed_state_hex",
+                "description" -> "Parse a hex representation of a last_cross_signed_state as provided by a mobile client."
+              ),
+              ujson.Obj(
                 "name" -> "hc-list",
                 "usage" -> "",
                 "description" -> "List all your hosted channels."
@@ -523,6 +530,27 @@ class CLN(master: ChannelMaster) extends NodeInterface {
       }
 
       // custom rpc methods
+      case "parse-lcss" => {
+        val decoded = for {
+          lcssHex <- data match {
+            case o: ujson.Obj =>
+              o.value.get("last_cross_signed_state_hex").flatMap(_.strOpt)
+            case a: ujson.Arr => a.value.headOption.flatMap(_.strOpt)
+            case _            => None
+          }
+          lcssBits <- BitVector.fromHex(lcssHex)
+          decoded <- lastCrossSignedStateCodec.decode(lcssBits).toOption
+        } yield decoded.value
+
+        decoded match {
+          case Some(lcss) =>
+            upickle.default
+              .write(lcss)
+              .pipe(reply(_))
+          case None => replyError("failed to decode last_cross_signed_state")
+        }
+      }
+
       case "hc-list" =>
         reply(master.channels.toList.map(master.channelJSON))
 
