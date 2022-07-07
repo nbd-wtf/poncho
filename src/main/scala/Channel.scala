@@ -1090,7 +1090,12 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
   // proposing to override a channel state, as a host, to the hosted client peer
   def proposeOverride(newLocalBalance: MilliSatoshi): Future[String] = {
-    if (status != Errored || status != Overriding) {
+    logger.debug
+      .item(status)
+      .item("new-local-balance", newLocalBalance)
+      .msg("proposing override")
+
+    if (status != Errored && status != Overriding) {
       Future.failed(
         throw new Exception(
           "can't send to this channel since it is not errored or in overriding state."
