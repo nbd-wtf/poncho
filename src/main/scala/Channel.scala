@@ -72,11 +72,8 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       cltvExpiry: CltvExpiry,
       nextOnion: ByteVector
   ): Future[PaymentStatus] = {
-    System.err.println(s"LOGGER ITEMS: ${logger.items}")
-
     val localLogger =
       logger.attach.item(status).item("hash", paymentHash).logger
-    System.err.println(s"LOCALLOGGER ITEMS: ${localLogger.items}")
     localLogger.debug
       .item("incoming", incoming)
       .item("in-amount", incomingAmount)
@@ -514,7 +511,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           master.database.update { data =>
             data
               .modify(_.channels.at(peerId).localErrors)
-              .using(_ :+ DetailedError(err, None, reason))
+              .using(_ + DetailedError(err, None, reason))
           }
         } else if (status == Active) {
           val lcssMostRecent =
@@ -612,7 +609,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               data
                 .modify(_.channels.at(peerId).localErrors)
                 .using(
-                  _ :+ DetailedError(
+                  _ + DetailedError(
                     err,
                     lcssStored.outgoingHtlcs.find(htlc => htlc.id == f.id),
                     "peer sent UpdateFailHtlc with empty 'reason'"
@@ -654,7 +651,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                 data
                   .modify(_.channels.at(peerId).localErrors)
                   .using(
-                    _ :+ DetailedError(
+                    _ + DetailedError(
                       err,
                       Some(htlc),
                       "peer sent an htlc that went above some limit"
@@ -683,7 +680,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               data
                 .modify(_.channels.at(peerId).localErrors)
                 .using(
-                  _ :+ DetailedError(
+                  _ + DetailedError(
                     err,
                     Some(htlc),
                     "peer sent an htlc with a garbled onion"
@@ -747,7 +744,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               data
                 .modify(_.channels.at(peerId).localErrors)
                 .using(
-                  _ :+ DetailedError(
+                  _ + DetailedError(
                     err,
                     None,
                     "peer sent a wrong state update or one with a broken signature"
@@ -978,12 +975,12 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         master.database.update { data =>
           data
             .modify(_.channels.at(peerId).remoteErrors)
-            .using(_ :+ msg)
+            .using(_ + msg)
 
             // add a local error here so this channel is marked as "Errored" for future purposes
             .modify(_.channels.at(peerId).localErrors)
             .using(
-              _ :+ DetailedError(
+              _ + DetailedError(
                 Error(
                   channelId,
                   Error.ERR_HOSTED_CLOSED_BY_REMOTE_PEER
@@ -1021,7 +1018,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             data
               .modify(_.channels.at(peerId).localErrors)
               .using(
-                _ :+ DetailedError(
+                _ + DetailedError(
                   err,
                   Some(htlc),
                   "outgoing htlc has expired"
