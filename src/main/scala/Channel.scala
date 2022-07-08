@@ -792,7 +792,11 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             master.database.update { data =>
               data
                 .modify(_.channels.at(peerId))
-                .setTo(ChannelData(lcss = Some(lcssNext)))
+                .setTo(
+                  ChannelData(lcss =
+                    Some(lcssNext.withLocalSigOfRemote(master.node.privateKey))
+                  )
+                )
                 //
                 // also remove the links for any htlcs that were relayed from elsewhere to this channel
                 // (htlcs that were relayed from this channel to elsewhere will be handled on their side)
