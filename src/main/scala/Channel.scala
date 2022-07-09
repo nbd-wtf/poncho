@@ -794,17 +794,6 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
             // update new last_cross_signed_state on the database
             System.err.println(s"saving on db: $lcssNext")
-            System.err.println(
-              s"will remove these htlcForwards entries: ${master.database.data.htlcForwards.values
-                  .filter({ case HtlcIdentifier(scid, _) =>
-                    scid == shortChannelId
-                  })
-                  .filter({ case HtlcIdentifier(_, id) =>
-                    lcssPrev.incomingHtlcs
-                      .filterNot(htlc => lcssNext.incomingHtlcs.contains(htlc))
-                      .exists(htlc => htlc.id == id)
-                  })}"
-            )
             master.database.update { data =>
               data
                 .modify(_.channels.at(peerId))
