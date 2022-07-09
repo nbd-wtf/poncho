@@ -786,7 +786,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             val lcssPrev = lcssStored
 
             // update new last_cross_signed_state on the database
-            System.err.println(s"saving on db: $lcssNext")
+            localLogger.info.item("lcss", lcssNext).msg("saving on db")
             master.database.update { data =>
               data
                 .modify(_.channels.at(peerId))
@@ -799,24 +799,14 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                 // also remove the links for any htlcs that were relayed from elsewhere to this channel
                 // (htlcs that were relayed from this channel to elsewhere will be handled on their side)
                 .modify(_.htlcForwards)
-                .using(fwd =>
-                  fwd -- fwd.values // ~ here we grab just the values, i.e. just the "to" part of the mapping
-                    .filter({ case HtlcIdentifier(scid, _) =>
-                      scid == shortChannelId // ~ then we just leave the ones relayed to this channel
-                    })
-                    .filter({ case HtlcIdentifier(_, id) =>
-                      lcssPrev.incomingHtlcs // ~ then we just leave the ones that were in the previous lcss
-                        .filterNot(htlc => // ~ but are not in the next (which was just saved)
-                          lcssNext.incomingHtlcs.contains(htlc)
-                        )
-                        .exists(htlc =>
-                          htlc.id == id
-                        ) // ~ from these we only leave one if it was on the mapping
-                    })
-                  // for all effects this will remove from `fwd` all entries that had the value
-                  // equal to an HtlcIdentifier that corresponding to this channel that was inflight
-                  // before but isn't anymore
-                )
+                .using(fwd => {
+                  val previousOutgoing = lcssPrev.outgoingHtlcs.toSet
+                  val nextOutgoing = lcssNext.outgoingHtlcs.toSet
+                  val resolved = (previousOutgoing -- nextOutgoing)
+                    .map(htlc => HtlcIdentifier(shortChannelId, htlc.id))
+                  val remains = fwd.filterNot((_, to) => resolved.contains(to))
+                  remains
+                })
             }
 
             // time to do some cleaning up -- non-priority
