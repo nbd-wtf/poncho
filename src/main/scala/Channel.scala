@@ -480,13 +480,29 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         }
       }
 
-      // if errored, when the client tries to invoke it we return the error
-      case _: InvokeHostedChannel if status == Errored =>
-        sendMessage(currentData.localErrors.head.error)
-
       // a client is telling us they are online
       case msg: InvokeHostedChannel if status == Active =>
         sendMessage(lcssStored)
+
+      // if errored, when the client tries to invoke it we return the error
+      case _: InvokeHostedChannel if status == Errored =>
+        sendMessage(lcssStored)
+          .andThen(_ => sendMessage(currentData.localErrors.head.error))
+
+      // if we have an override proposal we return it when the client tries to invoke
+      case _: InvokeHostedChannel if status == Overriding =>
+        sendMessage(lcssStored)
+          .andThen(_ =>
+            currentData.localErrors.headOption.map { err =>
+              sendMessage(err.error)
+            }
+          )
+          .andThen(_ =>
+            sendMessage(
+              currentData.proposedOverride.get
+                .stateOverride(master.node.privateKey)
+            )
+          )
 
       // after we've sent our last_cross_signed_state above, the client replies with theirs
       case msg: LastCrossSignedState => {
