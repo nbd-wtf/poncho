@@ -1046,8 +1046,8 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         }
       }
 
-      case _ =>
-        localLogger.debug.msg("unhandled")
+      case msg =>
+        localLogger.debug.item("msg", msg).msg(s"unhandled")
     }
   }
 
