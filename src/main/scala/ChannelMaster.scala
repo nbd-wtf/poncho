@@ -5,6 +5,7 @@ import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{Failure, Success}
 import scala.collection.mutable
+import cats.effect.IO
 import scodec.bits.ByteVector
 import upickle.default._
 import com.softwaremill.quicklens._
@@ -98,7 +99,7 @@ class ChannelMaster { self =>
       }
   }
 
-  def run(isTest: Boolean = false): Unit = {
+  def run(isTest: Boolean = false): IO[Unit] = {
     node.main(() => {
       // wait for this callback so we know the RPC is ready and we can call these things
       setChainHash()

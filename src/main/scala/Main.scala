@@ -1,3 +1,4 @@
+import cats.effect.unsafe.implicits._
 import codecs.{
   CltvExpiryDelta,
   BlockHeight,
@@ -16,6 +17,6 @@ case class Config(
 object Main {
   val cm = new ChannelMaster()
   def main(args: Array[String]): Unit = {
-    cm.run()
+    cm.run().unsafeRunSync()
   }
 }
