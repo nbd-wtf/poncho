@@ -172,7 +172,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             case Success(_) =>
               // success here means the client did get our update_add_htlc,
               // so send our signed state_update
-              sendMessage(updated.lcssNext.stateUpdate(master.node.privateKey))
+              state.sendStateUpdate
             case Failure(err) => {
               // client is offline and can't take our update_add_htlc,
               // so we fail it on upstream
@@ -231,8 +231,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
           // migrate our state to one containing this uncommitted update
           val upd = FromLocal(fulfill, None)
-          val updated = state.addUncommittedUpdate(upd)
-          state = updated
+          state = state.addUncommittedUpdate(upd)
 
           // save the preimage so if we go offline we can keep trying to send it or resolve manually
           master.database.update { data =>
@@ -245,10 +244,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           sendMessage(fulfill)
             .onComplete {
               case Success(_) => {
-                if (status == Active)
-                  sendMessage(
-                    updated.lcssNext.stateUpdate(master.node.privateKey)
-                  )
+                if (status == Active) state.sendStateUpdate
               }
               case Failure(err) => {
                 // client is offline and can't take our update_fulfill_htlc,
@@ -299,10 +295,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               sendMessage(fail)
                 .onComplete {
                   case Success(_) => {
-                    if (status == Active)
-                      sendMessage(
-                        state.lcssNext.stateUpdate(master.node.privateKey)
-                      )
+                    if (status == Active) state.sendStateUpdate
                   }
                   case Failure(err) => {
                     // client is offline and can't take our update_fulfill_htlc,
@@ -1237,6 +1230,16 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       this.copy(uncommittedUpdates =
         this.uncommittedUpdates.filterNot(_ == upd)
       )
+
+    // make this a lazy val as a hack to ensure it is only sent once for each state
+    // this is not strictly necessary as repeated state_updates will be ignored, but
+    // makes the program flow clearer and debugging easier
+    lazy val sendStateUpdate: Unit = {
+      master.node.sendCustomMessage(
+        peerId,
+        state.lcssNext.stateUpdate(master.node.privateKey)
+      )
+    }
 
     // this tells our upstream node to resolve or fail the htlc it is holding
     def provideHtlcResult(id: ULong, result: PaymentStatus): Unit =
