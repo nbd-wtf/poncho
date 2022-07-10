@@ -3,7 +3,7 @@ enablePlugins(ScalaNativePlugin)
 name                  := "poncho"
 organization          := "fiatjaf"
 scalaVersion          := "3.1.1"
-version               := "0.1.0"
+version               := "0.2.0-SNAPSHOT"
 libraryDependencies   ++= Seq(
   "com.github.lolgab" %%% "native-loop-core" % "0.2.1",
   "com.softwaremill.quicklens" %%% "quicklens" % "1.8.8",
