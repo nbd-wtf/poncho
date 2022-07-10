@@ -296,7 +296,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
       case "getmanifest" =>
         reply(
           ujson.Obj(
-            "dynamic" -> false,
+            "dynamic" -> true,
             "options" -> ujson.Arr(),
             "subscriptions" -> ujson.Arr(
               "sendpay_success",
