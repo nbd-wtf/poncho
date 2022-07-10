@@ -407,7 +407,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
             })
             val sourceId = htlc("id").num.toInt.toULong
             val targetChannel = ShortChannelId(onion("short_channel_id").str)
-            val targetAmount = MilliSatoshi(htlc("forward_msat") match {
+            val targetAmount = MilliSatoshi(onion("forward_msat") match {
               case ujson.Num(num) => num.toLong
               case ujson.Str(str) => str.takeWhile(_.isDigit).toLong
               case _              => 0L // we trust this will never happen
