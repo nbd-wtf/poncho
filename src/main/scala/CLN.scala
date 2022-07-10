@@ -400,19 +400,18 @@ class CLN(master: ChannelMaster) extends NodeInterface {
           } else {
             val hash = ByteVector32.fromValidHex(htlc("payment_hash").str)
             val sourceChannel = ShortChannelId(htlc("short_channel_id").str)
-            val sourceAmount = MilliSatoshi(
-              if htlc.obj.contains("amount_msat") then
-                htlc("amount_msat").num.toLong
-              else htlc("amount").str.takeWhile(_.isDigit).toLong
-            )
+            val sourceAmount = MilliSatoshi(htlc("amount_msat") match {
+              case ujson.Num(num) => num.toLong
+              case ujson.Str(str) => str.takeWhile(_.isDigit).toLong
+              case _              => 0L // we trust this will never happen
+            })
             val sourceId = htlc("id").num.toInt.toULong
             val targetChannel = ShortChannelId(onion("short_channel_id").str)
-            val targetAmount =
-              MilliSatoshi(
-                if onion.obj.contains("forward_msat") then
-                  onion("forward_msat").num.toLong
-                else onion("forward_amount").str.takeWhile(_.isDigit).toLong
-              )
+            val targetAmount = MilliSatoshi(htlc("forward_msat") match {
+              case ujson.Num(num) => num.toLong
+              case ujson.Str(str) => str.takeWhile(_.isDigit).toLong
+              case _              => 0L // we trust this will never happen
+            })
             val cltvExpiry = CltvExpiry(
               BlockHeight(onion("outgoing_cltv_value").num.toLong)
             )
