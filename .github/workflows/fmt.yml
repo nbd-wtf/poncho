@@ -1,0 +1,12 @@
+name: check if code is properly formatted
+on: [push]
+
+jobs:
+  scalafmt-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+        with:
+          fetch-depth: 1
+      - name: run scalafmt
+        uses: stringbean/scalafmt-action@v2
