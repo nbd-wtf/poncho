@@ -1,0 +1,22 @@
+name: build every commit
+on:
+  - push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-java@v3
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+          cache: 'sbt'
+      - run: cat build.sbt | sed 's/\/\/ _for-release_ //' > release.sbt && mv release.sbt build.sbt
+      - run: sudo apt install -y libsecp256k1-dev libuv1-dev
+      - run: sbt nativeLink
+      - run: mv target/scala-*/poncho-out poncho
+      - uses: actions/upload-artifact@v3
+        with:
+          path: poncho
+          name: poncho

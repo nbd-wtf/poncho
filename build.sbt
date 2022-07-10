@@ -19,6 +19,6 @@ libraryDependencies   ++= Seq(
 testFrameworks  += new TestFramework("utest.runner.Framework")
 nativeLinkStubs := true
 
-// _for-release_ nativeMode := "release-full"
+// _for-release_ nativeMode := "release-fast"
 // _for-release_ nativeLTO := "thin"
 // _for-armv6_ nativeConfig ~= { _.withTargetTriple("armv6-pc-linux-unknown") }

@@ -30,6 +30,7 @@ jobs:
           java-version: '11'
           distribution: 'temurin'
           cache: 'sbt'
+      - run: cat build.sbt | sed 's/\/\/ _for-release_ //' > release.sbt && mv release.sbt build.sbt
       - run: sudo apt install -y libsecp256k1-dev libuv1-dev
       - run: sbt nativeLink
       - run: mv target/scala-*/poncho-out poncho_x64
