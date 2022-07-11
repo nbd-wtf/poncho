@@ -294,7 +294,7 @@ case class UpdateFulfillHtlc(
     with HostedServerMessage
     with ChannelModifier {
   override def toString(): String =
-    s"UpdateFulfillHtlc($$id@${channelId.toHex.take(5)})"
+    s"UpdateFulfillHtlc($id@${channelId.toHex.take(5)})"
 }
 
 case class UpdateFailHtlc(
@@ -306,7 +306,7 @@ case class UpdateFailHtlc(
     with HostedServerMessage
     with ChannelModifier {
   override def toString(): String =
-    s"UpdateFailHtlc($$id@${channelId.toHex.take(5)})"
+    s"UpdateFailHtlc($id@${channelId.toHex.take(5)})"
 }
 
 case class UpdateFailMalformedHtlc(
@@ -319,7 +319,7 @@ case class UpdateFailMalformedHtlc(
     with HostedServerMessage
     with ChannelModifier {
   override def toString(): String =
-    s"UpdateFailMalformedHtlc($$id@${channelId.toHex.take(5)})"
+    s"UpdateFailMalformedHtlc($id@${channelId.toHex.take(5)})"
 }
 
 case class ChannelAnnouncement(
