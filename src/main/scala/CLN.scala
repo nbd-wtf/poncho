@@ -212,7 +212,11 @@ class CLN(master: ChannelMaster) extends NodeInterface {
       amount: MilliSatoshi,
       cltvExpiryDelta: CltvExpiryDelta,
       onion: ByteVector
-  ): Unit =
+  ): Unit = {
+    System.err.println(
+      "~~~ calling listfunds first to get the peer from the channel"
+    )
+
     rpc("listfunds")
       .map(
         _("channels").arr
@@ -222,6 +226,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
           )
           .map(peer => ByteVector.fromValidHex(peer("peer_id").str))
       )
+      .andThen { res => System.err.println(s"~~~~~ listfunds result: $res") }
       .onComplete {
         case Failure(err) => {
           master.log(s"failed to get peer for channel: $err")
@@ -285,6 +290,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
               case Success(_) => {}
             }
       }
+  }
 
   def handleRPC(line: String): Unit = {
     val req = ujson.read(line)

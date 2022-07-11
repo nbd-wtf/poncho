@@ -884,7 +884,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                         )
                       ) => {
                     // a payment the client is sending through us to someone else
-                    //
+                    System.err.println("~ parsed onion, will relay the payment")
                     // first check if it's for another hosted channel we may have
                     master.database.data.channels
                       .find((p, _) =>
@@ -892,6 +892,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                           ShortChannelId(payload.outgoingChannelId)
                       ) match {
                       case Some((targetPeerId, chandata)) => {
+                        System.err.println("~~ internally")
                         // it is a local hosted channel
                         // send it to the corresponding channel actor
                         master
@@ -907,6 +908,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                           .foreach { res => gotPaymentResult(htlc.id, res) }
                       }
                       case None =>
+                        System.err.println("~~ through upstream node")
                         // it is a normal channel on the upstream node
                         // use sendonion
                         master.node
