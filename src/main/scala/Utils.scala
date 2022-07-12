@@ -57,12 +57,12 @@ object Utils {
       sharedSecret: ByteVector32
   )
 
-  def parseClientOnion(privateKey: ByteVector32, add: UpdateAddHtlc): Either[
+  def parseClientOnion(privateKey: ByteVector32, htlc: UpdateAddHtlc): Either[
     Exception | FailureMessage,
     OnionParseResult
   ] =
     PaymentOnionCodecs.paymentOnionPacketCodec
-      .decode(add.onionRoutingPacket.toBitVector)
+      .decode(htlc.onionRoutingPacket.toBitVector)
       .toEither
       .map(_.value) match {
       case Left(err) =>
@@ -71,7 +71,7 @@ object Utils {
       case Right(onion) =>
         Sphinx.peel(
           privateKey,
-          Some(add.paymentHash),
+          Some(htlc.paymentHash),
           onion
         ) match {
           case Left(badOnion) => Left(badOnion)

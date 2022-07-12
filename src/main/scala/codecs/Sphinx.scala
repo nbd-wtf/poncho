@@ -454,7 +454,6 @@ object Sphinx {
   )
 
   object FailurePacket {
-
     val MaxPayloadLength = 256
     val PacketLength = MacLength + MaxPayloadLength + 2 + 2
 
@@ -548,7 +547,6 @@ object Sphinx {
 
       loop(packet, sharedSecrets)
     }
-
   }
 
   /** Route blinding is a lightweight technique to provide recipient anonymity

@@ -433,6 +433,8 @@ class CLN(master: ChannelMaster) extends NodeInterface {
               BlockHeight(onion("outgoing_cltv_value").num.toLong)
             )
             val nextOnion = ByteVector.fromValidHex(onion("next_onion").str)
+            val sharedSecret =
+              ByteVector32.fromValidHex(onion("shared_secret").str)
 
             master.database.data.channels.find((peerId, chandata) =>
               Utils.getShortChannelId(
@@ -459,9 +461,13 @@ class CLN(master: ChannelMaster) extends NodeInterface {
                           "payment_key" -> preimage.toHex
                         )
                       case Some(Left(Some(FailureOnion(onion)))) =>
+                        // must unwrap the onion here because the hosted channel
+                        // won't unwrap whatever packet they got from the hosted peer
                         ujson.Obj(
                           "result" -> "fail",
-                          "failure_onion" -> onion.toString
+                          "failure_onion" -> Sphinx.FailurePacket
+                            .wrap(onion, sharedSecret)
+                            .toHex
                         )
                       case Some(Left(Some(NormalFailureMessage(message)))) =>
                         ujson.Obj(

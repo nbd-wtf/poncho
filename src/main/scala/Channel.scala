@@ -16,7 +16,6 @@ import codecs._
 import codecs.HostedChannelCodecs._
 import codecs.LightningMessageCodecs._
 import crypto.Crypto
-
 import Utils.OnionParseResult
 
 type PaymentStatus = Option[Either[Option[PaymentFailure], ByteVector32]]
@@ -186,6 +185,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
     }
 
     promise.future
+      // just some debug messages
       .andThen { case Success(status) =>
         status match {
           case Some(Right(preimage)) =>
@@ -202,6 +202,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       }
   }
 
+  // this tells to our hosted peer we have a failure or success (or if it's still pending -- None -- it does nothing)
   def gotPaymentResult(htlcId: ULong, res: PaymentStatus): Unit = {
     val localLogger = logger.attach
       .item(status)
@@ -258,12 +259,13 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             }
         }
         case Left(failure) => {
-          (for {
+          for {
             htlc <- state.lcssNext.incomingHtlcs.find(_.id == htlcId)
             OnionParseResult(packet, _, sharedSecret) <- Utils
               .parseClientOnion(master.node.privateKey, htlc)
               .toOption
-            fail = failure match {
+          } yield {
+            val fail = failure match {
               case Some(NormalFailureMessage(bo: BadOnion)) =>
                 UpdateFailMalformedHtlc(
                   htlc.channelId,
@@ -280,34 +282,35 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                   case NormalFailureMessage(fm) =>
                     Sphinx.FailurePacket.create(sharedSecret, fm)
                   case FailureOnion(fo) =>
+                    // must unwrap here because neither upstream node (CLN) or another hosted channel
+                    // won't unwrap whatever packet they got from the next hop
                     Sphinx.FailurePacket.wrap(fo, sharedSecret)
                 }
 
                 UpdateFailHtlc(channelId, htlcId, reason)
               }
             }
-          } yield fail)
-            .foreach { fail =>
-              // prepare updated state
-              val upd = FromLocal(fail, None)
-              state = state.addUncommittedUpdate(upd)
 
-              sendMessage(fail)
-                .onComplete {
-                  case Success(_) => {
-                    if (status == Active) state.sendStateUpdate
-                  }
-                  case Failure(err) => {
-                    // client is offline and can't take our update_fulfill_htlc,
-                    // so we remove it from the list of uncommitted updates
-                    // and wait for when the peer becomes online again
-                    localLogger.warn
-                      .item("err", err)
-                      .msg(s"failed to send update_fail_htlc")
-                    state = state.removeUncommitedUpdate(upd)
-                  }
+            // prepare updated state
+            val upd = FromLocal(fail, None)
+            state = state.addUncommittedUpdate(upd)
+
+            sendMessage(fail)
+              .onComplete {
+                case Success(_) => {
+                  if (status == Active) state.sendStateUpdate
                 }
-            }
+                case Failure(err) => {
+                  // client is offline and can't take our update_fulfill_htlc,
+                  // so we remove it from the list of uncommitted updates
+                  // and wait for when the peer becomes online again
+                  localLogger.warn
+                    .item("err", err)
+                    .msg(s"failed to send update_fail_htlc")
+                  state = state.removeUncommitedUpdate(upd)
+                }
+              }
+          }
         }
       }
   }
@@ -824,7 +827,15 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               case FromRemote(fail: UpdateFailHtlc) =>
                 state.provideHtlcResult(
                   fail.id,
-                  Some(Left(Some(FailureOnion(fail.reason))))
+                  Some(
+                    Left(
+                      Some(
+                        // we don't unwrap it here, it will be unwrapped at gotPaymentResult on the other hosted channel
+                        // or it will be unwraped on the node interface layer
+                        FailureOnion(fail.reason)
+                      )
+                    )
+                  )
                 )
               case FromRemote(fail: UpdateFailMalformedHtlc) =>
                 // for c-lightning there is no way to return this correctly,
@@ -1237,7 +1248,8 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       )
     }
 
-    // this tells our upstream node to resolve or fail the htlc it is holding
+    // this tells our upstream to resolve or fail the htlc it is holding
+    // (the upstream might be either an actual node (CLN, LND) or another hosted channel)
     def provideHtlcResult(id: ULong, result: PaymentStatus): Unit =
       this.htlcResults
         .get(id)
