@@ -4,6 +4,7 @@ import scala.util.chaining._
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.Future
+import scala.collection.mutable.ArrayBuffer
 import scala.scalanative.unsigned._
 import scala.scalanative.loop.EventLoop.loop
 import scala.scalanative.loop.{Poll, Timer}
@@ -139,43 +140,53 @@ class CLN(master: ChannelMaster) extends NodeInterface {
       .map(response =>
         response("payments").arr
           .filter(_.obj.contains("label"))
-          .find(p =>
-            Try(
-              (identifier.scid.toString, identifier.id.toLong) ==
-                upickle.default.read[Tuple2[String, Long]](p("label").str)
-            ).getOrElse(false)
-          ) match {
-          case None =>
-            // no outgoing payments found, this means the payment was never attempted
-            Some(Left(None))
-          case Some(matched) =>
-            // we have a match, now translate what the upstream node says about it to our PaymentStatus
-            toStatus(matched)
-        }
+          .filter(
+            // use a filter because there may be multiple sendpays with the same hash and label
+            p =>
+              Try(
+                (identifier.scid.toString, identifier.id.toLong) ==
+                  upickle.default.read[(String, Long)](p("label").str)
+              ).getOrElse(false)
+          )
+          .pipe(toStatus(_))
       )
 
-  private def toStatus(data: ujson.Value): PaymentStatus =
-    data("status").str match {
-      case "complete" =>
-        Some(
-          Right(
-            ByteVector32(
-              ByteVector.fromValidHex(data("payment_preimage").str)
+  private def toStatus(results: ArrayBuffer[ujson.Value]): PaymentStatus =
+    if (results.size == 0)
+      // no outgoing payments found, this means the payment was never attempted
+      Some(Left(None))
+    else
+    // we have at least one match
+    if (results.exists(res => res("status").str == "complete"))
+      // if at least one result is complete then this is indeed fully complete
+      Some(
+        Right(
+          ByteVector32(
+            ByteVector.fromValidHex(
+              results
+                .find(res => res("status").str == "complete")
+                .get("payment_preimage")
+                .str
             )
           )
         )
-      case "failed" =>
-        Some(
-          Left(
-            data.obj
-              .pipe(o => o.get("onionreply").orElse(o.get("erroronion")))
-              .map(_.str)
-              .map(ByteVector.fromValidHex(_))
-              .map(FailureOnion(_))
-          )
+      )
+    else if (results.exists(res => res("status").str == "pending"))
+      // if at least one result is complete then this is still pending
+      None
+    else if (results.forall(res => res("status").str == "failed"))
+      // but if all are failed then we consider it failed
+      Some(
+        Left(
+          results.tail // take the last and use its error
+            .obj
+            .pipe(o => o.get("onionreply").orElse(o.get("erroronion")))
+            .map(_.str)
+            .map(ByteVector.fromValidHex(_))
+            .map(FailureOnion(_))
         )
-      case _ => None
-    }
+      )
+    else None // we don't know
 
   def sendCustomMessage(
       peerId: ByteVector,
@@ -475,37 +486,39 @@ class CLN(master: ChannelMaster) extends NodeInterface {
       }
       case "sendpay_success" => {
         val successdata = data("sendpay_success")
-        if (successdata.obj.contains("label")) {
-          val label = successdata("label").str
-          val (scidStr, htlcId) =
-            upickle.default.read[Tuple2[String, Long]](label)
-          val scid = ShortChannelId(scidStr)
-          master.database.data.channels.find((p, _) =>
-            Utils.getShortChannelId(publicKey, p) == scid
-          ) match {
-            case Some(peerId, _) => {
-              master
-                .getChannel(peerId)
-                .gotPaymentResult(htlcId.toULong, toStatus(successdata))
-            }
-            case _ => {}
-          }
-        }
+        if (successdata.obj.contains("label"))
+          for {
+            label <- successdata("label").strOpt
+            (scidStr, htlcId) <- Try(
+              upickle.default.read[(String, Long)](label)
+            ).toOption
+            scid = ShortChannelId(scidStr)
+            (peerId, _) <- master.database.data.channels.find((p, _) =>
+              Utils.getShortChannelId(publicKey, p) == scid
+            )
+          } yield master
+            .getChannel(peerId)
+            .gotPaymentResult(
+              htlcId.toULong,
+              toStatus(ArrayBuffer(successdata))
+            )
       }
       case "sendpay_failure" => {
         val failuredata = data("sendpay_failure")("data")
-        if (failuredata.obj.contains("label")) {
-          val label = failuredata("label").str
-          val (scidStr, htlcId) =
-            upickle.default.read[Tuple2[String, Long]](label)
-          val scid = ShortChannelId(scidStr)
-          val channel = master.database.data.channels.find((p, _) =>
-            Utils.getShortChannelId(publicKey, p) == scid
-          ) match {
-            case Some(peerId, _) => {
-              val channel = master.getChannel(peerId)
-
-              if (failuredata("status").str == "pending") {
+        if (failuredata.obj.contains("label"))
+          for {
+            label <- failuredata("label").strOpt
+            (scidStr, htlcId) <- Try(
+              upickle.default.read[(String, Long)](label)
+            ).toOption
+            scid = ShortChannelId(scidStr)
+            (peerId, _) <- master.database.data.channels.find((p, _) =>
+              Utils.getShortChannelId(publicKey, p) == scid
+            )
+            channel = master.getChannel(peerId)
+          } yield {
+            failuredata("status").str match {
+              case "pending" =>
                 Timer.timeout(FiniteDuration(1, "seconds")) { () =>
                   inspectOutgoingPayment(
                     HtlcIdentifier(scid, htlcId.toULong),
@@ -514,15 +527,13 @@ class CLN(master: ChannelMaster) extends NodeInterface {
                     channel.gotPaymentResult(htlcId.toULong, result)
                   }
                 }
-              } else {
-                channel.gotPaymentResult(htlcId.toULong, toStatus(failuredata))
-              }
-            }
-            case _ => {
-              master.log("sendpay_failure but not for an active channel")
+              case "failed" =>
+                channel.gotPaymentResult(
+                  htlcId.toULong,
+                  toStatus(ArrayBuffer(failuredata))
+                )
             }
           }
-        }
       }
       case "connect" => {
         val id = data("id").str
