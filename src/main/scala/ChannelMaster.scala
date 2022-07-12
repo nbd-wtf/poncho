@@ -52,19 +52,9 @@ class ChannelMaster { self =>
 
   def log(message: String): Unit = logger.debug.msg(message)
 
-  val ourInit = InitHostedChannel(
-    maxHtlcValueInFlightMsat = 100000000L.toULong,
-    htlcMinimumMsat = MilliSatoshi(1000L),
-    maxAcceptedHtlcs = 12,
-    channelCapacityMsat = MilliSatoshi(100000000L),
-    initialClientBalanceMsat = MilliSatoshi(0)
-  )
-
-  val config = Config(
-    cltvExpiryDelta = CltvExpiryDelta(143),
-    feeBase = MilliSatoshi(1000L),
-    feeProportionalMillionths = 1000L
-  )
+  val config = Config
+    .fromFile(database.path)
+    .getOrElse(Config.defaults)
 
   var currentBlock = BlockHeight(0L)
   def currentBlockDay: Long = currentBlock.toLong / 144

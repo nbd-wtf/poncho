@@ -323,6 +323,10 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       .msg("  <:: got peer message")
 
     message match {
+      // we send branding to anyone really
+      case msg: AskBrandingInfo =>
+        master.config.branding.foreach(sendMessage(_))
+
       // someone wants a new hosted channel from us
       case msg: InvokeHostedChannel
           if status == NotOpened || status == Suspended => {
@@ -355,7 +359,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               )
 
               // reply saying we accept the invoke
-              sendMessage(master.ourInit)
+              sendMessage(master.config.init)
             }
           }
         }
@@ -367,11 +371,11 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         val lcssInitial = LastCrossSignedState(
           isHost = true,
           refundScriptPubKey = state.openingRefundScriptPubKey.get,
-          initHostedChannel = master.ourInit,
+          initHostedChannel = master.config.init,
           blockDay = msg.blockDay,
           localBalanceMsat =
-            master.ourInit.channelCapacityMsat - master.ourInit.initialClientBalanceMsat,
-          remoteBalanceMsat = master.ourInit.initialClientBalanceMsat,
+            master.config.channelCapacityMsat - master.config.initialClientBalanceMsat,
+          remoteBalanceMsat = master.config.initialClientBalanceMsat,
           localUpdates = 0L,
           remoteUpdates = 0L,
           incomingHtlcs = List.empty,
@@ -1175,10 +1179,10 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               timestamp,
               flags,
               master.config.cltvExpiryDelta,
-              master.ourInit.htlcMinimumMsat,
+              master.config.htlcMinimumMsat,
               master.config.feeBase,
               master.config.feeProportionalMillionths,
-              Some(master.ourInit.channelCapacityMsat),
+              Some(master.config.channelCapacityMsat),
               TlvStream.empty[ChannelUpdateTlv]
             )
           )
@@ -1196,10 +1200,10 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       timestamp = timestamp,
       channelFlags = flags,
       cltvExpiryDelta = master.config.cltvExpiryDelta,
-      htlcMinimumMsat = master.ourInit.htlcMinimumMsat,
+      htlcMinimumMsat = master.config.htlcMinimumMsat,
       feeBaseMsat = master.config.feeBase,
       feeProportionalMillionths = master.config.feeProportionalMillionths,
-      htlcMaximumMsat = Some(master.ourInit.channelCapacityMsat)
+      htlcMaximumMsat = Some(master.config.channelCapacityMsat)
     )
   }
 

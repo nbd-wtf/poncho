@@ -119,8 +119,17 @@ object Picklers {
     readwriter[String].bimap[ShortChannelId](_.toString, ShortChannelId(_))
   given ReadWriter[CltvExpiry] =
     readwriter[Long].bimap[CltvExpiry](_.toLong, CltvExpiry(_))
+  given ReadWriter[CltvExpiryDelta] =
+    readwriter[Int].bimap[CltvExpiryDelta](_.toInt, CltvExpiryDelta(_))
   given ReadWriter[ULong] =
     readwriter[Long].bimap[ULong](_.toLong, _.toULong)
+
+  given ReadWriter[Path] =
+    readwriter[String]
+      .bimap[Path](
+        _.toAbsolutePath.toString,
+        Paths.get(_)
+      )
 
   given ReadWriter[LastCrossSignedState] = macroRW
   given ReadWriter[InitHostedChannel] = macroRW
