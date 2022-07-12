@@ -596,8 +596,8 @@ class CLN(master: ChannelMaster) extends NodeInterface {
         val params = data match {
           case _: ujson.Obj =>
             Some((data("peerid").strOpt, data("msatoshi").numOpt))
-          case _: ujson.Arr =>
-            Some((data(0).strOpt, data(0).numOpt))
+          case arr: ujson.Arr if arr.value.size == 2 =>
+            Some((data(0).strOpt, data(1).numOpt))
           case _ => None
         } match {
           case Some(Some(peerId), Some(msatoshi)) => {
@@ -619,7 +619,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
         val params = data match {
           case _: ujson.Obj =>
             Some(data("peerid").strOpt)
-          case _: ujson.Arr =>
+          case arr: ujson.Arr if arr.value.size == 1 =>
             Some(data(0).strOpt)
           case _ => None
         } match {
