@@ -569,11 +569,11 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
           // investigate the situation of any payments that might be pending
           Timer.timeout(FiniteDuration(3, "seconds")) { () =>
-            state.lcssNext.incomingHtlcs.foreach { htlc =>
+            lcssStored.incomingHtlcs.foreach { htlc =>
               // try cached preimages first
               localLogger.debug
                 .item("in", htlc)
-                .msg("we have one pending incoming htlc")
+                .msg("checking the outgoing status of pending incoming htlc")
               master.database.data.preimages.get(htlc.paymentHash) match {
                 case Some(preimage) =>
                   gotPaymentResult(htlc.id, Some(Right(preimage)))
