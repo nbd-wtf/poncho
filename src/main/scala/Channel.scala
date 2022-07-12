@@ -596,7 +596,14 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                           HtlcIdentifier(shortChannelId, htlc.id),
                           htlc.paymentHash
                         )
-                        .foreach { result => gotPaymentResult(htlc.id, result) }
+                        .onComplete {
+                          case Success(result) =>
+                            gotPaymentResult(htlc.id, result)
+                          case Failure(err) =>
+                            localLogger.err
+                              .item(err)
+                              .msg("inspectOutgoingPayment failed")
+                        }
                   }
               }
             }

@@ -155,38 +155,39 @@ class CLN(master: ChannelMaster) extends NodeInterface {
     if (results.size == 0)
       // no outgoing payments found, this means the payment was never attempted
       Some(Left(None))
-    else
-    // we have at least one match
-    if (results.exists(res => res("status").str == "complete"))
-      // if at least one result is complete then this is indeed fully complete
-      Some(
-        Right(
-          ByteVector32(
-            ByteVector.fromValidHex(
-              results
-                .find(res => res("status").str == "complete")
-                .get("payment_preimage")
-                .str
+    else {
+      // we have at least one match
+      if (results.exists(res => res("status").str == "complete"))
+        // if at least one result is complete then this is indeed fully complete
+        Some(
+          Right(
+            ByteVector32(
+              ByteVector.fromValidHex(
+                results
+                  .find(res => res("status").str == "complete")
+                  .get("payment_preimage")
+                  .str
+              )
             )
           )
         )
-      )
-    else if (results.exists(res => res("status").str == "pending"))
-      // if at least one result is complete then this is still pending
-      None
-    else if (results.forall(res => res("status").str == "failed"))
-      // but if all are failed then we consider it failed
-      Some(
-        Left(
-          results.tail // take the last and use its error
-            .obj
-            .pipe(o => o.get("onionreply").orElse(o.get("erroronion")))
-            .map(_.str)
-            .map(ByteVector.fromValidHex(_))
-            .map(FailureOnion(_))
+      else if (results.exists(res => res("status").str == "pending"))
+        // if at least one result is complete then this is still pending
+        None
+      else if (results.forall(res => res("status").str == "failed"))
+        // but if all are failed then we consider it failed
+        Some(
+          Left(
+            results.last // take the last and use its error
+              .obj
+              .pipe(o => o.get("onionreply").orElse(o.get("erroronion")))
+              .map(_.str)
+              .map(ByteVector.fromValidHex(_))
+              .map(FailureOnion(_))
+          )
         )
-      )
-    else None // we don't know
+      else None // we don't know
+    }
 
   def sendCustomMessage(
       peerId: ByteVector,
