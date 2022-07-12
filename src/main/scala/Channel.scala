@@ -536,75 +536,72 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               .using(_ + DetailedError(err, None, reason))
           }
         } else if (status == Active) {
-          val lcssMostRecent =
-            if (
-              (lcssStored.localUpdates + lcssStored.remoteUpdates) >=
-                (msg.remoteUpdates + msg.localUpdates)
-            ) {
-              // we are even or ahead
-              lcssStored
-            } else {
-              // we are behind
-              localLogger.warn
-                .item(
-                  "local",
-                  s"${lcssStored.localUpdates}/${lcssStored.remoteUpdates}"
-                )
-                .item("remote", s"${msg.remoteUpdates}/${msg.localUpdates}")
-                .msg("peer sent lcss showing that we are behind")
+          if (
+            (lcssStored.localUpdates + lcssStored.remoteUpdates) <
+              (msg.remoteUpdates + msg.localUpdates)
+          ) {
+            // we are behind. replace our lcss with theirs.
+            localLogger.warn
+              .item(
+                "local",
+                s"${lcssStored.localUpdates}/${lcssStored.remoteUpdates}"
+              )
+              .item("remote", s"${msg.remoteUpdates}/${msg.localUpdates}")
+              .msg("peer sent lcss showing that we are behind")
 
-              // save their lcss here
-              master.database.update { data =>
-                data
-                  .modify(_.channels.at(peerId))
-                  .setTo(ChannelData(lcss = Some(msg.reverse)))
-              }
-
-              msg.reverse
+            // save their lcss here
+            master.database.update { data =>
+              data
+                .modify(_.channels.at(peerId))
+                .setTo(ChannelData(lcss = Some(msg.reverse)))
             }
+          }
 
           // all good, send the most recent lcss again and then the channel update
-          sendMessage(lcssMostRecent)
+          sendMessage(lcssStored)
           sendMessage(getChannelUpdate)
 
           // investigate the situation of any payments that might be pending
-          Timer.timeout(FiniteDuration(3, "seconds")) { () =>
-            lcssStored.incomingHtlcs.foreach { htlc =>
-              // try cached preimages first
-              localLogger.debug
-                .item("in", htlc)
-                .msg("checking the outgoing status of pending incoming htlc")
-              master.database.data.preimages.get(htlc.paymentHash) match {
-                case Some(preimage) =>
-                  gotPaymentResult(htlc.id, Some(Right(preimage)))
-                case None =>
-                  localLogger.debug.msg("no preimage")
-                  master.database.data.htlcForwards
-                    .get(HtlcIdentifier(shortChannelId, htlc.id)) match {
-                    case Some(outgoing @ HtlcIdentifier(outScid, outId)) =>
-                      // it went to another HC peer, so just wait for it to resolve
-                      // (if it had resolved already we would have the resolution on the preimages)
-                      {
-                        localLogger.debug
-                          .item("out", outgoing)
-                          .msg("it went to another hc peer")
-                      }
-                    case None =>
-                      // it went to the upstream node, so ask that
-                      master.node
-                        .inspectOutgoingPayment(
-                          HtlcIdentifier(shortChannelId, htlc.id),
-                          htlc.paymentHash
-                        )
-                        .onComplete {
-                          case Success(result) =>
-                            gotPaymentResult(htlc.id, result)
-                          case Failure(err) =>
-                            localLogger.err
-                              .item(err)
-                              .msg("inspectOutgoingPayment failed")
+          if (lcssStored.incomingHtlcs.size > 0) {
+            val upto: ULong = lcssStored.incomingHtlcs.map(_.id).max
+            Timer.timeout(FiniteDuration(3, "seconds")) { () =>
+              lcssStored.incomingHtlcs.filter(_.id <= upto).foreach { htlc =>
+                // try cached preimages first
+                localLogger.debug
+                  .item("in", htlc)
+                  .msg("checking the outgoing status of pending incoming htlc")
+                master.database.data.preimages.get(htlc.paymentHash) match {
+                  case Some(preimage) =>
+                    gotPaymentResult(htlc.id, Some(Right(preimage)))
+                  case None =>
+                    localLogger.debug.msg("no preimage")
+                    master.database.data.htlcForwards
+                      .get(HtlcIdentifier(shortChannelId, htlc.id)) match {
+                      case Some(outgoing @ HtlcIdentifier(outScid, outId)) =>
+                        // it went to another HC peer, so just wait for it to resolve
+                        // (if it had resolved already we would have the resolution on the preimages)
+                        {
+                          localLogger.debug
+                            .item("out", outgoing)
+                            .msg("it went to another hc peer")
                         }
-                  }
+                      case None =>
+                        // it went to the upstream node, so ask that
+                        master.node
+                          .inspectOutgoingPayment(
+                            HtlcIdentifier(shortChannelId, htlc.id),
+                            htlc.paymentHash
+                          )
+                          .onComplete {
+                            case Success(result) =>
+                              gotPaymentResult(htlc.id, result)
+                            case Failure(err) =>
+                              localLogger.err
+                                .item(err)
+                                .msg("inspectOutgoingPayment failed")
+                          }
+                    }
+                }
               }
             }
           }
