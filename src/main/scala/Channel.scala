@@ -560,7 +560,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                   .setTo(ChannelData(lcss = Some(msg.reverse)))
               }
 
-              msg
+              msg.reverse
             }
 
           // all good, send the most recent lcss again and then the channel update
