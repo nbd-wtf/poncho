@@ -66,8 +66,6 @@ case class LastCrossSignedState(
   override def toString(): String =
     s"LastCrossSignedState($blockDay, balances=${localBalanceMsat}/${remoteBalanceMsat}, updates=$localUpdates/$remoteUpdates, incomingHtlcs=$incomingHtlcs, outgoingHtlcs=$outgoingHtlcs)"
 
-  def totalUpdates: Long = localUpdates + remoteUpdates
-
   lazy val reverse: LastCrossSignedState =
     copy(
       isHost = !isHost,
@@ -152,7 +150,6 @@ case class StateUpdate(
     localSigOfRemoteLCSS: ByteVector64
 ) extends HostedServerMessage
     with HostedClientMessage {
-  def totalUpdates: Long = localUpdates + remoteUpdates
   override def toString(): String =
     s"StateUpdate($blockDay, updates=$localUpdates/$remoteUpdates)"
 }

@@ -772,7 +772,10 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           msg.blockDay == state.lcssNext.blockDay
         ) {
           localLogger.debug
-            .item("total-updates", state.lcssNext.totalUpdates)
+            .item(
+              "updates",
+              s"${state.lcssNext.localUpdates}/${state.lcssNext.remoteUpdates}"
+            )
             .msg("we and the client are now even")
           // verify signature
           val lcssNext =
