@@ -778,34 +778,37 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           .msg("updating our local state after a transition")
 
         val matching =
-          if (msg.blockDay != state.lcssNext.blockDay)
+          if (msg.blockDay != state.lcssNext.blockDay) {
             localLogger.warn.msg("blockdays are different")
             None
-          else if (msg.localUpdates > state.lcssNext.remoteUpdates)
+          } else if (msg.localUpdates > state.lcssNext.remoteUpdates) {
             localLogger.debug.msg("we are missing updates from them")
             None
-          else if (msg.remoteUpdates < state.lcssNext.localUpdates) {
+          } else if (msg.remoteUpdates < state.lcssNext.localUpdates) {
             localLogger.debug.msg("they are missing updates from us")
             // try to remedy the situation
             // first we try to get what state they are updating and commit to that
             state.findMatchingState(msg)
           } else {
-            Some(state.lcssNext)
+            Some(state)
           }
 
         if (!matching.isDefined) {
           localLogger.debug.msg(
-            "couldn't find a state that matched their signature"
+            "couldn't find a state that matched the signature received from the peer"
           )
         }
 
         matching
-          .map(_.copy(remoteSigOfLocal = msg.localSigOfRemoteLCSS))
-          .foreach { lcssNext =>
+          .foreach { currentState =>
+            val lcssNext = currentState.lcssNext.copy(remoteSigOfLocal =
+              msg.localSigOfRemoteLCSS
+            )
+
             localLogger.debug
               .item(
                 "updates",
-                s"${state.lcssNext.localUpdates}/${state.lcssNext.remoteUpdates}"
+                s"${currentState.lcssNext.localUpdates}/${currentState.lcssNext.remoteUpdates}"
               )
               .msg("we and the client are now even")
             // verify signature
@@ -863,7 +866,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                 .execute(() => master.cleanupPreimages())
 
               // act on each pending message, relaying them as necessary
-              state.uncommittedUpdates.foreach {
+              currentState.uncommittedUpdates.foreach {
                 // i.e. and fail htlcs if any
                 case FromRemote(fail: UpdateFailHtlc) =>
                   provideHtlcResult(
@@ -1009,8 +1012,26 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               // send our state update
               sendMessage(lcssNext.stateUpdate(master.node.privateKey))
 
-              // update this channel FSM state to the new lcss
-              state = state.copy(uncommittedUpdates = List.empty)
+              // update the state manager state to the new lcss -- i.e. remove all the updates that were
+              // committed from the list of uncommitted updates
+              state = state.copy(uncommittedUpdates =
+                state.uncommittedUpdates.filterNot(upd =>
+                  currentState.uncommittedUpdates.exists(_ == upd)
+                )
+              )
+
+              // replay updates we've temporarily disconsidered as part of the matching strategy above
+              state.uncommittedUpdates
+                .collect { case FromLocal(msg, _) => msg }
+                .map { sendMessage(_) }
+                .pipe(Future.sequence(_))
+                .onComplete {
+                  case Success(_) => state.sendStateUpdate
+                  case Failure(err) =>
+                    localLogger.warn
+                      .item(err)
+                      .msg("failed to replay updates after partial transition")
+                }
 
               // clean up htlcResult promises that were already fulfilled
               htlcResults.filterInPlace((_, p) => !p.future.isCompleted)
@@ -1376,14 +1397,14 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
     def findMatchingState(
         remoteStateUpdate: StateUpdate,
         current: StateManager = this
-    ): Option[LastCrossSignedState] =
+    ): Option[StateManager] =
       (lcssNext.localUpdates - remoteStateUpdate.remoteUpdates) match {
         case 0
             if current.lcssNext
               .copy(remoteSigOfLocal = remoteStateUpdate.localSigOfRemoteLCSS)
               .verifyRemoteSig(peerId) =>
           // found it!
-          Some(current.lcssNext)
+          Some(current)
         case d if d > 0 =>
           // we are still ahead, so let's try to remove all our updates in all possible combinations
           // until we find one that matches the state our peer likes

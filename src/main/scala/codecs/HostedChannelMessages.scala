@@ -20,6 +20,8 @@ sealed trait HostedServerMessage
 sealed trait HostedGossipMessage
 sealed trait HostedPreimageMessage
 sealed trait ChannelModifier
+    extends HostedClientMessage
+    with HostedServerMessage
 
 case class InvokeHostedChannel(
     chainHash: ByteVector32,
