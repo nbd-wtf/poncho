@@ -105,16 +105,13 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         .item("preimage", preimage.get.toHex)
         .msg("HTLC was already resolved, and we have the preimage right here")
       promise.success(Some(Right(preimage.get)))
-    } else if (status != Active) {
-      localLogger.warn.msg("can't add an HTLC in a channel that isn't active")
-      promise.success(None)
     } else if (
       state.lcssNext.incomingHtlcs
         .exists(_.paymentHash == paymentHash)
     ) {
       // reject htlc as outgoing if it's already incoming, sanity check
       localLogger.err.msg("htlc is already incoming, can't add it as outgoing")
-      promise.success(None)
+      promise.success(Some(Left(None)))
     } else if (
       master.database.data.htlcForwards
         .get(incoming) == Some(HtlcIdentifier(shortChannelId, _))
@@ -133,7 +130,12 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         htlc <- lcssStored.outgoingHtlcs.find(htlc => htlc.id == outgoing.id)
       } yield htlc).get
 
-      state = state.copy(htlcResults = state.htlcResults + (htlc.id -> promise))
+      htlcResults += (htlc.id -> promise)
+    } else if (status != Active) {
+      localLogger.debug
+        .item("status", status)
+        .msg("can't forward an HTLC to channel that isn't active")
+      promise.success(Some(Left(None)))
     } else {
       // the default case in which we add a new htlc
       // create update_add_htlc based on the prototype we've received
