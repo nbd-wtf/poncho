@@ -1157,7 +1157,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
   def requestHostedChannel(): Future[String] = {
     if (status != NotOpened) {
       Future.failed(
-        throw new Exception(
+        new Exception(
           "can't open a channel that is already open."
         )
       )
@@ -1188,13 +1188,13 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
     if (status != Errored && status != Overriding) {
       Future.failed(
-        throw new Exception(
+        new Exception(
           "can't send to this channel since it is not errored or in overriding state."
         )
       )
     } else if (currentData.lcss.map(_.isHost) != Some(true)) {
       Future.failed(
-        throw new Exception(
+        new Exception(
           "can't send to this channel since we are not the hosts."
         )
       )
