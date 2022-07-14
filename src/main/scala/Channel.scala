@@ -578,7 +578,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               .modify(_.channels.at(peerId).localErrors)
               .using(_ + DetailedError(err, None, reason))
           }
-        } else if (status == Active) {
+        } else if (status == Active || status == Opening) {
           if (
             (lcssStored.localUpdates + lcssStored.remoteUpdates) <
               (msg.remoteUpdates + msg.localUpdates)
@@ -591,6 +591,9 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               )
               .item("remote", s"${msg.remoteUpdates}/${msg.localUpdates}")
               .msg("peer sent lcss showing that we are behind")
+
+            // step out of the "opening" state
+            openingRefundScriptPubKey = None
 
             // save their lcss here
             master.database.update { data =>
