@@ -646,7 +646,6 @@ class CLN(master: ChannelMaster) extends NodeInterface {
     Poll(0).startReadWrite { _ =>
       val line = scala.io.StdIn.readLine().trim
       if (line.size > 0) {
-        System.err.println(Console.BOLD + s"line: ${line}" + Console.RESET)
         handleRPC(line)
       }
     }

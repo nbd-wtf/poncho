@@ -4,6 +4,7 @@ import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{Failure, Success}
+import scala.util.chaining._
 import scala.collection.mutable
 import scodec.bits.ByteVector
 import upickle.default._
@@ -107,9 +108,7 @@ class ChannelMaster { self =>
           // ~ for all channels
           (sourcePeerId, sourceChannelData) <- database.data.channels
           // ~ get all that have incoming HTLCs in-flight
-          in <- sourceChannelData.lcss
-            .map(_.incomingHtlcs)
-            .getOrElse(List.empty)
+          in <- sourceChannelData.lcss.incomingHtlcs
           sourcePeer = self.getChannel(sourcePeerId)
           // ~ from these find all that are outgoing to other channels using data from our database
           out <- database.data.htlcForwards.get(
@@ -158,7 +157,7 @@ class ChannelMaster { self =>
           // ~ get the hashes of all payments in-flight accross all hosted channels
           val inflightHashes = channels
             .map((_, chan) => chan.currentData.lcss)
-            .collect({ case Some(lcss) => lcss })
+            .filter(!_.isEmpty)
             .flatMap(lcss =>
               (lcss.incomingHtlcs ++ lcss.outgoingHtlcs).map(_.paymentHash)
             )
@@ -198,7 +197,7 @@ class ChannelMaster { self =>
         .getShortChannelId(self.node.publicKey, peerId)
         .toString,
       "status" -> channel.status.getClass.getSimpleName.toLowerCase,
-      "data" -> channel.currentData.lcss.map(lcss =>
+      "data" -> channel.currentData.lcss.pipe(lcss =>
         ujson.Obj(
           "blockday" -> lcss.blockDay.toInt,
           "local_errors" -> channel.currentData.localErrors

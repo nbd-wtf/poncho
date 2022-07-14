@@ -50,11 +50,11 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
   val htlcResults = Map.empty[ULong, Promise[PaymentStatus]]
   var openingRefundScriptPubKey: Option[ByteVector] = None
   var invoking: Option[ByteVector | LastCrossSignedState] = None
-  var state = StateManager(peerId)
+  var state = StateManager(peerId, lcssStored)
 
   def currentData =
     master.database.data.channels.get(peerId).getOrElse(ChannelData())
-  def lcssStored = currentData.lcss.get
+  def lcssStored = currentData.lcss
   def status =
     if openingRefundScriptPubKey.isDefined then Opening
     else if invoking.isDefined then Invoking
@@ -70,6 +70,20 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       msg: HostedClientMessage | HostedServerMessage
   ): Future[ujson.Value] =
     master.node.sendCustomMessage(peerId, msg)
+
+  // this function only sends one state_update once for each state
+  var stateUpdateSendsTracker = List.empty[StateManager]
+  def sendStateUpdate(st: StateManager): Unit = {
+    if (!stateUpdateSendsTracker.contains(st)) {
+      sendMessage(
+        st.lcssNext
+          .withCurrentBlockDay(master.currentBlockDay)
+          .withLocalSigOfRemote(master.node.privateKey)
+          .stateUpdate
+      )
+      stateUpdateSendsTracker = (st +: stateUpdateSendsTracker).take(3)
+    }
+  }
 
   // this tells our upstream to resolve or fail the htlc it is holding
   // (the upstream might be either an actual node (CLN, LND) or another hosted channel)
@@ -106,8 +120,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         .msg("HTLC was already resolved, and we have the preimage right here")
       promise.success(Some(Right(preimage.get)))
     } else if (
-      state.lcssNext.incomingHtlcs
-        .exists(_.paymentHash == paymentHash)
+      state.lcssNext.incomingHtlcs.exists(_.paymentHash == paymentHash)
     ) {
       // reject htlc as outgoing if it's already incoming, sanity check
       localLogger.err.msg("htlc is already incoming, can't add it as outgoing")
@@ -209,7 +222,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             case Success(_) =>
               // success here means the client did get our update_add_htlc,
               // so send our signed state_update
-              state.sendStateUpdate
+              sendStateUpdate(state)
             case Failure(err) => {
               // client is offline and can't take our update_add_htlc,
               // so we fail it on upstream
@@ -293,7 +306,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           sendMessage(fulfill)
             .onComplete {
               case Success(_) => {
-                if (status == Active) state.sendStateUpdate
+                if (status == Active) sendStateUpdate(state)
               }
               case Failure(err) => {
                 // client is offline and can't take our update_fulfill_htlc,
@@ -346,7 +359,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             sendMessage(fail)
               .onComplete {
                 case Success(_) => {
-                  if (status == Active) state.sendStateUpdate
+                  if (status == Active) sendStateUpdate(state)
                 }
                 case Failure(err) => {
                   // client is offline and can't take our update_fulfill_htlc,
@@ -395,19 +408,13 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           )
         } else {
           // chain hash is ok, proceed
-          currentData.lcss match {
-            case Some(lcss) => {
-              openingRefundScriptPubKey = Some(msg.refundScriptPubKey)
-
-              // channel already exists, so send last cross-signed-state
-              sendMessage(lcss)
-            }
-            case None => {
-              openingRefundScriptPubKey = Some(msg.refundScriptPubKey)
-
-              // reply saying we accept the invoke
-              sendMessage(master.config.init)
-            }
+          if (status == NotOpened) {
+            // reply saying we accept the invoke and go into Opening state
+            openingRefundScriptPubKey = Some(msg.refundScriptPubKey)
+            sendMessage(master.config.init)
+          } else {
+            // channel already exists, so send last cross-signed-state
+            sendMessage(currentData.lcss)
           }
         }
       }
@@ -450,14 +457,17 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           master.database.update { data =>
             data
               .modify(_.channels)
-              .using(_ + (peerId -> ChannelData(lcss = Some(lcssInitial))))
+              .using(_ + (peerId -> ChannelData(lcss = lcssInitial)))
           }
+          state = state.copy(lcssCurrent = lcssStored)
 
           // send our signed state update
-          sendMessage(lcssInitial.stateUpdate(master.node.privateKey))
+          sendMessage(
+            lcssInitial.withLocalSigOfRemote(master.node.privateKey).stateUpdate
+          )
 
           // send a channel update
-          sendMessage(getChannelUpdate)
+          sendMessage(getChannelUpdate(true))
         }
       }
 
@@ -515,11 +525,12 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           master.database.update { data =>
             data
               .modify(_.channels)
-              .using(_ + (peerId -> ChannelData(lcss = Some(lcssInitial))))
+              .using(_ + (peerId -> ChannelData(lcss = lcssInitial)))
           }
+          state = state.copy(lcssCurrent = lcssStored)
 
           // send a channel update
-          sendMessage(getChannelUpdate)
+          sendMessage(getChannelUpdate(true))
         }
       }
 
@@ -543,7 +554,8 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           .andThen(_ =>
             sendMessage(
               currentData.proposedOverride.get
-                .stateOverride(master.node.privateKey)
+                .withLocalSigOfRemote(master.node.privateKey)
+                .stateOverride
             )
           )
 
@@ -598,14 +610,15 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             // save their lcss here
             master.database.update { data =>
               data
-                .modify(_.channels.at(peerId))
-                .setTo(ChannelData(lcss = Some(msg.reverse)))
+                .modify(_.channels)
+                .using(_ + (peerId -> ChannelData(lcss = msg.reverse)))
             }
+            state = state.copy(lcssCurrent = lcssStored)
           }
 
           // all good, send the most recent lcss again and then the channel update
           sendMessage(lcssStored)
-          sendMessage(getChannelUpdate)
+          sendMessage(getChannelUpdate(true))
 
           // investigate the situation of any payments that might be pending
           if (lcssStored.incomingHtlcs.size > 0) {
@@ -812,7 +825,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       //   -- we must handle them synchronously!
       //   -- if any concurrency is to be added it must be between channels, not inside the same channel.
       case msg: StateUpdate
-          if status == Active && !state.uncommittedUpdates.isEmpty => {
+          if status == Active && !state.uncommittedUpdates.isEmpty && (msg.remoteUpdates > lcssStored.localUpdates || msg.localUpdates > lcssStored.remoteUpdates) => {
         // this will only be triggered if there are uncommitted updates
         // otherwise it will be ignored so the client is free to spam us with
         // valid and up-to-date state_updates and we won't even notice
@@ -827,7 +840,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           .msg("updating our local state after a transition")
 
         val matching =
-          if (msg.blockDay != state.lcssNext.blockDay) {
+          if (msg.blockDay != master.currentBlockDay) {
             localLogger.warn.msg("blockdays are different")
             None
           } else if (msg.localUpdates > state.lcssNext.remoteUpdates) {
@@ -838,9 +851,11 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             // try to remedy the situation
             // first we try to get what state they are updating and commit to that
             state.findMatchingState(msg)
-          } else {
+          } else if (
+            msg.localUpdates == state.lcssNext.remoteUpdates && msg.remoteUpdates == state.lcssNext.localUpdates
+          )
             Some(state)
-          }
+          else None
 
         if (!matching.isDefined) {
           localLogger.debug.msg(
@@ -850,14 +865,15 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
         matching
           .foreach { currentState =>
-            val lcssNext = currentState.lcssNext.copy(remoteSigOfLocal =
-              msg.localSigOfRemoteLCSS
-            )
+            val lcssNext = currentState.lcssNext
+              .withCurrentBlockDay(master.currentBlockDay)
+              .withLocalSigOfRemote(master.node.privateKey)
+              .copy(remoteSigOfLocal = msg.localSigOfRemoteLCSS)
 
             localLogger.debug
               .item(
                 "updates",
-                s"${currentState.lcssNext.localUpdates}/${currentState.lcssNext.remoteUpdates}"
+                s"${lcssNext.localUpdates}/${lcssNext.remoteUpdates}"
               )
               .msg("we and the client are now even")
             // verify signature
@@ -889,11 +905,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                 data
                   .modify(_.channels.at(peerId))
                   .setTo(
-                    ChannelData(lcss =
-                      Some(
-                        lcssNext.withLocalSigOfRemote(master.node.privateKey)
-                      )
-                    )
+                    ChannelData(lcss = lcssNext)
                   )
                   //
                   // also remove the links for any htlcs that were relayed from elsewhere to this channel
@@ -909,6 +921,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                     remains
                   })
               }
+              state = state.copy(lcssCurrent = lcssStored)
 
               // time to do some cleaning up -- non-priority
               scala.concurrent.ExecutionContext.global
@@ -950,90 +963,108 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                 }
                 case FromRemote(htlc: UpdateAddHtlc) => {
                   // send a payment through the upstream node -- or to another hosted channel
-                  Utils.parseClientOnion(
-                    master.node.privateKey,
-                    htlc
-                  ) match {
-                    case Left(fail) => {
-                      // this should never happen
-                      localLogger.err.msg(
-                        "this should never happen because we had parsed the onion already"
-                      )
-                      scala.concurrent.ExecutionContext.global.execute(() =>
-                        gotPaymentResult(htlc.id, Some(Left(None)))
-                      )
-                    }
-                    case Right(
-                          OnionParseResult(
-                            payload: PaymentOnion.FinalTlvPayload,
-                            _,
-                            _
+                  scala.concurrent.ExecutionContext.global.execute { () =>
+                    Utils.parseClientOnion(
+                      master.node.privateKey,
+                      htlc
+                    ) match {
+                      case Left(fail) => {
+                        // this should never happen
+                        localLogger.err.msg(
+                          "this should never happen because we had parsed the onion already"
+                        )
+                        gotPaymentResult(
+                          htlc.id,
+                          Some(
+                            Left(
+                              Some(
+                                NormalFailureMessage(
+                                  InvalidOnionPayload(0.toULong, 0)
+                                )
+                              )
+                            )
                           )
-                        ) => {
-                      // we're receiving the payment? this is weird but possible.
-                      // figure out how to handle this later, but we will have to patch
-                      // c-lightning so it can allow invoices to be manually settled
-                      // (and release the preimage in the process.)
-                      // this could also be a trampoline, so when we want to support that
-                      // we'll have to look again at how eclair is doing it.
-                      localLogger.warn
-                        .item("payload", payload)
-                        .msg("we're receiving a payment from the client?")
+                        )
+                      }
+                      case Right(
+                            OnionParseResult(
+                              payload: PaymentOnion.FinalTlvPayload,
+                              _,
+                              _
+                            )
+                          ) => {
+                        // we're receiving the payment? this is weird but possible.
+                        // figure out how to handle this later, but we will have to patch
+                        // c-lightning so it can allow invoices to be manually settled
+                        // (and release the preimage in the process.)
+                        // this could also be a trampoline, so when we want to support that
+                        // we'll have to look again at how eclair is doing it.
+                        localLogger.warn
+                          .item("payload", payload)
+                          .msg("we're receiving a payment from the client?")
 
-                      scala.concurrent.ExecutionContext.global.execute(() =>
-                        gotPaymentResult(htlc.id, Some(Left(None)))
-                      )
-                    }
-                    case Right(
-                          OnionParseResult(
-                            payload: PaymentOnion.ChannelRelayPayload,
-                            nextOnion: ByteVector,
-                            sharedSecret: ByteVector32
+                        scala.concurrent.ExecutionContext.global.execute(() =>
+                          gotPaymentResult(
+                            htlc.id,
+                            Some(
+                              Left(
+                                Some(NormalFailureMessage(TemporaryNodeFailure))
+                              )
+                            )
                           )
-                        ) => {
-                      // a payment the client is sending through us to someone else
-                      System.err.println(
-                        "~ parsed onion, will relay the payment"
-                      )
-                      // first check if it's for another hosted channel we may have
-                      master.database.data.channels
-                        .find((p, _) =>
-                          Utils.getShortChannelId(master.node.publicKey, p) ==
-                            ShortChannelId(payload.outgoingChannelId)
-                        ) match {
-                        case Some((targetPeerId, chandata)) => {
-                          System.err.println("~~ internally")
-                          // it is a local hosted channel
-                          // send it to the corresponding channel actor
-                          master
-                            .getChannel(targetPeerId)
-                            .addHtlc(
-                              incoming =
-                                HtlcIdentifier(shortChannelId, htlc.id),
-                              incomingAmount = htlc.amountMsat,
-                              outgoingAmount = payload.amountToForward,
-                              paymentHash = htlc.paymentHash,
-                              cltvExpiry = payload.outgoingCltv,
-                              nextOnion = nextOnion
+                        )
+                      }
+                      case Right(
+                            OnionParseResult(
+                              payload: PaymentOnion.ChannelRelayPayload,
+                              nextOnion: ByteVector,
+                              sharedSecret: ByteVector32
                             )
-                            .foreach { res => gotPaymentResult(htlc.id, res) }
+                          ) => {
+                        // a payment the client is sending through us to someone else
+                        System.err.println(
+                          "~ parsed onion, will relay the payment"
+                        )
+                        // first check if it's for another hosted channel we may have
+                        master.database.data.channels
+                          .find((p, _) =>
+                            Utils.getShortChannelId(master.node.publicKey, p) ==
+                              ShortChannelId(payload.outgoingChannelId)
+                          ) match {
+                          case Some((targetPeerId, chandata)) => {
+                            System.err.println("~~ internally")
+                            // it is a local hosted channel
+                            // send it to the corresponding channel actor
+                            master
+                              .getChannel(targetPeerId)
+                              .addHtlc(
+                                incoming =
+                                  HtlcIdentifier(shortChannelId, htlc.id),
+                                incomingAmount = htlc.amountMsat,
+                                outgoingAmount = payload.amountToForward,
+                                paymentHash = htlc.paymentHash,
+                                cltvExpiry = payload.outgoingCltv,
+                                nextOnion = nextOnion
+                              )
+                              .foreach { res => gotPaymentResult(htlc.id, res) }
+                          }
+                          case None =>
+                            System.err.println("~~ through upstream node")
+                            // it is a normal channel on the upstream node
+                            // use sendonion
+                            master.node
+                              .sendOnion(
+                                chan = this,
+                                htlcId = htlc.id,
+                                paymentHash = htlc.paymentHash,
+                                firstHop =
+                                  ShortChannelId(payload.outgoingChannelId),
+                                amount = payload.amountToForward,
+                                cltvExpiryDelta =
+                                  payload.outgoingCltv - master.currentBlock,
+                                onion = nextOnion
+                              )
                         }
-                        case None =>
-                          System.err.println("~~ through upstream node")
-                          // it is a normal channel on the upstream node
-                          // use sendonion
-                          master.node
-                            .sendOnion(
-                              chan = this,
-                              htlcId = htlc.id,
-                              paymentHash = htlc.paymentHash,
-                              firstHop =
-                                ShortChannelId(payload.outgoingChannelId),
-                              amount = payload.amountToForward,
-                              cltvExpiryDelta =
-                                payload.outgoingCltv - master.currentBlock,
-                              onion = nextOnion
-                            )
                       }
                     }
                   }
@@ -1059,7 +1090,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               }
 
               // send our state update
-              sendMessage(lcssNext.stateUpdate(master.node.privateKey))
+              sendStateUpdate(currentState)
 
               // update the state manager state to the new lcss -- i.e. remove all the updates that were
               // committed from the list of uncommitted updates
@@ -1070,17 +1101,31 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               )
 
               // replay updates we've temporarily disconsidered as part of the matching strategy above
-              state.uncommittedUpdates
-                .collect { case FromLocal(msg, _) => msg }
-                .map { sendMessage(_) }
-                .pipe(Future.sequence(_))
-                .onComplete {
-                  case Success(_) => state.sendStateUpdate
-                  case Failure(err) =>
-                    localLogger.warn
-                      .item(err)
-                      .msg("failed to replay updates after partial transition")
-                }
+              // this may be not necessary, let's see
+              // state.uncommittedUpdates
+              //   .collect {
+              //     case FromLocal(msg, _) if !msg.isInstanceOf[UpdateAddHtlc] =>
+              //       msg
+              //   }
+              //   .map { msg =>
+              //     System.err.println(s"replaying $msg")
+              //     sendMessage(msg)
+              //   }
+              //   .pipe(Future.sequence(_))
+              //   .onComplete {
+              //     case Success(replays) => {
+              //       if (replays.size > 0) {
+              //         System.err.println(
+              //           s"sending state update after replays ${state.lcssNext}"
+              //         )
+              //         sendStateUpdate(state)
+              //       }
+              //     }
+              //     case Failure(err) =>
+              //       localLogger.warn
+              //         .item(err)
+              //         .msg("failed to replay updates after partial transition")
+              //   }
 
               // clean up htlcResult promises that were already fulfilled
               htlcResults.filterInPlace((_, p) => !p.future.isCompleted)
@@ -1097,6 +1142,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         ) {
           // it seems that the peer has agreed to our override proposal
           val lcss = currentData.proposedOverride.get
+            .withCurrentBlockDay(master.currentBlockDay)
             .withLocalSigOfRemote(master.node.privateKey)
             .copy(remoteSigOfLocal = msg.localSigOfRemoteLCSS)
 
@@ -1105,14 +1151,13 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             master.database.update { data =>
               data
                 .modify(_.channels.at(peerId))
-                .setTo(ChannelData(lcss = Some(lcss)))
+                .setTo(ChannelData(lcss = lcss))
             }
+            // channel is active again
+            state = StateManager(peerId = peerId, lcssCurrent = lcssStored)
 
             // send our channel policies again just in case
-            sendMessage(getChannelUpdate)
-
-            // channel is active again
-            state = StateManager(peerId = peerId)
+            sendMessage(getChannelUpdate(true))
           }
         }
       }
@@ -1145,7 +1190,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
   }
 
   def onBlockUpdated(block: BlockHeight): Unit = {
-    if (currentData.lcss.map(_.outgoingHtlcs.size).getOrElse(0) == 0) {
+    if (currentData.lcss.outgoingHtlcs.size == 0) {
       // nothing to do here
     } else {
       val expiredOutgoingHtlcs = lcssStored.outgoingHtlcs
@@ -1241,7 +1286,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           "can't send to this channel since it is not errored or in overriding state."
         )
       )
-    } else if (currentData.lcss.map(_.isHost) != Some(true)) {
+    } else if (!currentData.lcss.isHost) {
       Future.failed(
         new Exception(
           "can't send to this channel since we are not the hosts."
@@ -1273,7 +1318,12 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           .setTo(Some(lcssOverride))
       }
 
-      sendMessage(lcssOverride.stateOverride(master.node.privateKey))
+      sendMessage(
+        lcssOverride
+          .withCurrentBlockDay(master.currentBlockDay)
+          .withLocalSigOfRemote(master.node.privateKey)
+          .stateOverride
+      )
         .map((v: ujson.Value) => v("status").str)
     }
   }
@@ -1320,156 +1370,6 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       feeProportionalMillionths = master.config.feeProportionalMillionths,
       htlcMaximumMsat = Some(master.config.channelCapacityMsat)
     )
-  }
-
-  case class StateManager(
-      peerId: ByteVector,
-      uncommittedUpdates: List[FromLocal | FromRemote] = List.empty
-  ) {
-    // return a copy of this state with the update_add_htlc/update_fail_htlc/update_fulfill_htlc
-    // appended to the list of uncommitted updates that will be used to generate lcssNext below
-    // and that will be processed and dispatched to our upstream node once they are actually committed
-    // TODO: should we also not add if this is an htlc that is already committed? probably
-    def addUncommittedUpdate(upd: FromLocal | FromRemote): StateManager = {
-      if (this.uncommittedUpdates.exists(_ == upd)) then this
-      else this.copy(uncommittedUpdates = this.uncommittedUpdates :+ upd)
-    }
-    def removeUncommitedUpdate(upd: FromLocal | FromRemote): StateManager =
-      this.copy(uncommittedUpdates =
-        this.uncommittedUpdates.filterNot(_ == upd)
-      )
-
-    // make this a lazy val as a hack to ensure it is only sent once for each state
-    // this is not strictly necessary as repeated state_updates will be ignored, but
-    // makes the program flow clearer and debugging easier
-    lazy val sendStateUpdate: Unit = {
-      master.node.sendCustomMessage(
-        peerId,
-        state.lcssNext.stateUpdate(master.node.privateKey)
-      )
-    }
-
-    // calculates what will be our next state once we commit these uncommitted updates
-    def lcssNext: LastCrossSignedState = {
-      val base = lcssStored
-        .copy(
-          blockDay = master.currentBlockDay,
-          remoteSigOfLocal = ByteVector64.Zeroes,
-          localSigOfRemote = ByteVector64.Zeroes
-        )
-
-      uncommittedUpdates
-        .foldLeft(base)((lcss, upd) =>
-          upd match {
-            case FromRemote(add: UpdateAddHtlc) =>
-              lcss.copy(
-                remoteBalanceMsat = lcss.remoteBalanceMsat - add.amountMsat,
-                remoteUpdates = lcss.remoteUpdates + 1,
-                incomingHtlcs = lcss.incomingHtlcs :+ add
-              )
-            case FromRemote(
-                  fail: (UpdateFailHtlc | UpdateFailMalformedHtlc)
-                ) => {
-              val htlcId = fail match {
-                case x: UpdateFailHtlc          => x.id;
-                case x: UpdateFailMalformedHtlc => x.id
-              }
-
-              lcss.outgoingHtlcs.find(_.id == htlcId) match {
-                case Some(htlc) => {
-                  lcss.copy(
-                    localBalanceMsat = lcss.localBalanceMsat + htlc.amountMsat,
-                    remoteUpdates = lcss.remoteUpdates + 1,
-                    outgoingHtlcs = lcss.outgoingHtlcs.filterNot(_ == htlc)
-                  )
-                }
-                case None => lcss
-              }
-            }
-            case FromRemote(fulfill: UpdateFulfillHtlc) => {
-              lcss.outgoingHtlcs.find(_.id == fulfill.id) match {
-                case Some(htlc) => {
-                  lcss.copy(
-                    remoteBalanceMsat =
-                      lcss.remoteBalanceMsat + htlc.amountMsat,
-                    remoteUpdates = lcss.remoteUpdates + 1,
-                    outgoingHtlcs = lcss.outgoingHtlcs.filterNot(_ == htlc)
-                  )
-                }
-                case None => lcss
-              }
-            }
-            case FromLocal(add: UpdateAddHtlc, _) => {
-              lcss.copy(
-                localBalanceMsat = lcss.localBalanceMsat - add.amountMsat,
-                localUpdates = lcss.localUpdates + 1,
-                outgoingHtlcs = lcss.outgoingHtlcs :+ add
-              )
-            }
-            case FromLocal(
-                  fail: (UpdateFailHtlc | UpdateFailMalformedHtlc),
-                  _
-                ) => {
-              val htlcId = fail match {
-                case x: UpdateFailHtlc          => x.id;
-                case x: UpdateFailMalformedHtlc => x.id
-              }
-
-              lcss.incomingHtlcs.find(_.id == htlcId) match {
-                case Some(htlc) => {
-                  lcss.copy(
-                    remoteBalanceMsat =
-                      lcss.remoteBalanceMsat + htlc.amountMsat,
-                    localUpdates = lcss.localUpdates + 1,
-                    incomingHtlcs = lcss.incomingHtlcs.filterNot(_ == htlc)
-                  )
-                }
-                case None => lcss
-              }
-            }
-            case FromLocal(fulfill: UpdateFulfillHtlc, _) => {
-              lcss.incomingHtlcs.find(_.id == fulfill.id) match {
-                case Some(htlc) => {
-                  lcss.copy(
-                    localBalanceMsat = lcss.localBalanceMsat + htlc.amountMsat,
-                    localUpdates = lcss.localUpdates + 1,
-                    incomingHtlcs = lcss.incomingHtlcs.filterNot(_ == htlc)
-                  )
-                }
-                case None => lcss
-              }
-            }
-          }
-        )
-    }
-
-    def findMatchingState(
-        remoteStateUpdate: StateUpdate,
-        current: StateManager = this
-    ): Option[StateManager] =
-      (lcssNext.localUpdates - remoteStateUpdate.remoteUpdates) match {
-        case 0
-            if current.lcssNext
-              .copy(remoteSigOfLocal = remoteStateUpdate.localSigOfRemoteLCSS)
-              .verifyRemoteSig(peerId) =>
-          // found it!
-          Some(current)
-        case d if d > 0 =>
-          // we are still ahead, so let's try to remove all our updates in all possible combinations
-          // until we find one that matches the state our peer likes
-          state.uncommittedUpdates
-            .collect { case upd: FromLocal => upd }
-            .map { upd =>
-              findMatchingState(
-                remoteStateUpdate,
-                current.removeUncommitedUpdate(upd)
-              )
-            }
-            .find(_.isDefined)
-            .flatten
-        case d if d < 0 =>
-          None // we are behind them on _our_ list of uncommitted updates? this shouldn't happen!
-      }
   }
 
   def summary: String = {

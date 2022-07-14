@@ -28,7 +28,7 @@ case class Data(
 )
 
 case class ChannelData(
-    lcss: Option[LastCrossSignedState] = None,
+    lcss: LastCrossSignedState = LastCrossSignedState.empty,
     localErrors: Set[DetailedError] = Set.empty,
     remoteErrors: Set[Error] = Set.empty,
     proposedOverride: Option[LastCrossSignedState] = None,

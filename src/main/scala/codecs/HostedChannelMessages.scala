@@ -50,6 +50,29 @@ case class HostedChannelBranding(
     contactInfo: String
 ) extends HostedServerMessage
 
+object LastCrossSignedState {
+  def empty = LastCrossSignedState(
+    isHost = false,
+    refundScriptPubKey = ByteVector.empty,
+    initHostedChannel = InitHostedChannel(
+      maxHtlcValueInFlightMsat = 0.toULong,
+      htlcMinimumMsat = MilliSatoshi(0),
+      maxAcceptedHtlcs = 0,
+      channelCapacityMsat = MilliSatoshi(0),
+      initialClientBalanceMsat = MilliSatoshi(0)
+    ),
+    blockDay = 0,
+    localBalanceMsat = MilliSatoshi(0),
+    remoteBalanceMsat = MilliSatoshi(0),
+    localUpdates = 0,
+    remoteUpdates = 0,
+    incomingHtlcs = List.empty,
+    outgoingHtlcs = List.empty,
+    remoteSigOfLocal = ByteVector64.Zeroes,
+    localSigOfRemote = ByteVector64.Zeroes
+  )
+}
+
 case class LastCrossSignedState(
     isHost: Boolean,
     refundScriptPubKey: ByteVector,
@@ -67,6 +90,8 @@ case class LastCrossSignedState(
     with HostedClientMessage {
   override def toString(): String =
     s"LastCrossSignedState($blockDay, balances=${localBalanceMsat}/${remoteBalanceMsat}, updates=$localUpdates/$remoteUpdates, incomingHtlcs=$incomingHtlcs, outgoingHtlcs=$outgoingHtlcs)"
+
+  def isEmpty: Boolean = initHostedChannel.channelCapacityMsat.toLong == 0
 
   lazy val reverse: LastCrossSignedState =
     copy(
@@ -126,22 +151,22 @@ case class LastCrossSignedState(
   def verifyRemoteSig(pubKey: ByteVector): Boolean =
     Crypto.verifySignature(hostedSigHash, remoteSigOfLocal, pubKey)
 
-  def withLocalSigOfRemote(priv: ByteVector32): LastCrossSignedState = {
-    copy(localSigOfRemote = signRemote(priv))
-  }
+  def withCurrentBlockDay(blockDay: Long): LastCrossSignedState =
+    copy(blockDay = blockDay)
 
-  def signRemote(priv: ByteVector32) = Crypto.sign(reverse.hostedSigHash, priv)
+  def withLocalSigOfRemote(priv: ByteVector32): LastCrossSignedState =
+    copy(localSigOfRemote = Crypto.sign(reverse.hostedSigHash, priv))
 
-  def stateUpdate(priv: ByteVector32): StateUpdate =
-    StateUpdate(blockDay, localUpdates, remoteUpdates, signRemote(priv))
+  def stateUpdate: StateUpdate =
+    StateUpdate(blockDay, localUpdates, remoteUpdates, localSigOfRemote)
 
-  def stateOverride(priv: ByteVector32): StateOverride =
+  def stateOverride: StateOverride =
     StateOverride(
       blockDay,
       localBalanceMsat,
       localUpdates,
       remoteUpdates,
-      signRemote(priv)
+      localSigOfRemote
     )
 }
 
