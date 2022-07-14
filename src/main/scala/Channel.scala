@@ -111,7 +111,20 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
     ) {
       // reject htlc as outgoing if it's already incoming, sanity check
       localLogger.err.msg("htlc is already incoming, can't add it as outgoing")
-      promise.success(Some(Left(None)))
+      promise.success(
+        Some(
+          Left(
+            Some(
+              NormalFailureMessage(
+                IncorrectOrUnknownPaymentDetails(
+                  incomingAmount,
+                  master.currentBlock.toLong
+                )
+              )
+            )
+          )
+        )
+      )
     } else if (
       master.database.data.htlcForwards
         .get(incoming) == Some(HtlcIdentifier(shortChannelId, _))
@@ -135,7 +148,17 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       localLogger.debug
         .item("status", status)
         .msg("can't forward an HTLC to channel that isn't active")
-      promise.success(Some(Left(None)))
+      promise.success(
+        Some(
+          Left(
+            Some(
+              NormalFailureMessage(
+                TemporaryChannelFailure(getChannelUpdate(false))
+              )
+            )
+          )
+        )
+      )
     } else {
       // the default case in which we add a new htlc
       // create update_add_htlc based on the prototype we've received
@@ -167,7 +190,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             Left(
               Some(
                 NormalFailureMessage(
-                  TemporaryChannelFailure(getChannelUpdate)
+                  TemporaryChannelFailure(getChannelUpdate(true))
                 )
               )
             )
@@ -190,7 +213,17 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               // so we fail it on upstream
               // and remove it from the list of uncommitted updates
               localLogger.warn.item(err).msg("failed to send update_add_htlc")
-              promise.success(Some(Left(None)))
+              promise.success(
+                Some(
+                  Left(
+                    Some(
+                      NormalFailureMessage(
+                        TemporaryChannelFailure(getChannelUpdate(false))
+                      )
+                    )
+                  )
+                )
+              )
               state = state.removeUncommitedUpdate(upd)
             }
           }
@@ -289,7 +322,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               case _ => {
                 val reason = failure.getOrElse(
                   NormalFailureMessage(
-                    TemporaryChannelFailure(getChannelUpdate)
+                    TemporaryChannelFailure(getChannelUpdate(true))
                   )
                 ) match {
                   case NormalFailureMessage(fm) =>
@@ -706,7 +739,18 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               htlc.amountMsat < updated.lcssNext.initHostedChannel.htlcMinimumMsat
             ) {
               scala.concurrent.ExecutionContext.global.execute(() =>
-                gotPaymentResult(htlc.id, Some(Left(None)))
+                gotPaymentResult(
+                  htlc.id,
+                  Some(
+                    Left(
+                      Some(
+                        NormalFailureMessage(
+                          TemporaryChannelFailure(getChannelUpdate(true))
+                        )
+                      )
+                    )
+                  )
+                )
               )
             }
 
@@ -749,7 +793,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             scala.concurrent.ExecutionContext.global.execute(() =>
               gotPaymentResult(
                 htlc.id,
-                Some(Left(None))
+                Some(Left(Some(NormalFailureMessage(TemporaryNodeFailure))))
               )
             )
           }
@@ -883,14 +927,14 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                   )
                 case FromRemote(fail: UpdateFailMalformedHtlc) =>
                   // for c-lightning there is no way to return this correctly,
-                  // so just return a temporary_channel_failure for now
+                  // so just return another error for now
                   provideHtlcResult(
                     fail.id,
                     Some(
                       Left(
                         Some(
                           NormalFailureMessage(
-                            TemporaryChannelFailure(getChannelUpdate)
+                            InvalidOnionPayload(0.toULong, 0)
                           )
                         )
                       )
@@ -1229,10 +1273,10 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
     }
   }
 
-  def getChannelUpdate: ChannelUpdate = {
+  def getChannelUpdate(channelIsUp: Boolean): ChannelUpdate = {
     val flags = ChannelUpdate.ChannelFlags(
       isNode1 = Utils.isLessThan(master.node.publicKey, peerId),
-      isEnabled = true
+      isEnabled = channelIsUp
     )
     val timestamp: TimestampSecond = TimestampSecond.now()
     val witness: ByteVector = Crypto.sha256(
