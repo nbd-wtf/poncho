@@ -306,7 +306,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
 
   def handleRPC(line: String): Unit = {
     val req = ujson.read(line)
-    val data = req("params")
+    val params = req("params")
     def reply(result: ujson.Value) = answer(req)(result)
     def replyError(err: String) = answer(req)(err)
 
@@ -365,8 +365,8 @@ class CLN(master: ChannelMaster) extends NodeInterface {
           )
         )
 
-        val lightningDir = data("configuration")("lightning-dir").str
-        rpcAddr = lightningDir + "/" + data("configuration")("rpc-file").str
+        val lightningDir = params("configuration")("lightning-dir").str
+        rpcAddr = lightningDir + "/" + params("configuration")("rpc-file").str
         hsmSecret = Paths.get(lightningDir + "/hsm_secret")
 
         initCallback()
@@ -374,8 +374,8 @@ class CLN(master: ChannelMaster) extends NodeInterface {
       case "custommsg" => {
         reply(ujson.Obj("result" -> "continue"))
 
-        val peerId = ByteVector.fromValidHex(data("peer_id").str)
-        val body = data("payload").str
+        val peerId = ByteVector.fromValidHex(params("peer_id").str)
+        val body = params("payload").str
         val tag = ByteVector
           .fromValidHex(body.take(4))
           .toInt(signed = false)
@@ -408,8 +408,8 @@ class CLN(master: ChannelMaster) extends NodeInterface {
             "seconds"
           )
         )(() => {
-          val htlc = data("htlc")
-          val onion = data("onion")
+          val htlc = params("htlc")
+          val onion = params("onion")
 
           // if we're the final hop of an htlc this property won't exist
           if (!onion.obj.contains("short_channel_id")) {
@@ -492,7 +492,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
         })
       }
       case "sendpay_success" => {
-        val successdata = data("sendpay_success")
+        val successdata = params("sendpay_success")
         if (successdata.obj.contains("label"))
           for {
             label <- successdata("label").strOpt
@@ -511,7 +511,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
             )
       }
       case "sendpay_failure" => {
-        val failuredata = data("sendpay_failure")("data")
+        val failuredata = params("sendpay_failure")("data")
         if (failuredata.obj.contains("label"))
           for {
             label <- failuredata("label").strOpt
@@ -543,21 +543,21 @@ class CLN(master: ChannelMaster) extends NodeInterface {
           }
       }
       case "connect" => {
-        val id = data("id").str
-        val address = data("address")("address").str
-        master.log(s"$id connected: $address")
+        // val id = params("id").str
+        // val address = params("address")("address").str
+        // master.log(s"$id connected: $address")
         // TODO: send InvokeHostedChannel to all hosted peers from which we are clients
         //       and related flows -- for example sending LastCrossSignedState etc
       }
       case "disconnect" => {
-        val id = data("id").str
-        master.log(s"$id disconnected")
+        // val id = params("id").str
+        // master.log(s"$id disconnected")
       }
 
       // custom rpc methods
       case "parse-lcss" => {
         val decoded = for {
-          lcssHex <- data match {
+          lcssHex <- params match {
             case o: ujson.Obj =>
               o.value.get("last_cross_signed_state_hex").flatMap(_.strOpt)
             case a: ujson.Arr => a.value.headOption.flatMap(_.strOpt)
@@ -581,7 +581,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
 
       case "hc-channel" =>
         (for {
-          peerHex <- data match {
+          peerHex <- params match {
             case o: ujson.Obj => o.value.get("peerId").flatMap(_.strOpt)
             case a: ujson.Arr => a.value.headOption.flatMap(_.strOpt)
             case _            => None
@@ -593,11 +593,11 @@ class CLN(master: ChannelMaster) extends NodeInterface {
         )) getOrElse replyError("couldn't find that channel")
 
       case "hc-override" => {
-        val params = data match {
+        params match {
           case _: ujson.Obj =>
-            Some((data("peerid").strOpt, data("msatoshi").numOpt))
+            Some((params("peerid").strOpt, params("msatoshi").numOpt))
           case arr: ujson.Arr if arr.value.size == 2 =>
-            Some((data(0).strOpt, data(1).numOpt))
+            Some((params(0).strOpt, params(1).numOpt))
           case _ => None
         } match {
           case Some(Some(peerId), Some(msatoshi)) => {
@@ -616,11 +616,11 @@ class CLN(master: ChannelMaster) extends NodeInterface {
       }
 
       case "hc-request-channel" => {
-        val params = data match {
+        params match {
           case _: ujson.Obj =>
-            Some(data("peerid").strOpt)
+            Some(params("peerid").strOpt)
           case arr: ujson.Arr if arr.value.size == 1 =>
-            Some(data(0).strOpt)
+            Some(params(0).strOpt)
           case _ => None
         } match {
           case Some(Some(peerId)) => {

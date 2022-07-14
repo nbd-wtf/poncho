@@ -17,7 +17,6 @@ import upickle.default._
 
 object Config {
   import Picklers.given
-  given ReadWriter[Config] = macroRW
 
   def fromFile(basePath: Path): Try[Config] =
     Try(read[Config](basePath.resolve("config.json")))
