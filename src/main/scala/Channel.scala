@@ -199,6 +199,8 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       } else {
         // will send update_add_htlc to hosted client
         // and we update the state to include this uncommitted htlc
+        state = updated
+
         // and add to the callbacks we're keeping track of for the upstream node
         htlcResults += (htlc.id -> promise)
 
