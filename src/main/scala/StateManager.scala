@@ -109,38 +109,4 @@ case class StateManager(
         }
       )
   }
-
-  def findMatchingState(
-      remoteStateUpdate: StateUpdate,
-      current: StateManager = this
-  ): Option[StateManager] = {
-    System.err.println(s"called with $current")
-    (current.lcssNext.localUpdates - remoteStateUpdate.remoteUpdates) match {
-      case 0
-          if current.lcssNext
-            .copy(remoteSigOfLocal = remoteStateUpdate.localSigOfRemoteLCSS)
-            .verifyRemoteSig(peerId) =>
-        // found it!
-        System.err.println(s"found $current")
-        Some(current)
-      case 0 => None // we've removed the wrong update, so this isn't it
-      case d if d > 0 =>
-        // we are still ahead, so let's try to remove all our updates in all possible combinations
-        // until we find one that matches the state our peer likes
-        System.err.println(s"$current still missing $d")
-        current.uncommittedUpdates
-          .collect { case upd: FromLocal => upd }
-          .map { upd =>
-            System.err.println(s"will remove $upd")
-            findMatchingState(
-              remoteStateUpdate,
-              current.removeUncommitedUpdate(upd)
-            )
-          }
-          .find(_.isDefined)
-          .flatten
-      case d if d < 0 =>
-        None // we are behind them on _our_ list of uncommitted updates? this shouldn't happen!
-    }
-  }
 }

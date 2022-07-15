@@ -839,298 +839,259 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           .item("remote-updates", s"${msg.remoteUpdates}/${msg.localUpdates}")
           .msg("updating our local state after a transition")
 
-        val matching =
-          if (msg.blockDay != master.currentBlockDay) {
-            localLogger.warn.msg("blockdays are different")
-            None
-          } else if (msg.localUpdates > state.lcssNext.remoteUpdates) {
-            localLogger.debug.msg("we are missing updates from them")
-            None
-          } else if (msg.remoteUpdates < state.lcssNext.localUpdates) {
-            localLogger.debug.msg("they are missing updates from us")
-            // try to remedy the situation
-            // first we try to get what state they are updating and commit to that
-            state.findMatchingState(msg)
-          } else if (
-            msg.localUpdates == state.lcssNext.remoteUpdates && msg.remoteUpdates == state.lcssNext.localUpdates
-          )
-            Some(state)
-          else None
+        if (msg.blockDay != master.currentBlockDay) {
+          localLogger.warn.msg("blockdays are different")
+        } else if (msg.localUpdates > state.lcssNext.remoteUpdates) {
+          localLogger.debug.msg("we are missing updates from them")
+        } else if (msg.remoteUpdates < state.lcssNext.localUpdates) {
+          localLogger.debug.msg("they are missing updates from us")
+        } else if (
+          msg.localUpdates != state.lcssNext.remoteUpdates || msg.remoteUpdates != state.lcssNext.localUpdates
+        ) localLogger.debug.msg("peer has a different state than we")
+        else {
+          // copy the state here so weird things don't happen in the meantime that break it
+          // (although this is all synchronous so there shouldn't be any issue, but anyway)
+          val currentState = state
+          val lcssNext = currentState.lcssNext
+            .withCurrentBlockDay(master.currentBlockDay)
+            .withLocalSigOfRemote(master.node.privateKey)
+            .copy(remoteSigOfLocal = msg.localSigOfRemoteLCSS)
 
-        if (!matching.isDefined) {
-          localLogger.debug.msg(
-            "couldn't find a state that matched the signature received from the peer"
-          )
-        }
+          localLogger.debug
+            .item(
+              "updates",
+              s"${lcssNext.localUpdates}/${lcssNext.remoteUpdates}"
+            )
+            .msg("we and the client are now even")
+          // verify signature
+          if (!lcssNext.verifyRemoteSig(peerId)) {
+            // a wrong signature, fail the channel
+            val err = Error(
+              channelId,
+              Error.ERR_HOSTED_WRONG_REMOTE_SIG
+            )
+            sendMessage(err)
+            master.database.update { data =>
+              data
+                .modify(_.channels.at(peerId).localErrors)
+                .using(
+                  _ + DetailedError(
+                    err,
+                    None,
+                    "peer sent a wrong state update or one with a broken signature"
+                  )
+                )
+            }
+          } else {
+            // grab state before saving the update
+            val lcssPrev = lcssStored
 
-        matching
-          .foreach { currentState =>
-            val lcssNext = currentState.lcssNext
-              .withCurrentBlockDay(master.currentBlockDay)
-              .withLocalSigOfRemote(master.node.privateKey)
-              .copy(remoteSigOfLocal = msg.localSigOfRemoteLCSS)
+            // update new last_cross_signed_state on the database
+            localLogger.info.item("lcss", lcssNext).msg("saving on db")
+            master.database.update { data =>
+              data
+                .modify(_.channels.at(peerId))
+                .setTo(
+                  ChannelData(lcss = lcssNext)
+                )
+                //
+                // also remove the links for any htlcs that were relayed from elsewhere to this channel
+                // (htlcs that were relayed from this channel to elsewhere will be handled on their side)
+                .modify(_.htlcForwards)
+                .using(fwd => {
+                  val previousOutgoing = lcssPrev.outgoingHtlcs.toSet
+                  val nextOutgoing = lcssNext.outgoingHtlcs.toSet
+                  val resolved = (previousOutgoing -- nextOutgoing)
+                    .map(htlc => HtlcIdentifier(shortChannelId, htlc.id))
+                  val remains =
+                    fwd.filterNot((_, to) => resolved.contains(to))
+                  remains
+                })
+            }
+            state = state.copy(lcssCurrent = lcssStored)
 
-            localLogger.debug
-              .item(
-                "updates",
-                s"${lcssNext.localUpdates}/${lcssNext.remoteUpdates}"
-              )
-              .msg("we and the client are now even")
-            // verify signature
-            if (!lcssNext.verifyRemoteSig(peerId)) {
-              // a wrong signature, fail the channel
-              val err = Error(
-                channelId,
-                Error.ERR_HOSTED_WRONG_REMOTE_SIG
-              )
-              sendMessage(err)
-              master.database.update { data =>
-                data
-                  .modify(_.channels.at(peerId).localErrors)
-                  .using(
-                    _ + DetailedError(
-                      err,
-                      None,
-                      "peer sent a wrong state update or one with a broken signature"
+            // time to do some cleaning up -- non-priority
+            scala.concurrent.ExecutionContext.global
+              .execute(() => master.cleanupPreimages())
+
+            // act on each pending message, relaying them as necessary
+            currentState.uncommittedUpdates.foreach {
+              // i.e. and fail htlcs if any
+              case FromRemote(fail: UpdateFailHtlc) =>
+                provideHtlcResult(
+                  fail.id,
+                  Some(
+                    Left(
+                      Some(
+                        // we don't unwrap it here, it will be unwrapped at gotPaymentResult on the other hosted channel
+                        // or it will be unwraped on the node interface layer
+                        FailureOnion(fail.reason)
+                      )
                     )
                   )
-              }
-            } else {
-              // grab state before saving the update
-              val lcssPrev = lcssStored
-
-              // update new last_cross_signed_state on the database
-              localLogger.info.item("lcss", lcssNext).msg("saving on db")
-              master.database.update { data =>
-                data
-                  .modify(_.channels.at(peerId))
-                  .setTo(
-                    ChannelData(lcss = lcssNext)
-                  )
-                  //
-                  // also remove the links for any htlcs that were relayed from elsewhere to this channel
-                  // (htlcs that were relayed from this channel to elsewhere will be handled on their side)
-                  .modify(_.htlcForwards)
-                  .using(fwd => {
-                    val previousOutgoing = lcssPrev.outgoingHtlcs.toSet
-                    val nextOutgoing = lcssNext.outgoingHtlcs.toSet
-                    val resolved = (previousOutgoing -- nextOutgoing)
-                      .map(htlc => HtlcIdentifier(shortChannelId, htlc.id))
-                    val remains =
-                      fwd.filterNot((_, to) => resolved.contains(to))
-                    remains
-                  })
-              }
-              state = state.copy(lcssCurrent = lcssStored)
-
-              // time to do some cleaning up -- non-priority
-              scala.concurrent.ExecutionContext.global
-                .execute(() => master.cleanupPreimages())
-
-              // act on each pending message, relaying them as necessary
-              currentState.uncommittedUpdates.foreach {
-                // i.e. and fail htlcs if any
-                case FromRemote(fail: UpdateFailHtlc) =>
-                  provideHtlcResult(
-                    fail.id,
-                    Some(
-                      Left(
-                        Some(
-                          // we don't unwrap it here, it will be unwrapped at gotPaymentResult on the other hosted channel
-                          // or it will be unwraped on the node interface layer
-                          FailureOnion(fail.reason)
+                )
+              case FromRemote(fail: UpdateFailMalformedHtlc) =>
+                // for c-lightning there is no way to return this correctly,
+                // so just return another error for now
+                provideHtlcResult(
+                  fail.id,
+                  Some(
+                    Left(
+                      Some(
+                        NormalFailureMessage(
+                          InvalidOnionPayload(0.toULong, 0)
                         )
                       )
                     )
                   )
-                case FromRemote(fail: UpdateFailMalformedHtlc) =>
-                  // for c-lightning there is no way to return this correctly,
-                  // so just return another error for now
-                  provideHtlcResult(
-                    fail.id,
-                    Some(
-                      Left(
+                )
+              case FromRemote(fulfill: UpdateFulfillHtlc) => {
+                // we've already relayed this to the upstream node eagerly, so do nothing
+              }
+              case FromRemote(htlc: UpdateAddHtlc) => {
+                // send a payment through the upstream node -- or to another hosted channel
+                scala.concurrent.ExecutionContext.global.execute { () =>
+                  Utils.parseClientOnion(
+                    master.node.privateKey,
+                    htlc
+                  ) match {
+                    case Left(fail) => {
+                      // this should never happen
+                      localLogger.err.msg(
+                        "this should never happen because we had parsed the onion already"
+                      )
+                      gotPaymentResult(
+                        htlc.id,
                         Some(
-                          NormalFailureMessage(
-                            InvalidOnionPayload(0.toULong, 0)
+                          Left(
+                            Some(
+                              NormalFailureMessage(
+                                InvalidOnionPayload(0.toULong, 0)
+                              )
+                            )
                           )
                         )
                       )
-                    )
-                  )
-                case FromRemote(fulfill: UpdateFulfillHtlc) => {
-                  // we've already relayed this to the upstream node eagerly, so do nothing
-                }
-                case FromRemote(htlc: UpdateAddHtlc) => {
-                  // send a payment through the upstream node -- or to another hosted channel
-                  scala.concurrent.ExecutionContext.global.execute { () =>
-                    Utils.parseClientOnion(
-                      master.node.privateKey,
-                      htlc
-                    ) match {
-                      case Left(fail) => {
-                        // this should never happen
-                        localLogger.err.msg(
-                          "this should never happen because we had parsed the onion already"
-                        )
+                    }
+                    case Right(
+                          OnionParseResult(
+                            payload: PaymentOnion.FinalTlvPayload,
+                            _,
+                            _
+                          )
+                        ) => {
+                      // we're receiving the payment? this is weird but possible.
+                      // figure out how to handle this later, but we will have to patch
+                      // c-lightning so it can allow invoices to be manually settled
+                      // (and release the preimage in the process.)
+                      // this could also be a trampoline, so when we want to support that
+                      // we'll have to look again at how eclair is doing it.
+                      localLogger.warn
+                        .item("payload", payload)
+                        .msg("we're receiving a payment from the client?")
+
+                      scala.concurrent.ExecutionContext.global.execute(() =>
                         gotPaymentResult(
                           htlc.id,
                           Some(
                             Left(
-                              Some(
-                                NormalFailureMessage(
-                                  InvalidOnionPayload(0.toULong, 0)
-                                )
-                              )
+                              Some(NormalFailureMessage(TemporaryNodeFailure))
                             )
                           )
                         )
-                      }
-                      case Right(
-                            OnionParseResult(
-                              payload: PaymentOnion.FinalTlvPayload,
-                              _,
-                              _
-                            )
-                          ) => {
-                        // we're receiving the payment? this is weird but possible.
-                        // figure out how to handle this later, but we will have to patch
-                        // c-lightning so it can allow invoices to be manually settled
-                        // (and release the preimage in the process.)
-                        // this could also be a trampoline, so when we want to support that
-                        // we'll have to look again at how eclair is doing it.
-                        localLogger.warn
-                          .item("payload", payload)
-                          .msg("we're receiving a payment from the client?")
-
-                        scala.concurrent.ExecutionContext.global.execute(() =>
-                          gotPaymentResult(
-                            htlc.id,
-                            Some(
-                              Left(
-                                Some(NormalFailureMessage(TemporaryNodeFailure))
-                              )
-                            )
+                      )
+                    }
+                    case Right(
+                          OnionParseResult(
+                            payload: PaymentOnion.ChannelRelayPayload,
+                            nextOnion: ByteVector,
+                            sharedSecret: ByteVector32
                           )
-                        )
-                      }
-                      case Right(
-                            OnionParseResult(
-                              payload: PaymentOnion.ChannelRelayPayload,
-                              nextOnion: ByteVector,
-                              sharedSecret: ByteVector32
+                        ) => {
+                      // a payment the client is sending through us to someone else
+                      System.err.println(
+                        "~ parsed onion, will relay the payment"
+                      )
+                      // first check if it's for another hosted channel we may have
+                      master.database.data.channels
+                        .find((p, _) =>
+                          Utils.getShortChannelId(master.node.publicKey, p) ==
+                            ShortChannelId(payload.outgoingChannelId)
+                        ) match {
+                        case Some((targetPeerId, chandata)) => {
+                          System.err.println("~~ internally")
+                          // it is a local hosted channel
+                          // send it to the corresponding channel actor
+                          master
+                            .getChannel(targetPeerId)
+                            .addHtlc(
+                              incoming =
+                                HtlcIdentifier(shortChannelId, htlc.id),
+                              incomingAmount = htlc.amountMsat,
+                              outgoingAmount = payload.amountToForward,
+                              paymentHash = htlc.paymentHash,
+                              cltvExpiry = payload.outgoingCltv,
+                              nextOnion = nextOnion
                             )
-                          ) => {
-                        // a payment the client is sending through us to someone else
-                        System.err.println(
-                          "~ parsed onion, will relay the payment"
-                        )
-                        // first check if it's for another hosted channel we may have
-                        master.database.data.channels
-                          .find((p, _) =>
-                            Utils.getShortChannelId(master.node.publicKey, p) ==
-                              ShortChannelId(payload.outgoingChannelId)
-                          ) match {
-                          case Some((targetPeerId, chandata)) => {
-                            System.err.println("~~ internally")
-                            // it is a local hosted channel
-                            // send it to the corresponding channel actor
-                            master
-                              .getChannel(targetPeerId)
-                              .addHtlc(
-                                incoming =
-                                  HtlcIdentifier(shortChannelId, htlc.id),
-                                incomingAmount = htlc.amountMsat,
-                                outgoingAmount = payload.amountToForward,
-                                paymentHash = htlc.paymentHash,
-                                cltvExpiry = payload.outgoingCltv,
-                                nextOnion = nextOnion
-                              )
-                              .foreach { res => gotPaymentResult(htlc.id, res) }
-                          }
-                          case None =>
-                            System.err.println("~~ through upstream node")
-                            // it is a normal channel on the upstream node
-                            // use sendonion
-                            master.node
-                              .sendOnion(
-                                chan = this,
-                                htlcId = htlc.id,
-                                paymentHash = htlc.paymentHash,
-                                firstHop =
-                                  ShortChannelId(payload.outgoingChannelId),
-                                amount = payload.amountToForward,
-                                cltvExpiryDelta =
-                                  payload.outgoingCltv - master.currentBlock,
-                                onion = nextOnion
-                              )
+                            .foreach { res => gotPaymentResult(htlc.id, res) }
                         }
+                        case None =>
+                          System.err.println("~~ through upstream node")
+                          // it is a normal channel on the upstream node
+                          // use sendonion
+                          master.node
+                            .sendOnion(
+                              chan = this,
+                              htlcId = htlc.id,
+                              paymentHash = htlc.paymentHash,
+                              firstHop =
+                                ShortChannelId(payload.outgoingChannelId),
+                              amount = payload.amountToForward,
+                              cltvExpiryDelta =
+                                payload.outgoingCltv - master.currentBlock,
+                              onion = nextOnion
+                            )
                       }
                     }
                   }
                 }
-                case FromLocal(
-                      htlc: UpdateAddHtlc,
-                      Some(in: HtlcIdentifier)
-                    ) => {
-                  // here we update the database with the mapping between received and sent htlcs
-                  // (now that we are sure the peer has accepted our update_add_htlc)
-                  master.database.update { data =>
-                    data
-                      .modify(_.htlcForwards)
-                      .using(
-                        _ + (in -> HtlcIdentifier(shortChannelId, htlc.id))
-                      )
-                  }
-                }
-                case _: FromLocal => {
-                  // we mostly (except for the action above) do not take any action reactively with
-                  // updates we originated since we have sent them already before sending our state update
+              }
+              case FromLocal(
+                    htlc: UpdateAddHtlc,
+                    Some(in: HtlcIdentifier)
+                  ) => {
+                // here we update the database with the mapping between received and sent htlcs
+                // (now that we are sure the peer has accepted our update_add_htlc)
+                master.database.update { data =>
+                  data
+                    .modify(_.htlcForwards)
+                    .using(
+                      _ + (in -> HtlcIdentifier(shortChannelId, htlc.id))
+                    )
                 }
               }
-
-              // send our state update
-              sendStateUpdate(currentState)
-
-              // update the state manager state to the new lcss -- i.e. remove all the updates that were
-              // committed from the list of uncommitted updates
-              state = state.copy(uncommittedUpdates =
-                state.uncommittedUpdates.filterNot(upd =>
-                  currentState.uncommittedUpdates.exists(_ == upd)
-                )
-              )
-
-              // replay updates we've temporarily disconsidered as part of the matching strategy above
-              // this may be not necessary, let's see
-              // state.uncommittedUpdates
-              //   .collect {
-              //     case FromLocal(msg, _) if !msg.isInstanceOf[UpdateAddHtlc] =>
-              //       msg
-              //   }
-              //   .map { msg =>
-              //     System.err.println(s"replaying $msg")
-              //     sendMessage(msg)
-              //   }
-              //   .pipe(Future.sequence(_))
-              //   .onComplete {
-              //     case Success(replays) => {
-              //       if (replays.size > 0) {
-              //         System.err.println(
-              //           s"sending state update after replays ${state.lcssNext}"
-              //         )
-              //         sendStateUpdate(state)
-              //       }
-              //     }
-              //     case Failure(err) =>
-              //       localLogger.warn
-              //         .item(err)
-              //         .msg("failed to replay updates after partial transition")
-              //   }
-
-              // clean up htlcResult promises that were already fulfilled
-              htlcResults.filterInPlace((_, p) => !p.future.isCompleted)
+              case _: FromLocal => {
+                // we mostly (except for the action above) do not take any action reactively with
+                // updates we originated since we have sent them already before sending our state update
+              }
             }
+
+            // send our state update
+            sendStateUpdate(currentState)
+
+            // update the state manager state to the new lcss -- i.e. remove all the updates that were
+            // committed from the list of uncommitted updates
+            // if any  new updates were added in the meantime (shouldn't happen) those won't be affected
+            state = state.copy(uncommittedUpdates =
+              state.uncommittedUpdates.filterNot(upd =>
+                currentState.uncommittedUpdates.exists(_ == upd)
+              )
+            )
+
+            // clean up htlcResult promises that were already fulfilled
+            htlcResults.filterInPlace((_, p) => !p.future.isCompleted)
           }
+        }
       }
 
       // client is accepting our override proposal
