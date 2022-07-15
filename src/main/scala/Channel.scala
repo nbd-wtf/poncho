@@ -192,12 +192,29 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       val requiredFee = MilliSatoshi(
         master.config.feeBase.toLong + (master.config.feeProportionalMillionths * htlc.amountMsat.toLong / 1000000L)
       )
+
       if (
-        (htlc.cltvExpiry.blockHeight - master.currentBlock).toInt < master.config.cltvExpiryDelta.toInt ||
+        (htlc.cltvExpiry.blockHeight - master.currentBlock).toInt < master.config.cltvExpiryDelta.toInt
+      )
+        promise.success(
+          Some(
+            Left(
+              Some(
+                NormalFailureMessage(
+                  IncorrectOrUnknownPaymentDetails(
+                    htlc.amountMsat,
+                    master.currentBlock.toLong
+                  )
+                )
+              )
+            )
+          )
+        )
+      else if (
         (incomingAmount - htlc.amountMsat) < requiredFee ||
         updated.lcssNext.localBalanceMsat < MilliSatoshi(0L) ||
         updated.lcssNext.remoteBalanceMsat < MilliSatoshi(0L)
-      ) {
+      )
         promise.success(
           Some(
             Left(
@@ -209,7 +226,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             )
           )
         )
-      } else {
+      else {
         // will send update_add_htlc to hosted client
         // and we update the state to include this uncommitted htlc
         state = updated
@@ -1235,6 +1252,31 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           )
 
         }
+    }
+
+    // cleanup uncommitted htlcs that may be pending for so long they're now inviable
+    state.uncommittedUpdates.collect {
+      case m @ FromLocal(htlc: UpdateAddHtlc, _)
+          if (htlc.cltvExpiry.blockHeight - master.currentBlock).toInt < master.config.cltvExpiryDelta.toInt => {
+        state = state.removeUncommitedUpdate(m)
+
+        // and fail them upstream
+        provideHtlcResult(
+          htlc.id,
+          Some(
+            Left(
+              Some(
+                NormalFailureMessage(
+                  IncorrectOrUnknownPaymentDetails(
+                    htlc.amountMsat,
+                    master.currentBlock.toLong
+                  )
+                )
+              )
+            )
+          )
+        )
+      }
     }
   }
 
