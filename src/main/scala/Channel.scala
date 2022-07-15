@@ -535,7 +535,42 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
       // a client is telling us they are online
       case msg: InvokeHostedChannel if status == Active =>
+        // after a reconnection our peer won't have any of our current uncommitted updates
+        val updatesToReplay = state.uncommittedUpdates
+          .filter { case _: FromLocal => true; case _ => false }
+        state = state.copy(uncommittedUpdates = List.empty)
+
+        // send the committed state
         sendMessage(lcssStored)
+          // replay the uncommitted updates now
+          .andThen(_ =>
+            // first the fail/fulfill
+            updatesToReplay
+              .collect {
+                case m @ FromLocal(f, _) if !f.isInstanceOf[UpdateAddHtlc] => m
+              }
+              .foreach { m =>
+                state = state.addUncommittedUpdate(m)
+                sendMessage(m.upd)
+              }
+          )
+          .andThen(_ =>
+            // then the adds
+            updatesToReplay
+              .collect {
+                case m @ FromLocal(add: UpdateAddHtlc, _) => {
+                  val newAdd = add.copy(
+                    id = state.lcssNext.localUpdates.toULong + 1L.toULong
+                  )
+                  state = state.addUncommittedUpdate(m.copy(upd = newAdd))
+                  sendMessage(newAdd)
+                }
+              }
+          )
+          .andThen(_ =>
+            // finally send our state_update
+            if (updatesToReplay.size > 0) sendStateUpdate(state)
+          )
 
       // if errored, when the client tries to invoke it we return the error
       case _: InvokeHostedChannel if status == Errored =>
