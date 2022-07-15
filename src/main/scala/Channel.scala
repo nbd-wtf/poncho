@@ -273,37 +273,89 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
     localLogger.debug.item(summary).msg("got payment result")
 
-    if (res.isEmpty) {
-      // payment still pending
-    } else if (status != Active && status != Errored && status != Suspended) {
-      // these are the 3 states in which we will still accept results, otherwise do nothing
-      // (the other states are effectively states in which no payment could have ever been relayed)
-      localLogger.err.msg(
-        "not in an acceptable status to accept payment result"
-      )
-    } else
-      res.get match {
-        case Right(preimage) => {
-          // since this comes from the upstream node it is assumed the preimage is valid
-          val fulfill = UpdateFulfillHtlc(
-            channelId,
-            htlcId,
-            preimage
-          )
+    res match {
+      case None => // payment still pending
+      case Some(_)
+          if (status != Active && status != Errored && status != Suspended) =>
+        // these are the 3 states in which we will still accept results, otherwise do nothing
+        // (the other states are effectively states in which no payment could have ever been relayed)
+        localLogger.err.msg(
+          "not in an acceptable status to accept payment result"
+        )
+      case Some(Right(preimage)) => {
+        // since this comes from the upstream node it is assumed the preimage is valid
+        val fulfill = UpdateFulfillHtlc(
+          channelId,
+          htlcId,
+          preimage
+        )
 
-          // migrate our state to one containing this uncommitted update
-          val upd = FromLocal(fulfill, None)
-          state = state.addUncommittedUpdate(upd)
+        // migrate our state to one containing this uncommitted update
+        val upd = FromLocal(fulfill, None)
+        state = state.addUncommittedUpdate(upd)
 
-          // save the preimage so if we go offline we can keep trying to send it or resolve manually
-          master.database.update { data =>
-            data
-              .modify(_.preimages)
-              .using(_ + (Crypto.sha256(preimage) -> preimage))
+        // save the preimage so if we go offline we can keep trying to send it or resolve manually
+        master.database.update { data =>
+          data
+            .modify(_.preimages)
+            .using(_ + (Crypto.sha256(preimage) -> preimage))
+        }
+
+        // we will send this immediately to the client and hope he will acknowledge it
+        sendMessage(fulfill)
+          .onComplete {
+            case Success(_) => {
+              if (status == Active) sendStateUpdate(state)
+            }
+            case Failure(err) => {
+              // client is offline and can't take our update_fulfill_htlc,
+              // so we remove it from the list of uncommitted updates
+              // and wait for when the peer becomes online again
+              localLogger.warn
+                .item(err)
+                .msg("failed to send update_fulfill_htlc")
+              state = state.removeUncommitedUpdate(upd)
+            }
+          }
+      }
+      case Some(Left(failure)) => {
+        for {
+          htlc <- state.lcssNext.incomingHtlcs.find(_.id == htlcId)
+          OnionParseResult(packet, _, sharedSecret) <- Utils
+            .parseClientOnion(master.node.privateKey, htlc)
+            .toOption
+        } yield {
+          val fail = failure match {
+            case Some(NormalFailureMessage(bo: BadOnion)) =>
+              UpdateFailMalformedHtlc(
+                htlc.channelId,
+                htlc.id,
+                bo.onionHash,
+                bo.code
+              )
+            case _ => {
+              val reason = failure.getOrElse(
+                NormalFailureMessage(
+                  TemporaryChannelFailure(getChannelUpdate(true))
+                )
+              ) match {
+                case NormalFailureMessage(fm) =>
+                  Sphinx.FailurePacket.create(sharedSecret, fm)
+                case FailureOnion(fo) =>
+                  // must unwrap here because neither upstream node (CLN) or another hosted channel
+                  // won't unwrap whatever packet they got from the next hop
+                  Sphinx.FailurePacket.wrap(fo, sharedSecret)
+              }
+
+              UpdateFailHtlc(channelId, htlcId, reason)
+            }
           }
 
-          // we will send this immediately to the client and hope he will acknowledge it
-          sendMessage(fulfill)
+          // prepare updated state
+          val upd = FromLocal(fail, None)
+          state = state.addUncommittedUpdate(upd)
+
+          sendMessage(fail)
             .onComplete {
               case Success(_) => {
                 if (status == Active) sendStateUpdate(state)
@@ -313,67 +365,14 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                 // so we remove it from the list of uncommitted updates
                 // and wait for when the peer becomes online again
                 localLogger.warn
-                  .item(err)
-                  .msg("failed to send update_fulfill_htlc")
+                  .item("err", err)
+                  .msg(s"failed to send update_fail_htlc")
                 state = state.removeUncommitedUpdate(upd)
               }
             }
         }
-        case Left(failure) => {
-          for {
-            htlc <- state.lcssNext.incomingHtlcs.find(_.id == htlcId)
-            OnionParseResult(packet, _, sharedSecret) <- Utils
-              .parseClientOnion(master.node.privateKey, htlc)
-              .toOption
-          } yield {
-            val fail = failure match {
-              case Some(NormalFailureMessage(bo: BadOnion)) =>
-                UpdateFailMalformedHtlc(
-                  htlc.channelId,
-                  htlc.id,
-                  bo.onionHash,
-                  bo.code
-                )
-              case _ => {
-                val reason = failure.getOrElse(
-                  NormalFailureMessage(
-                    TemporaryChannelFailure(getChannelUpdate(true))
-                  )
-                ) match {
-                  case NormalFailureMessage(fm) =>
-                    Sphinx.FailurePacket.create(sharedSecret, fm)
-                  case FailureOnion(fo) =>
-                    // must unwrap here because neither upstream node (CLN) or another hosted channel
-                    // won't unwrap whatever packet they got from the next hop
-                    Sphinx.FailurePacket.wrap(fo, sharedSecret)
-                }
-
-                UpdateFailHtlc(channelId, htlcId, reason)
-              }
-            }
-
-            // prepare updated state
-            val upd = FromLocal(fail, None)
-            state = state.addUncommittedUpdate(upd)
-
-            sendMessage(fail)
-              .onComplete {
-                case Success(_) => {
-                  if (status == Active) sendStateUpdate(state)
-                }
-                case Failure(err) => {
-                  // client is offline and can't take our update_fulfill_htlc,
-                  // so we remove it from the list of uncommitted updates
-                  // and wait for when the peer becomes online again
-                  localLogger.warn
-                    .item("err", err)
-                    .msg(s"failed to send update_fail_htlc")
-                  state = state.removeUncommitedUpdate(upd)
-                }
-              }
-          }
-        }
       }
+    }
   }
 
   def gotPeerMessage(
@@ -1151,60 +1150,56 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
   }
 
   def onBlockUpdated(block: BlockHeight): Unit = {
-    if (currentData.lcss.outgoingHtlcs.size == 0) {
-      // nothing to do here
-    } else {
-      val expiredOutgoingHtlcs = lcssStored.outgoingHtlcs
-        .filter(htlc => htlc.cltvExpiry.toLong < block.toLong)
+    val expiredOutgoingHtlcs = lcssStored.outgoingHtlcs
+      .filter(htlc => htlc.cltvExpiry.toLong < block.toLong)
 
-      if (!expiredOutgoingHtlcs.isEmpty) {
-        // if we have any HTLC, we fail the channel
-        val err = Error(
-          channelId,
-          Error.ERR_HOSTED_TIMED_OUT_OUTGOING_HTLC
-        )
-        sendMessage(err)
+    if (!expiredOutgoingHtlcs.isEmpty) {
+      // if we have any HTLC, we fail the channel
+      val err = Error(
+        channelId,
+        Error.ERR_HOSTED_TIMED_OUT_OUTGOING_HTLC
+      )
+      sendMessage(err)
 
-        // store one error for each htlc failed in this manner
-        expiredOutgoingHtlcs.foreach { htlc =>
-          master.database.update { data =>
-            data
-              .modify(_.channels.at(peerId).localErrors)
-              .using(
-                _ + DetailedError(
-                  err,
-                  Some(htlc),
-                  "outgoing htlc has expired"
-                )
+      // store one error for each htlc failed in this manner
+      expiredOutgoingHtlcs.foreach { htlc =>
+        master.database.update { data =>
+          data
+            .modify(_.channels.at(peerId).localErrors)
+            .using(
+              _ + DetailedError(
+                err,
+                Some(htlc),
+                "outgoing htlc has expired"
               )
-          }
+            )
         }
+      }
 
-        // we also fail them on their upstream node
-        expiredOutgoingHtlcs
-          .map(out =>
-            master.database.data.htlcForwards
-              .find((_, to) => to == out)
-              .map((from, _) => from)
-          )
-          .collect { case Some(htlc) => htlc }
-          .foreach { in =>
-            // resolve htlcs with error for peer
-            provideHtlcResult(
-              in.id,
-              Some(
-                Left(
-                  Some(
-                    NormalFailureMessage(
-                      PermanentChannelFailure
-                    )
+      // we also fail them on their upstream node
+      expiredOutgoingHtlcs
+        .map(out =>
+          master.database.data.htlcForwards
+            .find((_, to) => to == out)
+            .map((from, _) => from)
+        )
+        .collect { case Some(htlc) => htlc }
+        .foreach { in =>
+          // resolve htlcs with error for peer
+          provideHtlcResult(
+            in.id,
+            Some(
+              Left(
+                Some(
+                  NormalFailureMessage(
+                    PermanentChannelFailure
                   )
                 )
               )
             )
+          )
 
-          }
-      }
+        }
     }
   }
 
