@@ -865,6 +865,9 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                 Some(Left(Some(NormalFailureMessage(TemporaryNodeFailure))))
               )
             )
+
+            // still we first must acknowledge this received htlc, so we keep the updated state
+            state = updated
           }
         }
       }
