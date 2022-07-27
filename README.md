@@ -5,7 +5,17 @@ poncho
 
 ![](https://i.pinimg.com/originals/63/6b/46/636b46410c8e0166bb6d8fe20dbe23f5.jpg)
 
+This is an early alpha product.
+
 ### Operation
+
+The CLN plugin provides these RPC methods:
+
+- `hc-list`: lists all hosted channels.
+- `hc-channel <peerid>`: shows just the channel specific for the given peer.
+- `hc-override <peerid> <msatoshi>`: if the channel for this peer is in an error state, proposes overriding it to a new state in which the local balance is the given.
+
+### Storage
 
 When running on CLN, the plugin will create a folder at `$LIGHTNING_DIR/bitcoin/poncho/` and fill it with the following files:
 
