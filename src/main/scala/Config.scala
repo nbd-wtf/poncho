@@ -40,12 +40,12 @@ case class Config(
     initialClientBalanceMsat: MilliSatoshi = MilliSatoshi(0),
 
     // branding
-    contactURL: Option[String] = None,
-    logoFile: Option[String] = None,
+    contactURL: String = "",
+    logoFile: String = "",
     hexColor: String = "#ffffff"
 ) {
   // this will throw if not URL, which is desired
-  contactURL.foreach { new URL(_) }
+  if (contactURL != "") new URL(contactURL)
 
   def init: InitHostedChannel = InitHostedChannel(
     maxHtlcValueInFlightMsat = 100000000L.toULong,
@@ -55,12 +55,13 @@ case class Config(
     initialClientBalanceMsat = MilliSatoshi(0)
   )
 
-  lazy val branding: Option[HostedChannelBranding] = {
-    contactURL.map { url =>
+  lazy val branding: Option[HostedChannelBranding] =
+    if (contactURL == "") None
+    else {
       val optionalPng =
         Try(
           ByteVector.view(
-            Files.readAllBytes(basePath.get.resolve(logoFile.get))
+            Files.readAllBytes(basePath.get.resolve(logoFile))
           )
         ).toOption
 
@@ -69,11 +70,30 @@ case class Config(
         Color(rgb(0), rgb(1), rgb(2))
       }.getOrElse(Color(255.toByte, 255.toByte, 255.toByte))
 
-      HostedChannelBranding(
-        color,
-        optionalPng,
-        url
+      Some(
+        HostedChannelBranding(
+          color,
+          optionalPng,
+          contactURL
+        )
       )
     }
+
+  override def toString(): String = {
+    val chan =
+      s"capacity=$channelCapacityMsat initial-client-balance=$initialClientBalanceMsat"
+    val policy = {
+      val proportional =
+        f"${(feeProportionalMillionths.toDouble * 100 / 1000000)}%.2f"
+      s"fees=$feeBase/$proportional% min-delay=${cltvExpiryDelta.toInt}"
+    }
+    val htlc =
+      s"max-htlcs=$maxAcceptedHtlcs max-htlc-sum=${maxHtlcValueInFlightMsat}msat min-htlc=$htlcMinimumMsat"
+    val branding =
+      if contactURL != "" then
+        s"contact=$contactURL color=$hexColor logo=$logoFile"
+      else "~"
+
+    s"channel($chan) policy($policy) branding($branding) htlc($htlc)"
   }
 }

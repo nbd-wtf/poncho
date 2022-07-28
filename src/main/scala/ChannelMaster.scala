@@ -55,7 +55,11 @@ class ChannelMaster { self =>
 
   val config = Config
     .fromFile(database.path)
-    .getOrElse(Config.defaults)
+    .getOrElse {
+      logger.warn.msg("failed to read config.json, will use the defaults")
+      Config.defaults
+    }
+    .tap(config => logger.info.msg(s"using config $config"))
 
   var currentBlock = BlockHeight(0L)
   def currentBlockDay: Long = currentBlock.toLong / 144

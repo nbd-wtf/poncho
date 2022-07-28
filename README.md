@@ -47,9 +47,9 @@ You can write a file at `$LIGHTNING_DIR/bitcoin/poncho/config.json` with the fol
   "channelCapacityMsat": 100000000,
   "initialClientBalanceMsat": 0,
 
-  "contactURL": null,
-  "logoFile": null,
-  "hexColor": "#ffffff",
+  "contactURL": "",
+  "logoFile": "",
+  "hexColor": "#ffffff"
 }
 ```
 
