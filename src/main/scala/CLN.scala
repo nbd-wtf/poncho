@@ -226,19 +226,17 @@ class CLN(master: ChannelMaster) extends NodeInterface {
       onion: ByteVector
   ): Unit = {
     System.err.println(
-      "~~~ calling listfunds first to get the peer from the channel"
+      "~~~ calling listchannels first to get the peer from the channel"
     )
 
-    rpc("listfunds")
-      .map(
-        _("channels").arr
-          .find(c =>
-            c.obj.contains("short_channel_id") &&
-              c("short_channel_id").str == firstHop.toString
-          )
-          .map(peer => ByteVector.fromValidHex(peer("peer_id").str))
+    rpc("listchannels", ujson.Obj("short_channel_id" -> firstHop.toString))
+      .map(resp =>
+        resp("channels").arr.headOption.flatMap(chan =>
+          List(chan("source").str, chan("destination").str)
+            .map(ByteVector.fromValidHex(_))
+            .find(id => id != master.node.publicKey)
+        )
       )
-      .andThen { res => System.err.println(s"~~~~~ listfunds result: $res") }
       .onComplete {
         case Failure(err) => {
           master.log(s"failed to get peer for channel: $err")
@@ -263,7 +261,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
             )
           )
         }
-        case Success(Some(targetPeerId)) =>
+        case Success(Some(targetPeerId: ByteVector)) =>
           System.err.println(s"calling sendonion with ${ujson
               .Obj(
                 "first_hop" -> ujson.Obj(
