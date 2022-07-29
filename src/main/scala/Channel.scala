@@ -405,7 +405,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
     message match {
       // we send branding to anyone really
       case msg: AskBrandingInfo =>
-        master.config.branding.foreach(sendMessage(_))
+        master.config.branding(localLogger).foreach(sendMessage(_))
 
       // someone wants a new hosted channel from us
       case msg: InvokeHostedChannel

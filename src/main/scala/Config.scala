@@ -55,15 +55,24 @@ case class Config(
     initialClientBalanceMsat = initialClientBalanceMsat
   )
 
-  lazy val branding: Option[HostedChannelBranding] =
+  def branding(logger: nlog.Logger): Option[HostedChannelBranding] =
     if (contactURL == "") None
     else {
       val optionalPng =
-        Try(
-          ByteVector.view(
+        Try {
+          val png = ByteVector.view(
             Files.readAllBytes(basePath.get.resolve(logoFile))
           )
-        ).toOption
+
+          if (png.size > 65535) {
+            logger.warn.msg(
+              s"logoFile must be a PNG with at most 65535 bytes, but $logoFile has ${png.size}."
+            )
+            throw new java.lang.IllegalArgumentException("")
+          }
+
+          png
+        }.toOption
 
       val color: Color = Try {
         val rgb = ByteVector.fromValidHex(hexColor.drop(1))
