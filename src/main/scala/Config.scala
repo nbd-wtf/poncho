@@ -48,11 +48,11 @@ case class Config(
   if (contactURL != "") new URL(contactURL)
 
   def init: InitHostedChannel = InitHostedChannel(
-    maxHtlcValueInFlightMsat = 100000000L.toULong,
-    htlcMinimumMsat = MilliSatoshi(1000L),
-    maxAcceptedHtlcs = 12,
-    channelCapacityMsat = MilliSatoshi(100000000L),
-    initialClientBalanceMsat = MilliSatoshi(0)
+    maxHtlcValueInFlightMsat = maxHtlcValueInFlightMsat,
+    htlcMinimumMsat = htlcMinimumMsat,
+    maxAcceptedHtlcs = maxAcceptedHtlcs,
+    channelCapacityMsat = channelCapacityMsat,
+    initialClientBalanceMsat = initialClientBalanceMsat
   )
 
   lazy val branding: Option[HostedChannelBranding] =
