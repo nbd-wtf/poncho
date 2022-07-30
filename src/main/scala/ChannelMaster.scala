@@ -192,7 +192,6 @@ class ChannelMaster { self =>
     }
 
     val (peerId, channel) = chan
-    val chandata = channel.currentData
 
     ujson.Obj(
       "peer_id" -> peerId.toHex,
@@ -203,23 +202,28 @@ class ChannelMaster { self =>
       "status" -> channel.status.getClass.getSimpleName.toLowerCase,
       "data" -> channel.currentData.lcss.pipe(lcss =>
         ujson.Obj(
+          "is_host" -> lcss.isHost,
           "blockday" -> lcss.blockDay.toInt,
           "local_errors" -> channel.currentData.localErrors
-            .map(dtlerr => ujson.Str(dtlerr.toString)),
+            .map(dtlerr => ujson.Str(dtlerr.toString))
+            .pipe(v => if v.isEmpty then v else null),
           "remote_errors" -> channel.currentData.remoteErrors
-            .map(err => ujson.Str(err.toString)),
-          "is_host" -> lcss.isHost,
+            .map(err => ujson.Str(err.toString))
+            .pipe(v => if v.isEmpty then v else null),
+          "local_updates" -> lcss.localUpdates,
+          "remote_updates" -> lcss.remoteUpdates,
           "balance" -> ujson.Obj(
-            "total" -> lcss.initHostedChannel.channelCapacityMsat.toLong.toInt,
-            "local" -> lcss.localBalanceMsat.toLong.toInt,
-            "remote" -> lcss.remoteBalanceMsat.toLong.toInt
+            "total" -> lcss.initHostedChannel.channelCapacityMsat.toLong,
+            "local" -> lcss.localBalanceMsat.toLong,
+            "remote" -> lcss.remoteBalanceMsat.toLong
           ),
           "incoming_htlcs" -> ujson.Arr.from(
             lcss.incomingHtlcs.map(mapHtlc)
           ),
           "outgoing_htlcs" -> ujson.Arr.from(
             lcss.outgoingHtlcs.map(mapHtlc)
-          )
+          ),
+          "uncommitted_updates" -> channel.state.uncommittedUpdates.size
         )
       )
     )
