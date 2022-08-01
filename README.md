@@ -9,6 +9,8 @@ This is an **early alpha** software that turns your CLN node into a [hosted chan
 
 ### Installation
 
+For this to work well you must be running CLN compiled from the latest `master` (or wait until the next release) and you must have the setting `allow-deprecated-apis=false` in your config file (`~/.lightning/config`).
+
 Grab a binary from the [Releases page](https://github.com/fiatjaf/poncho/releases) (or compile it yourself with `sbt nativeLink`, requires [sbt](https://www.scala-sbt.org/download.html)), call `chmod +x` on it so it is executable, then put it inside your CLN plugin directory (`~/.lightning/plugins/`) -- or start `lightningd` with `--plugin <path-to-poncho>`. No further configuration is needed for a quick test.
 
 ### Operation
