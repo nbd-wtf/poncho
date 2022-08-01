@@ -133,6 +133,13 @@ class CLN(master: ChannelMaster) extends NodeInterface {
   def getCurrentBlock(): Future[BlockHeight] =
     rpc("getchaininfo").map(info => BlockHeight(info("headercount").num.toLong))
 
+  def getBlockByHeight(height: BlockHeight): Future[Block] =
+    rpc("getrawblockbyheight", ujson.Obj("height" -> height.toInt))
+      .flatMap(resp =>
+        resp("block").str
+          .pipe(hex => Future(Block.read(hex)))
+      )
+
   def inspectOutgoingPayment(
       identifier: HtlcIdentifier,
       paymentHash: ByteVector32

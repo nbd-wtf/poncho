@@ -21,6 +21,8 @@ class ChannelMaster { self =>
 
   val node: NodeInterface = new CLN(self)
   val database = new Database()
+  val preimageCatcher = new BlockchainPreimageCatcher(self)
+
   var isReady: Boolean = false
 
   val config = Config
@@ -88,6 +90,7 @@ class ChannelMaster { self =>
             logger.info.item(block).msg("updated current block")
 
             self.channels.values.foreach(_.onBlockUpdated(block))
+            self.preimageCatcher.onBlockUpdated(block)
           }
         }
         case Failure(err) =>

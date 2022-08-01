@@ -36,6 +36,7 @@ trait NodeInterface {
 
   def getAddress(): Future[String]
   def getCurrentBlock(): Future[BlockHeight]
+  def getBlockByHeight(height: BlockHeight): Future[Block]
   def getChainHash(): Future[ByteVector32]
 
   def main(onInit: () => Unit): Unit
