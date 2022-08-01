@@ -5,7 +5,11 @@ poncho
 
 ![](https://i.pinimg.com/originals/63/6b/46/636b46410c8e0166bb6d8fe20dbe23f5.jpg)
 
-This is an early alpha product.
+This is an **early alpha** software that turns your CLN node into a [hosted channels](https://sbw.app/posts/scaling-ln-with-hosted-channels/) provider.
+
+### Installation
+
+Grab a binary from the [Releases page](https://github.com/fiatjaf/poncho/releases) (or compile it yourself with `sbt nativeLink`, requires [sbt](https://www.scala-sbt.org/download.html)), call `chmod +x` on it so it is executable, then put it inside your CLN plugin directory (`~/.lightning/plugins/`) -- or start `lightningd` with `--plugin <path-to-poncho>`. No further configuration is needed for a quick test.
 
 ### Operation
 
@@ -58,6 +62,25 @@ You can write a file at `$LIGHTNING_DIR/bitcoin/poncho/config.json` with the fol
 The branding information won't be used unless contact URL and logo file are set. The logo should be a PNG file also placed under `$LIGHTNING_DIR/bitcoin/poncho/` and specified as a relative path.
 
 ### FAQ
+
+- **What are hosted channels?**
+
+Here's one explanation: https://fanismichalakis.fr/posts/what-are-hosted-channels/. Here is another one: https://sbw.app/posts/scaling-ln-with-hosted-channels/.
+
+- **What can I do with `poncho` and hosted channels?**
+
+You can:
+  - offer fully private zero-cost channels from your node to your friends and family;
+  - use [SBW](https://sbw.app/) to access your own node running at home over Tor through a hosted channel, in a segregated bucket;
+  - use along with [cliché](https://github.com/fiatjaf/cliche) to power Lightning services without putting your entire node funds at risk.
+
+- **How can I get a hosted channel from a node running `poncho`?**
+
+For now, you can use https://sbw.app/ and paste a string containing `nodeid@host:port` or scan a QR code containing that same data, such as the QR codes from https://amboss.space/); or use https://github.com/fiatjaf/cliche and specify that same data using the `request-hc` command.
+
+- **Is LND going to be supported?**
+
+Most likely yes, we just need [one new API](https://github.com/lightningnetwork/lnd/issues/6206) to be supported on the LND side, but it is a simple addition.
 
 - **What happens if I lose the channel states?**
 
