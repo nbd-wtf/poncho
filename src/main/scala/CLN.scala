@@ -225,10 +225,6 @@ class CLN(master: ChannelMaster) extends NodeInterface {
       cltvExpiryDelta: CltvExpiryDelta,
       onion: ByteVector
   ): Unit = {
-    System.err.println(
-      "~~~ calling listchannels first to get the peer from the channel"
-    )
-
     rpc("listchannels", ujson.Obj("short_channel_id" -> firstHop.toString))
       .map(resp =>
         resp("channels").arr.headOption.flatMap(chan =>
