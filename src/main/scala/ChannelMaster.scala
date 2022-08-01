@@ -24,10 +24,7 @@ class ChannelMaster { self =>
 
   val config = Config
     .fromFile(database.path)
-    .getOrElse {
-      logger.warn.msg("failed to read config.json, will use the defaults")
-      Config.defaults
-    }
+    .getOrElse(Config.defaults)
 
   val channels = mutable.Map.empty[ByteVector, Channel]
   def getChannel(peerId: ByteVector): Channel =
