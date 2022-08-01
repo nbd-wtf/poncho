@@ -332,6 +332,11 @@ class CLN(master: ChannelMaster) extends NodeInterface {
                 "description" -> "List all your hosted channels."
               ),
               ujson.Obj(
+                "name" -> "hc-channel",
+                "usage" -> "peerid",
+                "description" -> "Shows one of your hosted channels."
+              ),
+              ujson.Obj(
                 "name" -> "hc-override",
                 "usage" -> "peerid msatoshi",
                 "description" -> "Propose overriding the state of the channel with {peerid} with the next local balance being equal to {msatoshi}."
