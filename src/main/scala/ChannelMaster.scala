@@ -62,6 +62,20 @@ class ChannelMaster { self =>
 
   def log(message: String): Unit = logger.debug.msg(message)
 
+  logger.info
+    .item("channels", database.data.channels.size)
+    .item(
+      "errored-channels",
+      database.data.channels.values.filter(_.localErrors.size > 0).size
+    )
+    .item(
+      "clients-total-balance",
+      database.data.channels.values
+        .filter(_.lcss.isHost)
+        .map(_.lcss.remoteBalanceMsat)
+        .fold(MilliSatoshi(0))(_ + _)
+    )
+    .msg(s"starting poncho.")
   logger.info.msg(s"using config $config.")
 
   var currentBlock = BlockHeight(0L)
