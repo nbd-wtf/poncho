@@ -2,8 +2,8 @@ enablePlugins(ScalaNativePlugin)
 
 name                  := "poncho"
 organization          := "fiatjaf"
-scalaVersion          := "3.1.1"
-version               := "0.2.0-SNAPSHOT"
+scalaVersion          := "3.1.3"
+version               := "0.1.1"
 libraryDependencies   ++= Seq(
   "org.scodec" %%% "scodec-bits" % "1.1.32",
   "com.lihaoyi" %%% "upickle" % "1.6.0",
