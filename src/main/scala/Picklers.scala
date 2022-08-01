@@ -2,6 +2,7 @@ import java.nio.file.{Path, Paths}
 import scala.scalanative.unsigned._
 import upickle.default._
 import scodec.bits.ByteVector
+import scoin._
 
 import codecs._
 

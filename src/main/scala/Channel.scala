@@ -12,6 +12,7 @@ import com.softwaremill.quicklens._
 import upickle.default.{ReadWriter, macroRW}
 import scodec.bits.ByteVector
 import scodec.codecs._
+import scoin._
 
 import codecs._
 import codecs.HostedChannelCodecs._

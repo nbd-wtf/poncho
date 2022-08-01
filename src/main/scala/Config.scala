@@ -4,16 +4,11 @@ import java.nio.file.{Files, Path, Paths}
 import scala.util.Try
 import scala.scalanative.unsigned._
 import scodec.bits.ByteVector
-import codecs.{
-  CltvExpiryDelta,
-  BlockHeight,
-  ByteVector32,
-  MilliSatoshi,
-  InitHostedChannel,
-  HostedChannelBranding
-}
-import codecs.CommonCodecs.Color
+import scoin._
 import upickle.default._
+
+import codecs.CommonCodecs.Color
+import codecs.{InitHostedChannel, HostedChannelBranding}
 
 object Config {
   import Picklers.given

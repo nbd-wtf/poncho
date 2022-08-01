@@ -4,6 +4,7 @@ import scala.scalanative.unsigned._
 import scodec.bits._
 import scodec.codecs._
 import scodec.{Codec, Err}
+import scoin._
 
 import CommonCodecs._
 import TlvCodecs._

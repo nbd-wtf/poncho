@@ -3,6 +3,7 @@ import java.nio.ByteOrder
 import scala.scalanative.unsigned._
 import scala.annotation.tailrec
 import scodec.bits.{ByteVector, BitVector}
+import scoin._
 
 import crypto.Crypto
 import codecs._
@@ -31,7 +32,7 @@ object Utils {
     val stream = new ByteArrayInputStream(
       pubkeysCombined(peer1, peer2).toArray
     )
-    def getChunk(): Long = Protocol.uint64(
+    def getChunk(): Long = codecs.Protocol.uint64(
       stream,
       ByteOrder.BIG_ENDIAN
     )

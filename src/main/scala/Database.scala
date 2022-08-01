@@ -5,6 +5,7 @@ import scala.scalanative.unsigned._
 import scala.scalanative.loop.Timer
 import scodec.bits.ByteVector
 import upickle.default._
+import scoin._
 
 import crypto.Crypto
 import codecs._

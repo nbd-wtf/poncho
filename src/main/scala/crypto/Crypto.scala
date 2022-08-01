@@ -3,8 +3,7 @@ package crypto
 import scala.scalanative.unsigned._
 import scodec.bits.ByteVector
 import sha256.{Hmac, Sha256}
-
-import codecs.{ByteVector32, ByteVector64}
+import scoin.{ByteVector64, ByteVector32}
 
 case class Hmac256(key: ByteVector) {
   def mac(message: ByteVector): ByteVector32 =

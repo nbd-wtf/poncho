@@ -3,9 +3,9 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.scalanative.unsigned._
 import scala.scalanative.loop.EventLoop.loop
 import scala.concurrent.Future
-
 import scodec.bits.ByteVector
 import scodec.codecs.uint16
+import scoin._
 
 import codecs.HostedChannelCodecs._
 import codecs._

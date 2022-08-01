@@ -1,5 +1,6 @@
 import scodec.bits.ByteVector
 
+import scoin._
 import codecs._
 
 case class StateManager(

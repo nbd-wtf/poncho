@@ -14,6 +14,7 @@ import sha256.Hkdf
 import ujson._
 import scodec.bits.{ByteVector, BitVector}
 import scodec.codecs.uint16
+import scoin._
 
 import unixsocket.UnixSocket
 import codecs.HostedChannelCodecs._

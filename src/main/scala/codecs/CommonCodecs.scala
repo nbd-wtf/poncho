@@ -7,6 +7,7 @@ import math.Ordering.Implicits.infixOrderingOps
 import scodec.bits.{BitVector, ByteVector}
 import scodec.codecs._
 import scodec.{Attempt, Codec, DecodeResult, Err, SizeBound}
+import scoin._
 
 import crypto.Hmac256
 

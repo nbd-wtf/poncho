@@ -7,6 +7,7 @@ import scodec.Attempt
 import scodec.bits.ByteVector
 import ChaCha20.{xor}
 import ChaCha20Poly1305.{encrypt, decrypt}
+import scoin._
 
 import crypto.{Crypto, Hmac256}
 

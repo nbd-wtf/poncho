@@ -11,6 +11,7 @@ import upickle.default._
 import com.softwaremill.quicklens._
 import scodec.bits.ByteVector
 import scodec.{DecodeResult}
+import scoin._
 
 import codecs._
 import crypto.Crypto

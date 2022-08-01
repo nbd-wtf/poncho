@@ -6,6 +6,7 @@ import scala.scalanative.unsigned._
 import scodec.bits._
 import scodec.codecs._
 import scodec.Codec
+import scoin._
 
 import crypto.Crypto
 import codecs.Protocol

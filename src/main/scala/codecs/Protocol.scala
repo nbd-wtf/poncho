@@ -3,6 +3,7 @@ package codecs
 import java.io.{OutputStream, InputStream, ByteArrayInputStream, IOException}
 import java.nio.{ByteBuffer, ByteOrder}
 import scodec.bits.{ByteVector, ByteOrdering}
+import scoin._
 
 object Protocol {
   val PROTOCOL_VERSION = 70015
