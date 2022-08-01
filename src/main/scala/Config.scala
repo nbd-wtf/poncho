@@ -29,6 +29,9 @@ case class Config(
     // path
     basePath: Option[Path] = None,
 
+    // settings
+    isDev: Boolean = true,
+
     // channels settings
     cltvExpiryDelta: CltvExpiryDelta = CltvExpiryDelta(143),
     feeBase: MilliSatoshi = MilliSatoshi(1000L),

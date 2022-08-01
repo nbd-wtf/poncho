@@ -5,6 +5,13 @@ case object Debug extends Level
 case object Info extends Level
 case object Warn extends Level
 case object Err extends Level
+
+object Levels {
+  val severity = Array(Debug, Info, Warn, Err)
+  def shouldShow(setting: Level, logLevel: Level): Boolean =
+    severity.indexOf(logLevel) <= severity.indexOf(setting)
+}
+
 type Items = List[(String, Any) | Any]
 
 class Attacher(parent: Logger) {
@@ -23,7 +30,8 @@ class Attacher(parent: Logger) {
 
 class Logger(
     val items: Items = List.empty,
-    printer: String => Unit = System.err.println
+    printer: String => Unit = System.err.println,
+    level: Level = Debug
 ) {
   def debug = new Log(this, Debug)
   def info = new Log(this, Info)
@@ -33,6 +41,8 @@ class Logger(
 
   def getItems = items
   def getPrinter = printer
+  def print(logLevel: Level, str: String): Unit =
+    if (Levels.shouldShow(level, logLevel)) printer(str)
 }
 
 class Log(
@@ -59,6 +69,6 @@ class Log(
         }
         .mkString(" ")
     val sep = if items.size > 0 then " -- " else ""
-    parent.getPrinter(s"$lvl ${text}${sep}${its}")
+    parent.print(level, s"$lvl ${text}${sep}${its}")
   }
 }

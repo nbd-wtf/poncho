@@ -49,7 +49,9 @@ You can write a file at `$LIGHTNING_DIR/bitcoin/poncho/config.json` with the fol
 
   "contactURL": "",
   "logoFile": "",
-  "hexColor": "#ffffff"
+  "hexColor": "#ffffff",
+
+  "isDev": true
 }
 ```
 

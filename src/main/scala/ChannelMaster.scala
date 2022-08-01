@@ -18,10 +18,16 @@ import crypto.Crypto
 class ChannelMaster { self =>
   import Picklers.given
 
-  val isDev = true
   val node: NodeInterface = new CLN(self)
   val database = new Database()
   var isReady: Boolean = false
+
+  val config = Config
+    .fromFile(database.path)
+    .getOrElse {
+      logger.warn.msg("failed to read config.json, will use the defaults")
+      Config.defaults
+    }
 
   val channels = mutable.Map.empty[ByteVector, Channel]
   def getChannel(peerId: ByteVector): Channel =
@@ -29,7 +35,7 @@ class ChannelMaster { self =>
 
   val logger: nlog.Logger = {
     def printer(message: String): Unit =
-      if (node.isInstanceOf[CLN] && !self.isDev) {
+      if (node.isInstanceOf[CLN] && !self.config.isDev) {
         System.out.println(
           ujson.Obj(
             "jsonrpc" -> "2.0",
@@ -48,18 +54,15 @@ class ChannelMaster { self =>
         )
       }
 
-    new nlog.Logger(printer = printer)
+    new nlog.Logger(
+      printer = printer,
+      level = if self.config.isDev then nlog.Debug else nlog.Info
+    )
   }
 
   def log(message: String): Unit = logger.debug.msg(message)
 
-  val config = Config
-    .fromFile(database.path)
-    .getOrElse {
-      logger.warn.msg("failed to read config.json, will use the defaults")
-      Config.defaults
-    }
-    .tap(config => logger.info.msg(s"using config $config"))
+  logger.info.msg(s"using config $config.")
 
   var currentBlock = BlockHeight(0L)
   def currentBlockDay: Long = currentBlock.toLong / 144
