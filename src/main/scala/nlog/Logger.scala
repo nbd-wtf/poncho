@@ -9,7 +9,7 @@ case object Err extends Level
 object Levels {
   val severity = Array(Debug, Info, Warn, Err)
   def shouldShow(setting: Level, logLevel: Level): Boolean =
-    severity.indexOf(logLevel) <= severity.indexOf(setting)
+    severity.indexOf(logLevel) >= severity.indexOf(setting)
 }
 
 type Items = List[(String, Any) | Any]
