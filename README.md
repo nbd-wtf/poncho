@@ -20,6 +20,8 @@ The CLN plugin provides these RPC methods:
 - `hc-list`: lists all hosted channels.
 - `hc-channel <peerid>`: shows just the channel specific for the given peer.
 - `hc-override <peerid> <msatoshi>`: if the channel for this peer is in an error state, proposes overriding it to a new state in which the local balance is the given.
+- `add-hc-secret <secret>`: adds a one-time secret for when `"requireSecret"` is true.
+- `remove-hc-secret <secret>`: the opposite of the above.
 
 ### Storage
 
@@ -45,22 +47,22 @@ You can write a file at `$LIGHTNING_DIR/bitcoin/poncho/config.json` with the fol
 ```json
 {
   "cltvExpiryDelta": "143",
-  "feeBase": 1000,
+  "feeBase": 1000, // these fee parameters work the same as in normal channels, they will be used in the route hint appended to invoices from clients
   "feeProportionalMillionths": 1000,
-  "maxHtlcValueInFlightMsat": 100000000,
+  "maxHtlcValueInFlightMsat": 100000000, // this and the two settings below can be used to make the process of manual debugging errored HCs less problematic, prevent spam and resource usage
   "htlcMinimumMsat": 1000,
   "maxAcceptedHtlcs": 12,
-  "channelCapacityMsat": 100000000,
-  "initialClientBalanceMsat": 0,
+  "channelCapacityMsat": 100000000, // this controls the size of all new hosted channels
+  "initialClientBalanceMsat": 0, // keep this at zero unless you know what you're doing
 
-  "contactURL": "",
-  "logoFile": "",
+  "contactURL": "", // this will be shown by wallets
+  "logoFile": "", // this will be shown by wallets
   "hexColor": "#ffffff",
 
-  "isDev": true,
+  "isDev": true, // controls log level and where are logs displayed
 
-  "requireSecret": false,
-  "permanentSecrets": []
+  "requireSecret": false, // setting this to true will make it so only clients with this secret can get hosted channels
+  "permanentSecrets": [] // you can specify static secrets here that can be used by clients when "requireSecret" is true
 }
 ```
 
@@ -82,6 +84,10 @@ You can:
 - **How can I get a hosted channel from a node running `poncho`?**
 
 For now, you can use https://sbw.app/ and paste a string containing `nodeid@host:port` or scan a QR code containing that same data, such as the QR codes from https://amboss.space/); or use https://github.com/fiatjaf/cliche and specify that same data using the `request-hc` command.
+
+- **How can I have a whitelist of nodes that can get a channel from my `poncho`?**
+
+To achieve this you must use the `"requireSecret"` option on your `config.json`. See [Configuration](#configuration) above. Then instead of giving your node address to your friends and family, you must conjure a [LUD-07 lnurl](https://github.com/fiatjaf/lnurl-rfc/blob/luds/07.md) and ask them to paste/scan that with their [SBW](https://sbw.app/). The secret must be specified in the lnurl response. Then the wallet will use it when invoking the hosted channel and it will work. You can use this flow to create any kind of arbitrary restriction to your hosted channels, including selling them, giving them dynamically or programmatically, or just restricting them to a fixed set of people to whom you give the secret lnurl.
 
 - **Is LND going to be supported?**
 
