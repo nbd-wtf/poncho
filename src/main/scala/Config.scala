@@ -45,7 +45,10 @@ case class Config(
     // branding
     contactURL: String = "",
     logoFile: String = "",
-    hexColor: String = "#ffffff"
+    hexColor: String = "#ffffff",
+
+    // extra
+    requireSecrets: List[String] = List.empty
 ) {
   // this will throw if not URL, which is desired
   if (contactURL != "") new URL(contactURL)

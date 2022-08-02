@@ -425,9 +425,14 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         } else {
           // chain hash is ok, proceed
           if (status == NotOpened) {
-            // reply saying we accept the invoke and go into Opening state
-            openingRefundScriptPubKey = Some(msg.refundScriptPubKey)
-            sendMessage(master.config.init)
+            if (
+              master.config.requireSecrets.isEmpty ||
+              master.config.requireSecrets.contains(msg.secret)
+            ) {
+              // reply saying we accept the invoke and go into Opening state
+              openingRefundScriptPubKey = Some(msg.refundScriptPubKey)
+              sendMessage(master.config.init)
+            }
           } else {
             // channel already exists, so send last cross-signed-state
             sendMessage(currentData.lcss)
