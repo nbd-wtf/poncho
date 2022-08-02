@@ -327,24 +327,36 @@ class CLN(master: ChannelMaster) extends NodeInterface {
                 "description" -> "Parse a hex representation of a last_cross_signed_state as provided by a mobile client."
               ),
               ujson.Obj(
+                "name" -> "add-hc-secret",
+                "usage" -> "secret",
+                "description" -> ("Adds a {secret} (hex, 32 bytes) to the list of acceptable secrets for when a client invokes a hosted channel. " +
+                  "This secret can only be used once. You can add the same secret multiple times so it can be used multiple times. " +
+                  "You can also add permanent secrets on the config file.")
+              ),
+              ujson.Obj(
+                "name" -> "remove-hc-secret",
+                "usage" -> "secret",
+                "description" -> "Removes a {secret} (hex, 32 bytes) to the list of acceptable secrets for when a client invokes a hosted channel. See also `add-hc-secret`."
+              ),
+              ujson.Obj(
                 "name" -> "hc-list",
                 "usage" -> "",
-                "description" -> "List all your hosted channels."
+                "description" -> "Lists all your hosted channels."
               ),
               ujson.Obj(
                 "name" -> "hc-channel",
                 "usage" -> "peerid",
-                "description" -> "Shows one of your hosted channels."
+                "description" -> "Shows your hosted channel with {peerid}."
               ),
               ujson.Obj(
                 "name" -> "hc-override",
                 "usage" -> "peerid msatoshi",
-                "description" -> "Propose overriding the state of the channel with {peerid} with the next local balance being equal to {msatoshi}."
+                "description" -> "Proposes overriding the state of the channel with {peerid} with the next local balance being equal to {msatoshi}."
               ),
               ujson.Obj(
                 "name" -> "hc-request-channel",
                 "usage" -> "peerid",
-                "description" -> "Request a hosted channel from another hosted channel provider."
+                "description" -> "Requests a hosted channel from another hosted channel provider (do not use)."
               )
             ),
             "notifications" -> ujson.Arr(),
@@ -574,6 +586,43 @@ class CLN(master: ChannelMaster) extends NodeInterface {
           case None => replyError("failed to decode last_cross_signed_state")
         }
       }
+
+      case "add-hc-secret" =>
+        if (!master.config.requireSecret) {
+          replyError(
+            "`requireSecret` must be set to true on config.json for this to do anything."
+          )
+        } else
+          params match {
+            case o: ujson.Obj => o.value.get("secret").flatMap(_.strOpt)
+            case a: ujson.Arr => a.value.headOption.flatMap(_.strOpt)
+            case _            => None
+          } match {
+            case Some(secret) => {
+              master.temporarySecrets = master.temporarySecrets :+ secret
+              reply(ujson.Obj("added" -> true))
+            }
+            case None => replyError("secret not given")
+          }
+
+      case "remove-hc-secret" =>
+        if (!master.config.requireSecret) {
+          replyError(
+            "`requireSecret` must be set to true on config.json for this to do anything."
+          )
+        } else
+          params match {
+            case o: ujson.Obj => o.value.get("secret").flatMap(_.strOpt)
+            case a: ujson.Arr => a.value.headOption.flatMap(_.strOpt)
+            case _            => None
+          } match {
+            case Some(secret) => {
+              master.temporarySecrets =
+                master.temporarySecrets.filterNot(_ == secret)
+              reply(ujson.Obj("removed" -> true))
+            }
+            case None => replyError("secret not given")
+          }
 
       case "hc-list" =>
         reply(master.channels.toList.map(master.channelJSON))

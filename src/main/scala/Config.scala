@@ -48,7 +48,8 @@ case class Config(
     hexColor: String = "#ffffff",
 
     // extra
-    requireSecrets: List[String] = List.empty
+    requireSecret: Boolean = false,
+    permanentSecrets: List[String] = List.empty
 ) {
   // this will throw if not URL, which is desired
   if (contactURL != "") new URL(contactURL)

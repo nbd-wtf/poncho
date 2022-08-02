@@ -21,6 +21,7 @@ class ChannelMaster { self =>
   val node: NodeInterface = new CLN(self)
   val database = new Database()
   var isReady: Boolean = false
+  var temporarySecrets: List[String] = List.empty
 
   val config = Config
     .fromFile(database.path)
@@ -103,7 +104,8 @@ class ChannelMaster { self =>
           self.chainHash = chainHash
           isReady = true
         }
-        case Failure(err) => logger.err.item(err).msg("failed to get chainhash")
+        case Failure(err) =>
+          logger.err.item(err).msg("failed to get chainhash")
       }
   }
 

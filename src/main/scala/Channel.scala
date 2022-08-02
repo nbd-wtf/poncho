@@ -426,12 +426,19 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           // chain hash is ok, proceed
           if (status == NotOpened) {
             if (
-              master.config.requireSecrets.isEmpty ||
-              master.config.requireSecrets.contains(msg.secret)
+              !master.config.requireSecret ||
+              master.config.permanentSecrets.contains(msg.secret.toHex) ||
+              master.temporarySecrets.contains(msg.secret.toHex)
             ) {
-              // reply saying we accept the invoke and go into Opening state
+              // save this for the next step (having this also moves us to the Invoking state)
               openingRefundScriptPubKey = Some(msg.refundScriptPubKey)
+
+              // reply saying we accept the invoke and go into Opening state
               sendMessage(master.config.init)
+
+              // remove the temporary secret used, if any
+              master.temporarySecrets =
+                master.temporarySecrets.filterNot(_ == msg.secret.toHex)
             }
           } else {
             // channel already exists, so send last cross-signed-state
