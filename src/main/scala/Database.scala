@@ -6,11 +6,10 @@ import scala.scalanative.loop.Timer
 import scodec.bits.ByteVector
 import upickle.default._
 import scoin._
+import scoin.ln._
+import scoin.hc._
 
-import crypto.Crypto
-import codecs._
-
-case class HtlcIdentifier(scid: ShortChannelId, id: ULong) {
+case class HtlcIdentifier(scid: ShortChannelId, id: Long) {
   override def toString(): String = s"HtlcIdentifier($id@$scid)"
 }
 
@@ -29,7 +28,7 @@ case class Data(
 )
 
 case class ChannelData(
-    lcss: LastCrossSignedState = LastCrossSignedState.empty,
+    lcss: LastCrossSignedState = HostedChannelHelpers.lcssEmpty,
     localErrors: Set[DetailedError] = Set.empty,
     remoteErrors: Set[Error] = Set.empty,
     proposedOverride: Option[LastCrossSignedState] = None,
@@ -41,7 +40,19 @@ case class DetailedError(
     htlc: Option[UpdateAddHtlc],
     reason: String
 ) {
-  override def toString: String = s"${error.description} | $reason | $htlc"
+  def description: String = {
+    val tag = error.data.take(4)
+    val postTagData = error.data.drop(4)
+
+    HostedError.knownHostedCodes.get(tag.toHex) match {
+      case Some(code) if postTagData.isEmpty => s"hosted-code=$code"
+      case Some(code) =>
+        s"hosted-code=$code, extra=${error.copy(data = postTagData).toAscii}"
+      case None => error.toAscii
+    }
+  }
+
+  override def toString: String = s"$description | $reason | $htlc"
 }
 
 class Database(val path: Path = Paths.get("poncho").toAbsolutePath()) {

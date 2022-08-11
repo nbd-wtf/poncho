@@ -3,13 +3,11 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scodec.bits.ByteVector
 import scoin._
 
-import codecs._
-
 class BlockchainPreimageCatcher(master: ChannelMaster) {
   def onBlockUpdated(height: BlockHeight): Unit = {
     var localLogger = master.logger.attach
       .item("block", height.toInt)
-      .logger
+      .logger()
 
     master.node
       .getBlockByHeight(height)
@@ -23,7 +21,7 @@ class BlockchainPreimageCatcher(master: ChannelMaster) {
               // we've found a preimage that someone has published.
               localLogger = localLogger.attach
                 .item("preimage", preimage)
-                .logger
+                .logger()
               localLogger.debug.msg("found a preimage from an OP_RETURN")
 
               // is it for a pending outgoing HTLC in one of our HCs?

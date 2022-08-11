@@ -3,8 +3,8 @@ import scala.scalanative.unsigned._
 import upickle.default._
 import scodec.bits.ByteVector
 import scoin._
-
-import codecs._
+import scoin.ln._
+import scoin.hc._
 
 object Picklers {
   given ReadWriter[ByteVector] =
@@ -23,8 +23,23 @@ object Picklers {
     readwriter[Long].bimap[CltvExpiry](_.toLong, CltvExpiry(_))
   given ReadWriter[CltvExpiryDelta] =
     readwriter[Int].bimap[CltvExpiryDelta](_.toInt, CltvExpiryDelta(_))
-  given ReadWriter[ULong] =
-    readwriter[Long].bimap[ULong](_.toLong, _.toULong)
+  given ReadWriter[UInt64] =
+    readwriter[Long].bimap[UInt64](_.toLong, UInt64(_))
+  given ReadWriter[OnionRoutingPacket] =
+    readwriter[String].bimap[OnionRoutingPacket](
+      orp =>
+        PaymentOnionCodecs.paymentOnionPacketCodec
+          .encode(orp)
+          .toOption
+          .get
+          .toHex,
+      hex =>
+        PaymentOnionCodecs.paymentOnionPacketCodec
+          .decode(ByteVector.fromValidHex(hex).toBitVector)
+          .toOption
+          .get
+          .value
+    )
 
   given ReadWriter[Path] =
     readwriter[String]

@@ -2,13 +2,11 @@ import java.io.File
 import java.net.URL
 import java.nio.file.{Files, Path, Paths}
 import scala.util.Try
-import scala.scalanative.unsigned._
+import upickle.default._
 import scodec.bits.ByteVector
 import scoin._
-import upickle.default._
-
-import codecs.CommonCodecs.Color
-import codecs.{InitHostedChannel, HostedChannelBranding}
+import scoin.ln.Color
+import scoin.hc.{InitHostedChannel, HostedChannelBranding}
 
 object Config {
   import Picklers.given
@@ -31,7 +29,7 @@ case class Config(
     cltvExpiryDelta: CltvExpiryDelta = CltvExpiryDelta(143),
     feeBase: MilliSatoshi = MilliSatoshi(1000L),
     feeProportionalMillionths: Long = 1000L,
-    maxHtlcValueInFlightMsat: ULong = 100000000L.toULong,
+    maxHtlcValueInFlightMsat: Long = 100000000L,
     htlcMinimumMsat: MilliSatoshi = MilliSatoshi(1000L),
     maxAcceptedHtlcs: Int = 12,
     channelCapacityMsat: MilliSatoshi = MilliSatoshi(100000000L),
@@ -46,7 +44,7 @@ case class Config(
   if (contactURL != "") new URL(contactURL)
 
   def init: InitHostedChannel = InitHostedChannel(
-    maxHtlcValueInFlightMsat = maxHtlcValueInFlightMsat,
+    maxHtlcValueInFlightMsat = UInt64(maxHtlcValueInFlightMsat),
     htlcMinimumMsat = htlcMinimumMsat,
     maxAcceptedHtlcs = maxAcceptedHtlcs,
     channelCapacityMsat = channelCapacityMsat,
@@ -97,7 +95,7 @@ case class Config(
     val htlc =
       s"max-htlcs=$maxAcceptedHtlcs max-htlc-sum=${maxHtlcValueInFlightMsat}msat min-htlc=$htlcMinimumMsat"
     val branding =
-      if contactURL != "" then
+      if (contactURL != "")
         s"contact=$contactURL color=$hexColor logo=$logoFile"
       else "~"
 

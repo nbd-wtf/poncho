@@ -12,9 +12,8 @@ import com.softwaremill.quicklens._
 import scodec.bits.ByteVector
 import scodec.{DecodeResult}
 import scoin._
-
-import codecs._
-import crypto.Crypto
+import scoin.ln._
+import scoin.hc._
 
 class ChannelMaster { self =>
   import Picklers.given
@@ -33,15 +32,48 @@ class ChannelMaster { self =>
   def getChannel(peerId: ByteVector): Channel =
     channels.getOrElseUpdate(peerId, { new Channel(self, peerId) })
 
-  val logger: nlog.Logger = {
-    def printer(message: String): Unit =
+  val logger = new nlog.Logger {
+    override val threshold =
+      if self.config.isDev then nlog.Debug else nlog.Info
+    override def print(
+        level: nlog.Level,
+        items: nlog.Items,
+        msg: String
+    ): Unit = {
+      val lvl = {
+        val (color, name) = level match {
+          case nlog.Debug => (Console.GREEN_B, "DBG")
+          case nlog.Info  => (Console.BLUE_B, "INF")
+          case nlog.Warn  => (Console.YELLOW_B, "WRN")
+          case nlog.Err   => (Console.RED_B, "ERR")
+        }
+        Console.BLACK + color + "[" + name + "]" + Console.RESET
+      }
+      val its =
+        items
+          .map {
+            case (l: String, it: Any) =>
+              Console.BLUE + s"$l=" + Console.RESET + s"$it"
+            case it =>
+              Console.YELLOW + "{" + Console.RESET
+                + s"$it"
+                + Console.YELLOW + "}" + Console.RESET
+          }
+          .mkString(" ")
+      val sep =
+        if items.size > 0 && msg.size > 0 then
+          Console.YELLOW + " ~ " + Console.RESET
+        else ""
+
+      val text = s"$lvl ${msg}${sep}${its}"
+
       if (node.isInstanceOf[CLN] && !self.config.isDev) {
         System.out.println(
           ujson.Obj(
             "jsonrpc" -> "2.0",
             "method" -> "log",
             "params" -> ujson.Obj(
-              "message" -> message
+              "message" -> text
             )
           )
         )
@@ -49,15 +81,11 @@ class ChannelMaster { self =>
         System.err.println(
           Console.BOLD + "> " +
             Console.BLUE + "poncho" + Console.RESET +
-            Console.BOLD + ": " + Console.RESET +
-            Console.GREEN + message + Console.RESET
+            Console.GREEN + Console.BOLD + ": " + Console.RESET +
+            text
         )
       }
-
-    new nlog.Logger(
-      printer = printer,
-      level = if self.config.isDev then nlog.Debug else nlog.Info
-    )
+    }
   }
 
   def log(message: String): Unit = logger.debug.msg(message)
@@ -143,7 +171,11 @@ class ChannelMaster { self =>
           )
           // ~ use that to get the target channel parameters
           (targetPeerId, targetChannelData) <- database.data.channels.find(
-            (p, _) => Utils.getShortChannelId(self.node.publicKey, p) == scid
+            (p, _) =>
+              HostedChannelHelpers.getShortChannelId(
+                self.node.publicKey.value,
+                p
+              ) == scid
           )
           // ~ get/instantiate the target channel
           targetPeer = self.getChannel(targetPeerId)
@@ -151,7 +183,8 @@ class ChannelMaster { self =>
           _ = targetPeer
             .addHtlc(
               incoming = HtlcIdentifier(
-                Utils.getShortChannelId(self.node.publicKey, sourcePeerId),
+                HostedChannelHelpers
+                  .getShortChannelId(self.node.publicKey.value, sourcePeerId),
                 in.id
               ),
               incomingAmount = in.amountMsat,
@@ -213,9 +246,11 @@ class ChannelMaster { self =>
 
     ujson.Obj(
       "peer_id" -> peerId.toHex,
-      "channel_id" -> Utils.getChannelId(self.node.publicKey, peerId).toHex,
-      "short_channel_id" -> Utils
-        .getShortChannelId(self.node.publicKey, peerId)
+      "channel_id" -> HostedChannelHelpers
+        .getChannelId(self.node.publicKey.value, peerId)
+        .toHex,
+      "short_channel_id" -> HostedChannelHelpers
+        .getShortChannelId(self.node.publicKey.value, peerId)
         .toString,
       "status" -> channel.status.getClass.getSimpleName.toLowerCase,
       "data" -> channel.currentData.lcss.pipe(lcss =>
