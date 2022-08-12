@@ -380,6 +380,11 @@ class CLN(master: ChannelMaster) extends NodeInterface {
         rpcAddr = lightningDir + "/" + params("configuration")("rpc-file").str
         hsmSecret = Paths.get(lightningDir + "/hsm_secret")
 
+        logger.debug
+          .item("rpc-socket", rpcAddr)
+          .item("hsm_secret", hsmSecret)
+          .msg("plugin initialized")
+
         initCallback()
       }
       case "custommsg" => {
