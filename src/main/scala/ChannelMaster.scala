@@ -61,6 +61,7 @@ class ChannelMaster { self =>
   def log(message: String): Unit = logger.debug.msg(message)
 
   logger.info
+    .item("our-pubkey", node.publicKey.toHex)
     .item("channels", database.data.channels.size)
     .item(
       "errored-channels",

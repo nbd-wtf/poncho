@@ -13,6 +13,8 @@ For this to work well you must be running CLN compiled from the latest `master` 
 
 Grab a binary from the [Releases page](https://github.com/fiatjaf/poncho/releases) (or compile it yourself with `sbt nativeLink`, requires [sbt](https://www.scala-sbt.org/download.html)), call `chmod +x` on it so it is executable, then put it inside your CLN plugin directory (`~/.lightning/plugins/`) -- or start `lightningd` with `--plugin <path-to-poncho>`. No further configuration is needed for a quick test.
 
+You must have `libsecp256k1` installed. It can probably be installed using your operating system default package manager.
+
 ### Operation
 
 The CLN plugin provides these RPC methods:
