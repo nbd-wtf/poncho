@@ -490,6 +490,14 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           state = state.copy(lcssCurrent = lcssStored)
 
           // send our signed state update
+          System.err.println(
+            lastCrossSignedStateCodec
+              .encode(lcssInitial)
+              .toOption
+              .get
+              .toByteVector
+              .toHex
+          )
           sendMessage(
             lcssInitial.withLocalSigOfRemote(master.node.privateKey).stateUpdate
           )
