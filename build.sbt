@@ -3,13 +3,13 @@ enablePlugins(ScalaNativePlugin)
 name                  := "poncho"
 organization          := "fiatjaf"
 scalaVersion          := "3.1.3"
-version               := "0.2.0-SNAPSHOT"
+version               := "0.2.0"
 libraryDependencies   ++= Seq(
   "org.scodec" %%% "scodec-bits" % "1.1.32",
   "org.scodec" %%% "scodec-core" % "2.2.0",
   "com.lihaoyi" %%% "upickle" % "1.6.0",
   "com.lihaoyi" %%% "ujson" % "1.6.0",
-  "com.fiatjaf" %%% "scoin" % "0.2.0",
+  "com.fiatjaf" %%% "scoin" % "0.2.1",
   "com.fiatjaf" %%% "nlog" % "0.1.0",
   "com.fiatjaf" %%% "sn-unixsocket" % "0.1.0",
   "com.fiatjaf" %%% "sn-chacha20poly1305" % "0.2.1",
