@@ -229,7 +229,7 @@ class ChannelMaster { self =>
         })
     }
 
-  def channelJSON(chan: (ByteVector, Channel)): ujson.Obj = {
+  def channelJSON(chan: (ByteVector, ChannelData)): ujson.Obj = {
     val mapHtlc = (htlc: UpdateAddHtlc) => {
       ujson.Obj(
         "id" -> htlc.id.toLong.toInt,
@@ -242,7 +242,8 @@ class ChannelMaster { self =>
       )
     }
 
-    val (peerId, channel) = chan
+    val (peerId, data) = chan
+    val channel = self.channels.get(peerId)
 
     ujson.Obj(
       "peer_id" -> peerId.toHex,
@@ -252,15 +253,17 @@ class ChannelMaster { self =>
       "short_channel_id" -> HostedChannelHelpers
         .getShortChannelId(self.node.publicKey.value, peerId)
         .toString,
-      "status" -> channel.status.getClass.getSimpleName.toLowerCase,
-      "data" -> channel.currentData.lcss.pipe(lcss =>
+      "status" -> channel
+        .map(_.status.getClass.getSimpleName.toLowerCase)
+        .getOrElse("Offline"),
+      "data" -> data.lcss.pipe(lcss =>
         ujson.Obj(
           "is_host" -> lcss.isHost,
           "blockday" -> lcss.blockDay.toInt,
-          "local_errors" -> channel.currentData.localErrors
+          "local_errors" -> data.localErrors
             .map(dtlerr => ujson.Str(dtlerr.toString))
             .pipe(v => if v.isEmpty then v else ujson.Null),
-          "remote_errors" -> channel.currentData.remoteErrors
+          "remote_errors" -> data.remoteErrors
             .map(err => ujson.Str(err.toString))
             .pipe(v => if v.isEmpty then v else ujson.Null),
           "local_updates" -> lcss.localUpdates,
@@ -276,7 +279,9 @@ class ChannelMaster { self =>
           "outgoing_htlcs" -> ujson.Arr.from(
             lcss.outgoingHtlcs.map(mapHtlc)
           ),
-          "uncommitted_updates" -> channel.state.uncommittedUpdates.size
+          "uncommitted_updates" -> channel
+            .map(_.state.uncommittedUpdates.size)
+            .getOrElse(0)
         )
       )
     )

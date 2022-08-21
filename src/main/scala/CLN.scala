@@ -565,7 +565,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
       }
 
       case "hc-list" =>
-        reply(master.channels.toList.map(master.channelJSON))
+        reply(master.database.data.channels.toList.map(master.channelJSON))
 
       case "hc-channel" =>
         (for {
@@ -575,9 +575,9 @@ class CLN(master: ChannelMaster) extends NodeInterface {
             case _            => None
           }
           peerId <- ByteVector.fromHex(peerHex)
-          channel <- master.channels.get(peerId)
+          data <- master.database.data.channels.get(peerId)
         } yield reply(
-          master.channelJSON((peerId, channel))
+          master.channelJSON((peerId, data))
         )) getOrElse replyError("couldn't find that channel")
 
       case "hc-override" =>
