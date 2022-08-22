@@ -18,6 +18,7 @@ The CLN plugin provides these RPC methods:
 - `hc-list`: lists all hosted channels.
 - `hc-channel <peerid>`: shows just the channel specific for the given peer.
 - `hc-override <peerid> <msatoshi>`: if the channel for this peer is in an error state, proposes overriding it to a new state in which the local balance is the given.
+- `parse-lcss <peerid> <last_cross_signed_state_hex>`: if a client manually shares a channel state with you this method can be used to decode it.
 
 ### Storage
 

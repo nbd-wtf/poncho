@@ -318,7 +318,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
             "rpcmethods" -> ujson.Arr(
               ujson.Obj(
                 "name" -> "parse-lcss",
-                "usage" -> "last_cross_signed_state_hex",
+                "usage" -> "peerid last_cross_signed_state_hex",
                 "description" -> "Parse a hex representation of a last_cross_signed_state as provided by a mobile client."
               ),
               ujson.Obj(
@@ -544,21 +544,31 @@ class CLN(master: ChannelMaster) extends NodeInterface {
 
       // custom rpc methods
       case "parse-lcss" => {
-        val decoded = for {
+        (for {
+          peerIdHex <- params match {
+            case o: ujson.Obj =>
+              o.value.get("peerid").flatMap(_.strOpt)
+            case a: ujson.Arr => a.value.headOption.flatMap(_.strOpt)
+            case _            => None
+          }
+          peerId <- ByteVector.fromHex(peerIdHex)
+          peer = PublicKey(peerId)
           lcssHex <- params match {
             case o: ujson.Obj =>
               o.value.get("last_cross_signed_state_hex").flatMap(_.strOpt)
-            case a: ujson.Arr => a.value.headOption.flatMap(_.strOpt)
+            case a: ujson.Arr => a.value.drop(1).headOption.flatMap(_.strOpt)
             case _            => None
           }
           lcssBits <- BitVector.fromHex(lcssHex)
           decoded <- lastCrossSignedStateCodec.decode(lcssBits).toOption
-        } yield decoded.value
-
-        decoded match {
-          case Some(lcss) =>
+          lcss = decoded.value
+        } yield (peer, lcss)) match {
+          case Some((peer, lcss)) if lcss.verifyRemoteSig(peer) =>
             upickle.default.write(lcss).pipe(j => reply(ujson.read(j)))
-          case None => replyError("failed to decode last_cross_signed_state")
+          case None =>
+            replyError("failed to decode last_cross_signed_state or peerid")
+          case _ =>
+            replyError("provided lcss signature does not match the peerid")
         }
       }
 
