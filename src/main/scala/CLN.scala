@@ -191,15 +191,16 @@ class CLN(master: ChannelMaster) extends NodeInterface {
       peerId: ByteVector,
       message: LightningMessage
   ): Future[ujson.Value] = {
-    val (tag, encoded) = encodeHostedMessage(message)
-    val tagHex = uint16.encode(tag).toOption.get.toByteVector.toHex
+    val result = hostedMessageCodec.encode(message).toOption.get.toByteVector
+    val tagHex = result.take(2).toHex
+    val value = result.drop(2)
     val lengthHex = uint16
-      .encode(encoded.size.toInt)
+      .encode(value.size.toInt)
       .toOption
       .get
       .toByteVector
       .toHex
-    val payload = tagHex + lengthHex + encoded.toHex
+    val payload = tagHex ++ lengthHex ++ value.toHex
 
     master.log(s"  ::> sending $message --> ${peerId.toHex}")
     rpc(
@@ -370,18 +371,22 @@ class CLN(master: ChannelMaster) extends NodeInterface {
 
         val peerId = ByteVector.fromValidHex(params("peer_id").str)
         val body = params("payload").str
-        val tag = ByteVector
-          .fromValidHex(body.take(4))
-          .toInt(signed = false)
-        val payload: ByteVector = ByteVector.fromValidHex(
-          body
-            .drop(4 /* tag */ )
-            .drop(4 /* length */ )
-        )
+        val payload: ByteVector = ByteVector.fromValidHex(body)
 
-        decodeHostedMessage(tag, payload) match {
+        hostedMessageCodec
+          .decode(
+            ByteVector
+              .concat(
+                List(
+                  payload.take(2),
+                  payload.drop(2 /* tag */ + 2 /* length */ )
+                )
+              )
+              .toBitVector
+          )
+          .toTry match {
           case Success(msg) =>
-            master.getChannel(peerId).gotPeerMessage(msg)
+            master.getChannel(peerId).gotPeerMessage(msg.value)
           case Failure(err) =>
             master.log(s"failed to parse client messages: $err")
         }

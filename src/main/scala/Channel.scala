@@ -1402,7 +1402,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               master.config.htlcMinimumMsat,
               master.config.feeBase,
               master.config.feeProportionalMillionths,
-              Some(master.config.channelCapacityMsat),
+              master.config.channelCapacityMsat,
               TlvStream.empty[ChannelUpdateTlv]
             )
           )
@@ -1423,7 +1423,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       htlcMinimumMsat = master.config.htlcMinimumMsat,
       feeBaseMsat = master.config.feeBase,
       feeProportionalMillionths = master.config.feeProportionalMillionths,
-      htlcMaximumMsat = Some(master.config.channelCapacityMsat)
+      htlcMaximumMsat = master.config.channelCapacityMsat
     )
   }
 
