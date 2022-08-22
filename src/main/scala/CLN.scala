@@ -564,7 +564,16 @@ class CLN(master: ChannelMaster) extends NodeInterface {
           lcss = decoded.value
         } yield (peer, lcss)) match {
           case Some((peer, lcss)) if lcss.verifyRemoteSig(peer) =>
-            upickle.default.write(lcss).pipe(j => reply(ujson.read(j)))
+            if (
+              Crypto.verifySignature(
+                lcss.reverse.hostedSigHash,
+                lcss.localSigOfRemote,
+                publicKey
+              )
+            )
+              upickle.default.write(lcss).pipe(j => reply(ujson.read(j)))
+            else
+              replyError("provided lcss wasn't signed by us")
           case None =>
             replyError("failed to decode last_cross_signed_state or peerid")
           case _ =>
