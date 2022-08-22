@@ -254,19 +254,6 @@ class CLN(master: ChannelMaster) extends NodeInterface {
           )
         }
         case Success(Some(targetPeerId: ByteVector)) =>
-          System.err.println(s"calling sendonion with ${ujson
-              .Obj(
-                "first_hop" -> ujson.Obj(
-                  "id" -> targetPeerId.toHex,
-                  "amount_msat" -> amount.toLong,
-                  "delay" -> cltvExpiryDelta.toInt
-                ),
-                "onion" -> onion.toHex,
-                "payment_hash" -> paymentHash.toHex,
-                "label" -> upickle.default.write((chan.shortChannelId.toString, htlcId))
-              )
-              .toString}")
-
           rpc(
             "sendonion",
             ujson.Obj(
