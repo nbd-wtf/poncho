@@ -557,9 +557,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
 
         decoded match {
           case Some(lcss) =>
-            upickle.default
-              .write(lcss)
-              .pipe(reply(_))
+            upickle.default.write(lcss).pipe(j => reply(ujson.read(j)))
           case None => replyError("failed to decode last_cross_signed_state")
         }
       }
