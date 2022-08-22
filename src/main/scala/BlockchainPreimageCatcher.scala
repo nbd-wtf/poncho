@@ -16,40 +16,43 @@ class BlockchainPreimageCatcher(master: ChannelMaster) {
           localLogger.debug.msg("inspecting raw block for preimages")
 
           block.tx
-            .flatMap(extractPreimages(_))
-            .foreach { preimage =>
-              // we've found a preimage that someone has published.
-              localLogger = localLogger.attach
-                .item("preimage", preimage)
-                .logger()
-              localLogger.debug.msg("found a preimage from an OP_RETURN")
+            .foreach { tx =>
+              val preimages = extractPreimages(tx)
+              preimages.foreach { preimage =>
+                // we've found a preimage that someone has published.
+                val preimageLogger = localLogger.attach
+                  .item("preimage", preimage)
+                  .item("txid", tx.txid.toHex)
+                  .logger()
+                preimageLogger.debug.msg("found a preimage from an OP_RETURN")
 
-              // is it for a pending outgoing HTLC in one of our HCs?
-              // (we must use filter because there could be more than one in case of MPP)
-              master.database.data.channels
-                .flatMap { case (peer, chandata) =>
-                  chandata.lcss.outgoingHtlcs.map(htlc => (peer, htlc))
-                }
-                .filter { case (peer, htlc) =>
-                  htlc.paymentHash == scoin.Crypto.sha256(preimage)
-                }
-                .foreach { case (peer, htlc) =>
-                  // we've found an outgoing htlc that matches this preimage
-                  // so now we act as if we had received an update_fulfill_htlc
-                  // and resolve it upwards
-                  localLogger.warn
-                    .item("htlc", htlc)
-                    .item("peer", peer)
-                    .msg("a payment was resolved with an OP_RETURN preimage")
+                // is it for a pending outgoing HTLC in one of our HCs?
+                // (we must use filter because there could be more than one in case of MPP)
+                master.database.data.channels
+                  .flatMap { case (peer, chandata) =>
+                    chandata.lcss.outgoingHtlcs.map(htlc => (peer, htlc))
+                  }
+                  .filter { case (peer, htlc) =>
+                    htlc.paymentHash == scoin.Crypto.sha256(preimage)
+                  }
+                  .foreach { case (peer, htlc) =>
+                    // we've found an outgoing htlc that matches this preimage
+                    // so now we act as if we had received an update_fulfill_htlc
+                    // and resolve it upwards
+                    preimageLogger.warn
+                      .item("htlc", htlc)
+                      .item("peer", peer)
+                      .msg("a payment was resolved with an OP_RETURN preimage")
 
-                  // this will protect our money, but the hosted channel will
-                  // still error when this outgoing HTLC expire -- which is ok because resorting
-                  // to OP_RETURN is an indication that something is wrong.
-                  master
-                    .getChannel(peer)
-                    .provideHtlcResult(htlc.id, Some(Right(preimage)))
+                    // this will protect our money, but the hosted channel will
+                    // still error when this outgoing HTLC expire -- which is ok because resorting
+                    // to OP_RETURN is an indication that something is wrong.
+                    master
+                      .getChannel(peer)
+                      .provideHtlcResult(htlc.id, Some(Right(preimage)))
 
-                }
+                  }
+              }
             }
         }
         case Failure(err) =>
