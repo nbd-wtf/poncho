@@ -123,7 +123,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       state.lcssNext.incomingHtlcs.exists(_.paymentHash == paymentHash)
     val isInflight = master.database.data.htlcForwards.get(incoming) ==
       Some(HtlcIdentifier(shortChannelId, _))
-    val isActive = (status != Active)
+    val isActive = (status == Active)
 
     (
       isActive,
@@ -314,8 +314,10 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               .msg("routed successfully")
           case Some(Left(Some(FailureOnion(_)))) =>
             localLogger.info.msg("received failure onion")
-          case Some(Left(_)) =>
-            localLogger.debug.msg("received generic failure")
+          case Some(Left(failure)) =>
+            localLogger.debug
+              .item("failure", failure)
+              .msg("received generic failure")
           case None =>
             localLogger.warn.msg("didn't handle")
         }
