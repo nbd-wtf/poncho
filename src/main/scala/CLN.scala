@@ -104,14 +104,10 @@ class CLN(master: ChannelMaster) extends NodeInterface {
     rpc("getinfo", ujson.Obj())
       .map(_("network").str)
       .map({
-        case "bitcoin" =>
-          "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000"
-        case "testnet" =>
-          "43497fd7f826957108f4a30fd9cec3aeba79972084e90ead01ea330900000000"
-        case "signet" =>
-          "06226e46111a0b59caaf126043eb5bbf28c34f3a5e332a1fc7b2b73cf188910f"
-        case "regtest" =>
-          "b291211d4bb2b7e1b7a4758225e69e50104091a637213d033295c010f55ffb18"
+        case "bitcoin" => Block.LivenetGenesisBlock.hash.toHex
+        case "testnet" => Block.TestnetGenesisBlock.hash.toHex
+        case "signet"  => Block.SignetGenesisBlock.hash.toHex
+        case "regtest" => Block.RegtestGenesisBlock.hash.toHex
         case chain =>
           throw IllegalArgumentException(s"unknown chain name '$chain'")
       })

@@ -461,7 +461,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           sendMessage(
             Error(
               channelId,
-              s"invalid chainHash (local=${master.chainHash} remote=${msg.chainHash})"
+              s"invalid chainHash (ours=${master.chainHash} yours=${msg.chainHash})"
             )
           )
         } else {
