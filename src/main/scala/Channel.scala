@@ -186,11 +186,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         promise.success(
           Some(
             Left(
-              Some(
-                NormalFailureMessage(
-                  TemporaryChannelFailure(getChannelUpdate(false))
-                )
-              )
+              Some(NormalFailureMessage(UnknownNextPeer))
             )
           )
         )
@@ -217,7 +213,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         )
 
         if (
-          (htlc.cltvExpiry.blockHeight - master.currentBlock).toInt < master.config.cltvExpiryDelta.toInt
+          (htlc.cltvExpiry.blockHeight - master.currentBlock).toInt < (master.config.cltvExpiryDelta.toInt + 1) // we add one here just in case
         )
           promise.success(
             Some(
