@@ -9,8 +9,6 @@ This is an **early alpha** software that turns your CLN node into a [hosted chan
 
 ### Installation
 
-For this to work well you must be running CLN compiled from the latest `master` (or wait until the next release) and you must have the setting `allow-deprecated-apis=false` in your config file (`~/.lightning/config`).
-
 Grab a binary from the [Releases page](https://github.com/fiatjaf/poncho/releases) (or compile it yourself with `sbt nativeLink`, requires [sbt](https://www.scala-sbt.org/download.html)), call `chmod +x` on it so it is executable, then put it inside your CLN plugin directory (`~/.lightning/plugins/`) -- or start `lightningd` with `--plugin <path-to-poncho>`. No further configuration is needed for a quick test.
 
 You must have `libsecp256k1` installed. It can probably be installed using your operating system default package manager.
@@ -24,6 +22,7 @@ The CLN plugin provides these RPC methods:
 - `hc-override <peerid> <msatoshi>`: if the channel for this peer is in an error state, proposes overriding it to a new state in which the local balance is the given.
 - `add-hc-secret <secret>`: adds a one-time secret for when `"requireSecret"` is true.
 - `remove-hc-secret <secret>`: the opposite of the above.
+- `parse-lcss <peerid> <last_cross_signed_state_hex>`: if a client manually shares a channel state with you this method can be used to decode it.
 
 ### Storage
 
@@ -69,6 +68,8 @@ You can write a file at `$LIGHTNING_DIR/bitcoin/poncho/config.json` with the fol
 ```
 
 The branding information won't be used unless contact URL and logo file are set. The logo should be a PNG file also placed under `$LIGHTNING_DIR/bitcoin/poncho/` and specified as a relative path.
+
+Remember to remove the JSON comments in the file above otherwise it won't work.
 
 ### FAQ
 

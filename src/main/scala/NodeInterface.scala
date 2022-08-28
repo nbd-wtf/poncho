@@ -3,16 +3,15 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.scalanative.unsigned._
 import scala.scalanative.loop.EventLoop.loop
 import scala.concurrent.Future
-
 import scodec.bits.ByteVector
 import scodec.codecs.uint16
-
-import codecs.HostedChannelCodecs._
-import codecs._
+import scoin._
+import scoin.ln.LightningMessage
+import scoin.Crypto.{PrivateKey, PublicKey}
 
 trait NodeInterface {
-  def privateKey: ByteVector32
-  def publicKey: ByteVector
+  def privateKey: PrivateKey
+  def publicKey: PublicKey
 
   def inspectOutgoingPayment(
       identifier: HtlcIdentifier,
@@ -21,12 +20,12 @@ trait NodeInterface {
 
   def sendCustomMessage(
       peerId: ByteVector,
-      message: HostedServerMessage | HostedClientMessage
+      message: LightningMessage
   ): Future[ujson.Value]
 
   def sendOnion(
       chan: Channel,
-      htlcId: ULong,
+      htlcId: Long,
       paymentHash: ByteVector32,
       firstHop: ShortChannelId,
       amount: MilliSatoshi,
@@ -36,6 +35,7 @@ trait NodeInterface {
 
   def getAddress(): Future[String]
   def getCurrentBlock(): Future[BlockHeight]
+  def getBlockByHeight(height: BlockHeight): Future[Block]
   def getChainHash(): Future[ByteVector32]
 
   def main(onInit: () => Unit): Unit

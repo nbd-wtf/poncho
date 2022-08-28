@@ -9,16 +9,15 @@ import scala.scalanative.unsigned._
 import scala.scalanative.loop.EventLoop.loop
 import scala.scalanative.loop.{Poll, Timer}
 import scala.util.{Failure, Success}
-import secp256k1.Keys
-import sha256.Hkdf
 import ujson._
 import scodec.bits.{ByteVector, BitVector}
 import scodec.codecs.uint16
-
 import unixsocket.UnixSocket
-import codecs.HostedChannelCodecs._
-import codecs._
-import secp256k1.Secp256k1
+import scoin._
+import scoin.ln._
+import scoin.hc._
+import scoin.hc.HostedChannelCodecs._
+import scoin.Crypto.{PublicKey, PrivateKey}
 
 class CLN(master: ChannelMaster) extends NodeInterface {
   import Picklers.given
@@ -90,37 +89,25 @@ class CLN(master: ChannelMaster) extends NodeInterface {
     )
   }
 
-  lazy val privateKey: ByteVector32 = {
+  lazy val privateKey: PrivateKey = {
     val salt = Array[UByte](0.toByte.toUByte)
     val info = "nodeid".getBytes().map(_.toUByte)
     val secret = Files.readAllBytes(hsmSecret).map(_.toUByte)
 
-    val sk = Hkdf.hkdf(salt, secret, info, 32)
-    ByteVector32(ByteVector(sk.map(_.toByte)))
+    val sk = hkdf256.hkdf(salt, secret, info, 32)
+    PrivateKey(ByteVector32(ByteVector(sk.map(_.toByte))))
   }
 
-  lazy val publicKey = ByteVector(
-    Keys
-      .loadPrivateKey(privateKey.bytes.toArray.map(_.toUByte))
-      .toOption
-      .get
-      .publicKey()
-      ._1
-      .map(_.toByte)
-  )
+  lazy val publicKey: PublicKey = privateKey.publicKey
 
   def getChainHash(): Future[ByteVector32] =
     rpc("getinfo", ujson.Obj())
       .map(_("network").str)
       .map({
-        case "bitcoin" =>
-          "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000"
-        case "testnet" =>
-          "43497fd7f826957108f4a30fd9cec3aeba79972084e90ead01ea330900000000"
-        case "signet" =>
-          "06226e46111a0b59caaf126043eb5bbf28c34f3a5e332a1fc7b2b73cf188910f"
-        case "regtest" =>
-          "b291211d4bb2b7e1b7a4758225e69e50104091a637213d033295c010f55ffb18"
+        case "bitcoin" => Block.LivenetGenesisBlock.hash.toHex
+        case "testnet" => Block.TestnetGenesisBlock.hash.toHex
+        case "signet"  => Block.SignetGenesisBlock.hash.toHex
+        case "regtest" => Block.RegtestGenesisBlock.hash.toHex
         case chain =>
           throw IllegalArgumentException(s"unknown chain name '$chain'")
       })
@@ -131,6 +118,13 @@ class CLN(master: ChannelMaster) extends NodeInterface {
 
   def getCurrentBlock(): Future[BlockHeight] =
     rpc("getchaininfo").map(info => BlockHeight(info("headercount").num.toLong))
+
+  def getBlockByHeight(height: BlockHeight): Future[Block] =
+    rpc("getrawblockbyheight", ujson.Obj("height" -> height.toInt))
+      .flatMap(resp =>
+        resp("block").str
+          .pipe(hex => Future(Block.read(hex)))
+      )
 
   def inspectOutgoingPayment(
       identifier: HtlcIdentifier,
@@ -191,20 +185,18 @@ class CLN(master: ChannelMaster) extends NodeInterface {
 
   def sendCustomMessage(
       peerId: ByteVector,
-      message: HostedServerMessage | HostedClientMessage
+      message: LightningMessage
   ): Future[ujson.Value] = {
-    val (tag, encoded) = message match {
-      case m: HostedServerMessage => encodeServerMessage(m)
-      case m: HostedClientMessage => encodeClientMessage(m)
-    }
-    val tagHex = uint16.encode(tag).toOption.get.toByteVector.toHex
+    val result = hostedMessageCodec.encode(message).toOption.get.toByteVector
+    val tagHex = result.take(2).toHex
+    val value = result.drop(2)
     val lengthHex = uint16
-      .encode(encoded.size.toInt)
+      .encode(value.size.toInt)
       .toOption
       .get
       .toByteVector
       .toHex
-    val payload = tagHex + lengthHex + encoded.toHex
+    val payload = tagHex ++ lengthHex ++ value.toHex
 
     master.log(s"  ::> sending $message --> ${peerId.toHex}")
     rpc(
@@ -218,7 +210,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
 
   def sendOnion(
       chan: Channel,
-      htlcId: ULong,
+      htlcId: Long,
       paymentHash: ByteVector32,
       firstHop: ShortChannelId,
       amount: MilliSatoshi,
@@ -258,19 +250,6 @@ class CLN(master: ChannelMaster) extends NodeInterface {
           )
         }
         case Success(Some(targetPeerId: ByteVector)) =>
-          System.err.println(s"calling sendonion with ${ujson
-              .Obj(
-                "first_hop" -> ujson.Obj(
-                  "id" -> targetPeerId.toHex,
-                  "amount_msat" -> amount.toLong,
-                  "delay" -> cltvExpiryDelta.toInt
-                ),
-                "onion" -> onion.toHex,
-                "payment_hash" -> paymentHash.toHex,
-                "label" -> upickle.default.write((chan.shortChannelId.toString, htlcId.toLong))
-              )
-              .toString}")
-
           rpc(
             "sendonion",
             ujson.Obj(
@@ -282,7 +261,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
               "onion" -> onion.toHex,
               "payment_hash" -> paymentHash.toHex,
               "label" -> upickle.default
-                .write((chan.shortChannelId.toString, htlcId.toLong))
+                .write((chan.shortChannelId.toString, htlcId))
             )
           )
             .onComplete {
@@ -323,7 +302,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
             "rpcmethods" -> ujson.Arr(
               ujson.Obj(
                 "name" -> "parse-lcss",
-                "usage" -> "last_cross_signed_state_hex",
+                "usage" -> "peerid last_cross_signed_state_hex",
                 "description" -> "Parse a hex representation of a last_cross_signed_state as provided by a mobile client."
               ),
               ujson.Obj(
@@ -387,26 +366,24 @@ class CLN(master: ChannelMaster) extends NodeInterface {
 
         val peerId = ByteVector.fromValidHex(params("peer_id").str)
         val body = params("payload").str
-        val tag = ByteVector
-          .fromValidHex(body.take(4))
-          .toInt(signed = false)
-        val payload =
-          ByteVector.fromValidHex(
-            body
-              .drop(4 /* tag */ )
-              .drop(4 /* length */ )
-          )
+        val payload: ByteVector = ByteVector.fromValidHex(body)
 
-        (
-          decodeServerMessage(tag, payload).toEither,
-          decodeClientMessage(tag, payload).toEither
-        ) match {
-          case (Left(err1), Left(err2)) =>
-            master.log(s"failed to parse client messages: $err1 | $err2")
-          case (Right(msg), _) =>
-            master.getChannel(peerId).gotPeerMessage(msg)
-          case (_, Right(msg)) =>
-            master.getChannel(peerId).gotPeerMessage(msg)
+        hostedMessageCodec
+          .decode(
+            ByteVector
+              .concat(
+                List(
+                  payload.take(2),
+                  payload.drop(2 /* tag */ + 2 /* length */ )
+                )
+              )
+              .toBitVector
+          )
+          .toTry match {
+          case Success(msg) =>
+            master.getChannel(peerId).gotPeerMessage(msg.value)
+          case Failure(err) =>
+            master.log(s"failed to parse client messages: $err")
         }
       }
       case "htlc_accepted" => {
@@ -429,18 +406,30 @@ class CLN(master: ChannelMaster) extends NodeInterface {
           } else {
             val hash = ByteVector32.fromValidHex(htlc("payment_hash").str)
             val sourceChannel = ShortChannelId(htlc("short_channel_id").str)
-            val sourceAmount = MilliSatoshi(htlc("amount_msat") match {
-              case ujson.Num(num) => num.toLong
-              case ujson.Str(str) => str.takeWhile(_.isDigit).toLong
-              case _              => 0L // we trust this will never happen
-            })
-            val sourceId = htlc("id").num.toInt.toULong
+            val sourceAmount = MilliSatoshi(
+              htlc.obj.get("amount_msat").orElse(htlc.obj.get("amount")) match {
+                case Some(ujson.Num(num)) => num.toLong
+                case Some(ujson.Str(str)) => str.takeWhile(_.isDigit).toLong
+                case what =>
+                  throw new Exception(
+                    s"unexpected htlc.amount at htlc_accepted hook: $what"
+                  )
+              }
+            )
+            val sourceId = htlc("id").num.toLong
             val targetChannel = ShortChannelId(onion("short_channel_id").str)
-            val targetAmount = MilliSatoshi(onion("forward_msat") match {
-              case ujson.Num(num) => num.toLong
-              case ujson.Str(str) => str.takeWhile(_.isDigit).toLong
-              case _              => 0L // we trust this will never happen
-            })
+            val targetAmount = MilliSatoshi(
+              onion.obj
+                .get("forward_msat")
+                .orElse(htlc.obj.get("forward_amount")) match {
+                case Some(ujson.Num(num)) => num.toLong
+                case Some(ujson.Str(str)) => str.takeWhile(_.isDigit).toLong
+                case what =>
+                  throw new Exception(
+                    s"unexpected onion.forward_amount at htlc_accepted hook: $what"
+                  )
+              }
+            )
             val cltvExpiry = CltvExpiry(
               BlockHeight(onion("outgoing_cltv_value").num.toLong)
             )
@@ -449,8 +438,8 @@ class CLN(master: ChannelMaster) extends NodeInterface {
               ByteVector32.fromValidHex(onion("shared_secret").str)
 
             master.database.data.channels.find((peerId, chandata) =>
-              Utils.getShortChannelId(
-                publicKey,
+              HostedChannelHelpers.getShortChannelId(
+                publicKey.value,
                 peerId
               ) == targetChannel
             ) match {
@@ -484,7 +473,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
                       case Some(Left(Some(NormalFailureMessage(message)))) =>
                         ujson.Obj(
                           "result" -> "fail",
-                          "failure_message" -> message.codeHex
+                          "failure_message" -> message.toHex
                         )
                       case Some(Left(None)) =>
                         ujson
@@ -512,12 +501,12 @@ class CLN(master: ChannelMaster) extends NodeInterface {
             ).toOption
             scid = ShortChannelId(scidStr)
             (peerId, _) <- master.database.data.channels.find((p, _) =>
-              Utils.getShortChannelId(publicKey, p) == scid
+              HostedChannelHelpers.getShortChannelId(publicKey.value, p) == scid
             )
           } yield master
             .getChannel(peerId)
             .gotPaymentResult(
-              htlcId.toULong,
+              htlcId,
               toStatus(ArrayBuffer(successdata))
             )
       }
@@ -531,7 +520,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
             ).toOption
             scid = ShortChannelId(scidStr)
             (peerId, _) <- master.database.data.channels.find((p, _) =>
-              Utils.getShortChannelId(publicKey, p) == scid
+              HostedChannelHelpers.getShortChannelId(publicKey.value, p) == scid
             )
             channel = master.getChannel(peerId)
           } yield {
@@ -539,15 +528,15 @@ class CLN(master: ChannelMaster) extends NodeInterface {
               case "pending" =>
                 Timer.timeout(FiniteDuration(1, "seconds")) { () =>
                   inspectOutgoingPayment(
-                    HtlcIdentifier(scid, htlcId.toULong),
+                    HtlcIdentifier(scid, htlcId),
                     ByteVector32.fromValidHex(failuredata("payment_hash").str)
                   ).foreach { result =>
-                    channel.gotPaymentResult(htlcId.toULong, result)
+                    channel.gotPaymentResult(htlcId, result)
                   }
                 }
               case "failed" =>
                 channel.gotPaymentResult(
-                  htlcId.toULong,
+                  htlcId,
                   toStatus(ArrayBuffer(failuredata))
                 )
             }
@@ -567,23 +556,40 @@ class CLN(master: ChannelMaster) extends NodeInterface {
 
       // custom rpc methods
       case "parse-lcss" => {
-        val decoded = for {
+        (for {
+          peerIdHex <- params match {
+            case o: ujson.Obj =>
+              o.value.get("peerid").flatMap(_.strOpt)
+            case a: ujson.Arr => a.value.headOption.flatMap(_.strOpt)
+            case _            => None
+          }
+          peerId <- ByteVector.fromHex(peerIdHex)
+          peer = PublicKey(peerId)
           lcssHex <- params match {
             case o: ujson.Obj =>
               o.value.get("last_cross_signed_state_hex").flatMap(_.strOpt)
-            case a: ujson.Arr => a.value.headOption.flatMap(_.strOpt)
+            case a: ujson.Arr => a.value.drop(1).headOption.flatMap(_.strOpt)
             case _            => None
           }
           lcssBits <- BitVector.fromHex(lcssHex)
           decoded <- lastCrossSignedStateCodec.decode(lcssBits).toOption
-        } yield decoded.value
-
-        decoded match {
-          case Some(lcss) =>
-            upickle.default
-              .write(lcss)
-              .pipe(reply(_))
-          case None => replyError("failed to decode last_cross_signed_state")
+          lcss = decoded.value
+        } yield (peer, lcss)) match {
+          case Some((peer, lcss)) if lcss.verifyRemoteSig(peer) =>
+            if (
+              Crypto.verifySignature(
+                lcss.reverse.hostedSigHash,
+                lcss.localSigOfRemote,
+                publicKey
+              )
+            )
+              upickle.default.write(lcss).pipe(j => reply(ujson.read(j)))
+            else
+              replyError("provided lcss wasn't signed by us")
+          case None =>
+            replyError("failed to decode last_cross_signed_state or peerid")
+          case _ =>
+            replyError("provided lcss signature does not match the peerid")
         }
       }
 
@@ -625,7 +631,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
           }
 
       case "hc-list" =>
-        reply(master.channels.toList.map(master.channelJSON))
+        reply(master.database.data.channels.toList.map(master.channelJSON))
 
       case "hc-channel" =>
         (for {
@@ -635,19 +641,19 @@ class CLN(master: ChannelMaster) extends NodeInterface {
             case _            => None
           }
           peerId <- ByteVector.fromHex(peerHex)
-          channel <- master.channels.get(peerId)
+          data <- master.database.data.channels.get(peerId)
         } yield reply(
-          master.channelJSON((peerId, channel))
+          master.channelJSON((peerId, data))
         )) getOrElse replyError("couldn't find that channel")
 
-      case "hc-override" => {
-        params match {
+      case "hc-override" =>
+        (params match {
           case _: ujson.Obj =>
             Some((params("peerid").strOpt, params("msatoshi").numOpt))
           case arr: ujson.Arr if arr.value.size == 2 =>
             Some((params(0).strOpt, params(1).numOpt))
           case _ => None
-        } match {
+        }) match {
           case Some(Some(peerId), Some(msatoshi)) => {
             master
               .getChannel(ByteVector.fromValidHex(peerId))
@@ -661,16 +667,15 @@ class CLN(master: ChannelMaster) extends NodeInterface {
             replyError("invalid parameters")
           }
         }
-      }
 
-      case "hc-request-channel" => {
-        params match {
+      case "hc-request-channel" =>
+        (params match {
           case _: ujson.Obj =>
             Some(params("peerid").strOpt)
           case arr: ujson.Arr if arr.value.size == 1 =>
             Some(params(0).strOpt)
           case _ => None
-        } match {
+        }) match {
           case Some(Some(peerId)) => {
             master
               .getChannel(ByteVector.fromValidHex(peerId))
@@ -684,7 +689,6 @@ class CLN(master: ChannelMaster) extends NodeInterface {
             replyError("invalid parameters")
           }
         }
-      }
     }
   }
 

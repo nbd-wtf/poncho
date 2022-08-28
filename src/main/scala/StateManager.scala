@@ -1,6 +1,8 @@
 import scodec.bits.ByteVector
 
-import codecs._
+import scoin._
+import scoin.ln._
+import scoin.hc._
 
 case class StateManager(
     peerId: ByteVector,
@@ -12,7 +14,7 @@ case class StateManager(
   // and that will be processed and dispatched to our upstream node once they are actually committed
   // TODO: should we also not add if this is an htlc that is already committed? probably
   def addUncommittedUpdate(upd: FromLocal | FromRemote): StateManager = {
-    if (this.uncommittedUpdates.exists(_ == upd)) then this
+    if (this.uncommittedUpdates.exists(_ == upd)) this
     else this.copy(uncommittedUpdates = this.uncommittedUpdates :+ upd)
   }
   def removeUncommitedUpdate(upd: FromLocal | FromRemote): StateManager =
@@ -106,6 +108,8 @@ case class StateManager(
               case None => lcss
             }
           }
+          case FromRemote(_: UpdateFee)   => lcss // this will never happen
+          case FromLocal(_: UpdateFee, _) => lcss // this will never happen
         }
       )
   }

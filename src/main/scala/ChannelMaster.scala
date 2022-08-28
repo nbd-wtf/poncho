@@ -11,15 +11,17 @@ import upickle.default._
 import com.softwaremill.quicklens._
 import scodec.bits.ByteVector
 import scodec.{DecodeResult}
-
-import codecs._
-import crypto.Crypto
+import scoin._
+import scoin.ln._
+import scoin.hc._
 
 class ChannelMaster { self =>
   import Picklers.given
 
   val node: NodeInterface = new CLN(self)
   val database = new Database()
+  val preimageCatcher = new BlockchainPreimageCatcher(self)
+
   var isReady: Boolean = false
   var temporarySecrets: List[String] = List.empty
 
@@ -31,15 +33,48 @@ class ChannelMaster { self =>
   def getChannel(peerId: ByteVector): Channel =
     channels.getOrElseUpdate(peerId, { new Channel(self, peerId) })
 
-  val logger: nlog.Logger = {
-    def printer(message: String): Unit =
+  val logger = new nlog.Logger {
+    override val threshold =
+      if self.config.isDev then nlog.Debug else nlog.Info
+    override def print(
+        level: nlog.Level,
+        items: nlog.Items,
+        msg: String
+    ): Unit = {
+      val lvl = {
+        val (color, name) = level match {
+          case nlog.Debug => (Console.GREEN_B, "DBG")
+          case nlog.Info  => (Console.BLUE_B, "INF")
+          case nlog.Warn  => (Console.YELLOW_B, "WRN")
+          case nlog.Err   => (Console.RED_B, "ERR")
+        }
+        Console.BLACK + color + "[" + name + "]" + Console.RESET
+      }
+      val its =
+        items
+          .map {
+            case (l: String, it: Any) =>
+              Console.BLUE + s"$l=" + Console.RESET + s"$it"
+            case it =>
+              Console.YELLOW + "{" + Console.RESET
+                + s"$it"
+                + Console.YELLOW + "}" + Console.RESET
+          }
+          .mkString(" ")
+      val sep =
+        if items.size > 0 && msg.size > 0 then
+          Console.YELLOW + " ~ " + Console.RESET
+        else ""
+
+      val text = s"$lvl ${msg}${sep}${its}"
+
       if (node.isInstanceOf[CLN] && !self.config.isDev) {
         System.out.println(
           ujson.Obj(
             "jsonrpc" -> "2.0",
             "method" -> "log",
             "params" -> ujson.Obj(
-              "message" -> message
+              "message" -> text
             )
           )
         )
@@ -47,21 +82,17 @@ class ChannelMaster { self =>
         System.err.println(
           Console.BOLD + "> " +
             Console.BLUE + "poncho" + Console.RESET +
-            Console.BOLD + ": " + Console.RESET +
-            Console.GREEN + message + Console.RESET
+            Console.GREEN + Console.BOLD + ": " + Console.RESET +
+            text
         )
       }
-
-    new nlog.Logger(
-      printer = printer,
-      level = if self.config.isDev then nlog.Debug else nlog.Info
-    )
+    }
   }
 
   def log(message: String): Unit = logger.debug.msg(message)
 
   logger.info
-    .item("our-pubkey", node.publicKey.toHex)
+    .item("our-pubkey", node.publicKey.value.toHex)
     .item("channels", database.data.channels.size)
     .item(
       "errored-channels",
@@ -89,6 +120,7 @@ class ChannelMaster { self =>
             logger.info.item(block).msg("updated current block")
 
             self.channels.values.foreach(_.onBlockUpdated(block))
+            self.preimageCatcher.onBlockUpdated(block)
           }
         }
         case Failure(err) =>
@@ -142,7 +174,11 @@ class ChannelMaster { self =>
           )
           // ~ use that to get the target channel parameters
           (targetPeerId, targetChannelData) <- database.data.channels.find(
-            (p, _) => Utils.getShortChannelId(self.node.publicKey, p) == scid
+            (p, _) =>
+              HostedChannelHelpers.getShortChannelId(
+                self.node.publicKey.value,
+                p
+              ) == scid
           )
           // ~ get/instantiate the target channel
           targetPeer = self.getChannel(targetPeerId)
@@ -150,7 +186,8 @@ class ChannelMaster { self =>
           _ = targetPeer
             .addHtlc(
               incoming = HtlcIdentifier(
-                Utils.getShortChannelId(self.node.publicKey, sourcePeerId),
+                HostedChannelHelpers
+                  .getShortChannelId(self.node.publicKey.value, sourcePeerId),
                 in.id
               ),
               incomingAmount = in.amountMsat,
@@ -195,7 +232,7 @@ class ChannelMaster { self =>
         })
     }
 
-  def channelJSON(chan: (ByteVector, Channel)): ujson.Obj = {
+  def channelJSON(chan: (ByteVector, ChannelData)): ujson.Obj = {
     val mapHtlc = (htlc: UpdateAddHtlc) => {
       ujson.Obj(
         "id" -> htlc.id.toLong.toInt,
@@ -208,23 +245,28 @@ class ChannelMaster { self =>
       )
     }
 
-    val (peerId, channel) = chan
+    val (peerId, data) = chan
+    val channel = self.channels.get(peerId)
 
     ujson.Obj(
       "peer_id" -> peerId.toHex,
-      "channel_id" -> Utils.getChannelId(self.node.publicKey, peerId).toHex,
-      "short_channel_id" -> Utils
-        .getShortChannelId(self.node.publicKey, peerId)
+      "channel_id" -> HostedChannelHelpers
+        .getChannelId(self.node.publicKey.value, peerId)
+        .toHex,
+      "short_channel_id" -> HostedChannelHelpers
+        .getShortChannelId(self.node.publicKey.value, peerId)
         .toString,
-      "status" -> channel.status.getClass.getSimpleName.toLowerCase,
-      "data" -> channel.currentData.lcss.pipe(lcss =>
+      "status" -> channel
+        .map(_.status.getClass.getSimpleName.toLowerCase)
+        .getOrElse("Offline"),
+      "data" -> data.lcss.pipe(lcss =>
         ujson.Obj(
           "is_host" -> lcss.isHost,
           "blockday" -> lcss.blockDay.toInt,
-          "local_errors" -> channel.currentData.localErrors
+          "local_errors" -> data.localErrors
             .map(dtlerr => ujson.Str(dtlerr.toString))
             .pipe(v => if v.isEmpty then v else ujson.Null),
-          "remote_errors" -> channel.currentData.remoteErrors
+          "remote_errors" -> data.remoteErrors
             .map(err => ujson.Str(err.toString))
             .pipe(v => if v.isEmpty then v else ujson.Null),
           "local_updates" -> lcss.localUpdates,
@@ -240,7 +282,9 @@ class ChannelMaster { self =>
           "outgoing_htlcs" -> ujson.Arr.from(
             lcss.outgoingHtlcs.map(mapHtlc)
           ),
-          "uncommitted_updates" -> channel.state.uncommittedUpdates.size
+          "uncommitted_updates" -> channel
+            .map(_.state.uncommittedUpdates.size)
+            .getOrElse(0)
         )
       )
     )
