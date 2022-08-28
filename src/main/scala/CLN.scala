@@ -394,18 +394,30 @@ class CLN(master: ChannelMaster) extends NodeInterface {
           } else {
             val hash = ByteVector32.fromValidHex(htlc("payment_hash").str)
             val sourceChannel = ShortChannelId(htlc("short_channel_id").str)
-            val sourceAmount = MilliSatoshi(htlc("amount_msat") match {
-              case ujson.Num(num) => num.toLong
-              case ujson.Str(str) => str.takeWhile(_.isDigit).toLong
-              case _              => 0L // we trust this will never happen
-            })
+            val sourceAmount = MilliSatoshi(
+              htlc.obj.get("amount_msat").orElse(htlc.obj.get("amount")) match {
+                case Some(ujson.Num(num)) => num.toLong
+                case Some(ujson.Str(str)) => str.takeWhile(_.isDigit).toLong
+                case what =>
+                  throw new Exception(
+                    s"unexpected htlc.amount at htlc_accepted hook: $what"
+                  )
+              }
+            )
             val sourceId = htlc("id").num.toLong
             val targetChannel = ShortChannelId(onion("short_channel_id").str)
-            val targetAmount = MilliSatoshi(onion("forward_msat") match {
-              case ujson.Num(num) => num.toLong
-              case ujson.Str(str) => str.takeWhile(_.isDigit).toLong
-              case _              => 0L // we trust this will never happen
-            })
+            val targetAmount = MilliSatoshi(
+              onion.obj
+                .get("forward_msat")
+                .orElse(htlc.obj.get("forward_amount")) match {
+                case Some(ujson.Num(num)) => num.toLong
+                case Some(ujson.Str(str)) => str.takeWhile(_.isDigit).toLong
+                case what =>
+                  throw new Exception(
+                    s"unexpected onion.forward_amount at htlc_accepted hook: $what"
+                  )
+              }
+            )
             val cltvExpiry = CltvExpiry(
               BlockHeight(onion("outgoing_cltv_value").num.toLong)
             )
