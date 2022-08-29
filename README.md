@@ -11,7 +11,8 @@ This is an **early alpha** software that turns your CLN node into a [hosted chan
 
 Grab a binary from the [Releases page](https://github.com/fiatjaf/poncho/releases) (or compile it yourself with `sbt nativeLink`, requires [sbt](https://www.scala-sbt.org/download.html)), call `chmod +x` on it so it is executable, then put it inside your CLN plugin directory (`~/.lightning/plugins/`) -- or start `lightningd` with `--plugin <path-to-poncho>`. No further configuration is needed for a quick test.
 
-You must have `libsecp256k1-dev`,`libuv1-dev`, `openjdk-17-jre-headless`(any java really) installed. It can probably be installed using your operating system default package manager.
+You must have `libsecp256k1` and `libuv` installed. These can probably be installed using your operating system default package manager.
+`openjdk-11-jre-headless` (or appropreate java for the OS you are running) is required when building from source using sbt.
 
 
 ### Operation
