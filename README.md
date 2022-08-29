@@ -7,16 +7,23 @@ poncho
 
 This is an **early alpha** software that turns your CLN node into a [hosted channels](https://sbw.app/posts/scaling-ln-with-hosted-channels/) provider.
 
-### Installation
+### Installation using the prebuilt binary
 
-Grab a binary from the [Releases page](https://github.com/fiatjaf/poncho/releases) (or compile it yourself with `sbt nativeLink` -- requires [sbt](https://www.scala-sbt.org/download.html)), call `chmod +x` on it so it is executable, then put it inside your CLN plugin directory (`~/.lightning/plugins/`) -- or start `lightningd` with `--plugin <path-to-poncho>`. No further configuration is needed for a quick test.
+Before running you must have `libsecp256k1` and `libuv` installed as shared libraries. These can probably be installed using your operating system default package manager.
 
-You must have `libsecp256k1` and `libuv` installed. These can probably be installed using your operating system default package manager.
-`openjdk-11-jre-headless` (or appropreate java for the OS you are running) is required when building from source using sbt.
+Grab a binary from the [Releases page](https://github.com/fiatjaf/poncho/releases), call `chmod +x` on it so it is executable, then put it inside your CLN plugin directory (`~/.lightning/plugins/`) -- or start `lightningd` with `--plugin <path-to-poncho>`.
 
-Side note, poncho only works with hsm_secret unencrypted.
+### Building from source
+
+To compile poncho yourself install [sbt](https://www.scala-sbt.org/download.html) (which requires Java/OpenJDK to work), then do `sbt nativeLink`. All dependencies will be fetched automatically.
+
+The result will be a binary that doesn't require Java to run. It will be under `target/scala-3.1.3/poncho-out`. Put that in your `lightningd` plugins directory as above.
 
 ### Operation
+
+`poncho` requires your `hsm_secret` to _not_ be encrypted. If it is encrypted it won't work, at least for now.
+
+It doesn't require any manual input to work, you just start it and it will automatically be listening for hosted channel requests from clients. The only time when you'll have to do anything manually is when there is a conflict between host and client, which shouldn't happen very often, but sometimes it happens -- just like when a normal Lightning channel is force-closed because the peers couldn't agree on something.
 
 The CLN plugin provides these RPC methods:
 
@@ -27,26 +34,9 @@ The CLN plugin provides these RPC methods:
 - `remove-hc-secret <secret>`: the opposite of the above.
 - `parse-lcss <peerid> <last_cross_signed_state_hex>`: if a client manually shares a channel state with you this method can be used to decode it.
 
-### Storage
-
-When running on CLN, the plugin will create a folder at `$LIGHTNING_DIR/bitcoin/poncho/` and fill it with the following files:
-
-```
-~/.lightning/bitcoin/poncho/
-├── channels
-│   ├── 02dcfffc447b201bd83fa0a359f62acf33206f43c83aaeafc6082ac2e245f775a0.json
-│   ├── 03ff908df11aef1b5fcf16c015ab28cab0bdb81d221a65065d7cf59dc59652af95.json
-│   ├── 025964eb1b5cf60de72447b87eee7fe987a68e51d71a4bb2919a7ac06817b6b51e.json
-│   └── 03362a35434a25651c05dbf3960f39a55084adada0dcac64f1744f4ab6fa6861e9.json
-├── htlc-forwards.json
-└── preimages.json
-```
-
-Each channel's `last_cross_signed_state` and other metadata is stored in a file under `channels/` named with the pubkey of remote peer. The other two files are helpers that should be empty most of the time and only have values in them while payments are in flight (so they can be recovered after a restart).
-
 ### Configuration
 
-You can write a file at `$LIGHTNING_DIR/bitcoin/poncho/config.json` with the following properties, all optional. All amounts are in millisatoshis. The defaults are given below:
+No configuration is needed for a quick test, but you can write a file at `$LIGHTNING_DIR/bitcoin/poncho/config.json` with the following properties, all optional. All amounts are in millisatoshis. The defaults are given below:
 
 ```json
 {
@@ -72,7 +62,24 @@ You can write a file at `$LIGHTNING_DIR/bitcoin/poncho/config.json` with the fol
 
 The branding information won't be used unless contact URL and logo file are set. The logo should be a PNG file also placed under `$LIGHTNING_DIR/bitcoin/poncho/` and specified as a relative path.
 
-Remember to remove the JSON comments in the file above otherwise it won't work.
+(Remember to remove the JSON comments in the file above otherwise it won't work.)
+
+### Storage
+
+When running on CLN, the plugin will create a folder at `$LIGHTNING_DIR/bitcoin/poncho/` and fill it with the following files:
+
+```
+~/.lightning/bitcoin/poncho/
+├── channels
+│   ├── 02dcfffc447b201bd83fa0a359f62acf33206f43c83aaeafc6082ac2e245f775a0.json
+│   ├── 03ff908df11aef1b5fcf16c015ab28cab0bdb81d221a65065d7cf59dc59652af95.json
+│   ├── 025964eb1b5cf60de72447b87eee7fe987a68e51d71a4bb2919a7ac06817b6b51e.json
+│   └── 03362a35434a25651c05dbf3960f39a55084adada0dcac64f1744f4ab6fa6861e9.json
+├── htlc-forwards.json
+└── preimages.json
+```
+
+Each channel's `last_cross_signed_state` and other metadata is stored in a file under `channels/` named with the pubkey of remote peer. The other two files are helpers that should be empty most of the time and only have values in them while payments are in flight (so they can be recovered after a restart).
 
 ### FAQ
 
