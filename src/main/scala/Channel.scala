@@ -1140,7 +1140,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                               firstHop = payload.outgoingChannelId,
                               amount = payload.amountToForward,
                               cltvExpiryDelta =
-                                payload.outgoingCltv - master.currentBlock,
+                                htlc.cltvExpiry - payload.outgoingCltv,
                               onion = nextOnion
                             )
                       }

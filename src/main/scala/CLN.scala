@@ -256,7 +256,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
               "first_hop" -> ujson.Obj(
                 "id" -> targetPeerId.toHex,
                 "amount_msat" -> amount.toLong,
-                "delay" -> (cltvExpiryDelta.toInt - 1) // we decrease it by 1 here just in case
+                "delay" -> cltvExpiryDelta.toInt
               ),
               "onion" -> onion.toHex,
               "payment_hash" -> paymentHash.toHex,
