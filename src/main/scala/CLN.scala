@@ -417,6 +417,8 @@ class CLN(master: ChannelMaster) extends NodeInterface {
               }
             )
             val sourceId = htlc("id").num.toLong
+            val cltvIn = CltvExpiry(BlockHeight(htlc("cltv_expiry").num.toLong))
+
             val targetChannel = ShortChannelId(onion("short_channel_id").str)
             val targetAmount = MilliSatoshi(
               onion.obj
@@ -430,9 +432,8 @@ class CLN(master: ChannelMaster) extends NodeInterface {
                   )
               }
             )
-            val cltvExpiry = CltvExpiry(
-              BlockHeight(onion("outgoing_cltv_value").num.toLong)
-            )
+            val cltvOut =
+              CltvExpiry(BlockHeight(onion("outgoing_cltv_value").num.toLong))
             val nextOnion = ByteVector.fromValidHex(onion("next_onion").str)
             val sharedSecret =
               ByteVector32.fromValidHex(onion("shared_secret").str)
@@ -447,11 +448,12 @@ class CLN(master: ChannelMaster) extends NodeInterface {
                 master
                   .getChannel(peerId)
                   .addHtlc(
-                    incoming = HtlcIdentifier(sourceChannel, sourceId),
-                    incomingAmount = sourceAmount,
-                    outgoingAmount = targetAmount,
+                    htlcIn = HtlcIdentifier(sourceChannel, sourceId),
                     paymentHash = hash,
-                    cltvExpiry = cltvExpiry,
+                    amountIn = sourceAmount,
+                    amountOut = targetAmount,
+                    cltvIn = cltvIn,
+                    cltvOut = cltvOut,
                     nextOnion = nextOnion
                   )
                   .foreach { status =>

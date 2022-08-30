@@ -141,16 +141,14 @@ class ChannelMaster { self =>
       }
   }
 
-  def run(isTest: Boolean = false): Unit = {
+  def run(): Unit = {
     node.main(() => {
       // wait for this callback so we know the RPC is ready and we can call these things
       setChainHash()
       updateCurrentBlock()
 
-      if (!isTest) {
-        Timer.repeat(FiniteDuration(1, "minutes")) { () =>
-          updateCurrentBlock()
-        }
+      Timer.repeat(FiniteDuration(1, "minutes")) { () =>
+        updateCurrentBlock()
       }
 
       // as the node starts c-lightning will reply the htlc_accepted HTLCs on us,
@@ -184,15 +182,16 @@ class ChannelMaster { self =>
           // ~ and send the HTLC to it
           _ = targetPeer
             .addHtlc(
-              incoming = HtlcIdentifier(
+              htlcIn = HtlcIdentifier(
                 HostedChannelHelpers
                   .getShortChannelId(self.node.publicKey.value, sourcePeerId),
                 in.id
               ),
-              incomingAmount = in.amountMsat,
-              outgoingAmount = amount,
               paymentHash = in.paymentHash,
-              cltvExpiry = cltvExpiry,
+              amountIn = in.amountMsat,
+              amountOut = amount,
+              cltvIn = in.cltvExpiry,
+              cltvOut = cltvExpiry,
               nextOnion = nextOnion
             )
             .foreach { status =>
