@@ -697,7 +697,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
   def main(onInit: () => Unit): Unit = {
     initCallback = onInit
 
-    Poll(0).startRead { status =>
+    StdinReader.readLoop { _ =>
       val line = scala.io.StdIn.readLine().trim
       if (line.size > 0) {
         handleRPC(line)
