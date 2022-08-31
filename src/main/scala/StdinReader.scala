@@ -11,9 +11,8 @@ object StdinReader {
   def readLoop(cb: Unit => Unit): Unit = {
     callback = cb
 
-    val size = uv_handle_size(UV_POLL_T)
     val handle =
-      stackalloc[Byte](size).asInstanceOf[Ptr[Byte]]
+      stdlib.malloc(uv_handle_size(UV_POLL_T)).asInstanceOf[Ptr[Byte]]
 
     val status1 = uv_poll_init(loop, handle, 0)
     require(status1 == 0, s"failed to init poll handle: $status1")
