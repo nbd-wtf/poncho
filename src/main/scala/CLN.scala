@@ -2,6 +2,7 @@ import java.nio.file.{Files, Path, Paths}
 import java.nio.charset.StandardCharsets
 import scala.util.{Try, Success, Failure}
 import scala.util.chaining._
+import scala.util.control.Breaks._
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
 import scala.concurrent.Future
@@ -695,23 +696,30 @@ class CLN(master: ChannelMaster) extends NodeInterface {
   def main(onInit: () => Unit): Unit = {
     initCallback = onInit
 
-    Poll(0).startRead { _ =>
-      System.err.println("START READING")
-      var current = Array.empty[Byte]
+    val stdin = Poll(0)
+    var current = Array.empty[Byte]
 
-      while (true) {
-        Try(scala.Console.in.read()) match {
-          case Success(char) if char == 10 =>
-            // newline, we've got a full line, so handle it
-            val line = new String(current, StandardCharsets.UTF_8).trim()
-            if (line.size > 0) handleRPC(line)
-            current = Array.empty
-          case Success(char) =>
-            // normal char, add it to the current
-            current = current :+ char.toByte
-          case Failure(err) =>
-            // EOF
-            scala.sys.exit(72)
+    stdin.startRead { _ =>
+      breakable {
+        while (true) {
+          // read stdin char-by-char
+          Try(scala.Console.in.read()) match {
+            case Success(char) if char != 10 =>
+              // normal char, add it to the current
+              current = current :+ char.toByte
+            case Success(char) =>
+              // newline, we've got a full line, so handle it
+              val line = new String(current, StandardCharsets.UTF_8).trim()
+              if (line.size > 0) handleRPC(line)
+              current = Array.empty
+            case Failure(_: java.io.IOException) =>
+              // EOF, stop reading and wait for the next libuv callback
+              break()
+            case Failure(err) =>
+              // some other failure. what could it be? exit the plugin.
+              System.err.println(s"failed to read from stdin: $err")
+              scala.sys.exit(72)
+          }
         }
       }
     }
