@@ -1,4 +1,4 @@
-import java.nio.file.{Files, Path, Paths}
+import java.nio.file.{StandardOpenOption, Files, Path, Paths}
 import java.nio.charset.StandardCharsets
 import scala.util.{Try, Success, Failure}
 import scala.util.chaining._
@@ -712,13 +712,9 @@ class CLN(master: ChannelMaster) extends NodeInterface {
               val line = new String(current, StandardCharsets.UTF_8).trim()
               if (line.size > 0) handleRPC(line)
               current = Array.empty
-            case Failure(_: java.io.IOException) =>
+            case Failure(err) =>
               // EOF, stop reading and wait for the next libuv callback
               break()
-            case Failure(err) =>
-              // some other failure. what could it be? exit the plugin.
-              System.err.println(s"failed to read from stdin: $err")
-              scala.sys.exit(72)
           }
         }
       }

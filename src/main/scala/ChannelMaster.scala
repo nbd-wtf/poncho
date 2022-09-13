@@ -272,11 +272,9 @@ class ChannelMaster { self =>
           ),
           "errors" -> ujson.Obj(
             "local" -> data.localErrors
-              .map(dtlerr => ujson.Str(dtlerr.toString))
-              .pipe[ujson.Value](v => if !v.isEmpty then v else ujson.Null),
+              .map(dtlerr => ujson.Str(dtlerr.toString)),
             "remote" -> data.remoteErrors
               .map(err => ujson.Str(err.toString))
-              .pipe[ujson.Value](v => if !v.isEmpty then v else ujson.Null)
           ),
           "htlcs" -> ujson.Obj(
             "incoming" -> ujson.Arr.from(
