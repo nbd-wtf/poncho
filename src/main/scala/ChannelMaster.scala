@@ -263,10 +263,10 @@ class ChannelMaster { self =>
           "blockday" -> lcss.blockDay.toInt,
           "local_errors" -> data.localErrors
             .map(dtlerr => ujson.Str(dtlerr.toString))
-            .pipe(v => if v.isEmpty then v else ujson.Null),
+            .pipe(v => if !v.isEmpty then v else ujson.Null),
           "remote_errors" -> data.remoteErrors
             .map(err => ujson.Str(err.toString))
-            .pipe(v => if v.isEmpty then v else ujson.Null),
+            .pipe(v => if !v.isEmpty then v else ujson.Null),
           "local_updates" -> lcss.localUpdates,
           "remote_updates" -> lcss.remoteUpdates,
           "balance" -> ujson.Obj(

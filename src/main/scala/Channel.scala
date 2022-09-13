@@ -611,7 +611,8 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
       // a client is telling us they are online
       case msg: InvokeHostedChannel if status == Active =>
-        // after a reconnection our peer won't have any of our current uncommitted updates
+        // after a reconnection our peer won't have any of our
+        //   current uncommitted updates
         val updatesToReplay = state.uncommittedUpdates
           .filter { case _: FromLocal => true; case _ => false }
         state = state.copy(uncommittedUpdates = List.empty)
