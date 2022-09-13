@@ -1,7 +1,6 @@
 import java.nio.file.{Files, Path, Paths}
 import java.nio.charset.StandardCharsets
 import scala.util.{Try, Success, Failure}
-import scala.util.control.Breaks._
 import scala.util.chaining._
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
@@ -697,23 +696,22 @@ class CLN(master: ChannelMaster) extends NodeInterface {
     initCallback = onInit
 
     Poll(0).startRead { _ =>
-      breakable {
-        var current = Array.empty[Byte]
+      System.err.println("START READING")
+      var current = Array.empty[Byte]
 
-        while (true) {
-          Try(scala.Console.in.read()) match {
-            case Success(char) if char == 10 =>
-              // newline, we've got a full line, so handle it
-              val line = new String(current, StandardCharsets.UTF_8).trim()
-              if (line.size > 0) handleRPC(line)
-              current = Array.empty
-            case Success(char) =>
-              // normal char, add it to the current
-              current = current :+ char.toByte
-            case Failure(err) =>
-              // EOF
-              break()
-          }
+      while (true) {
+        Try(scala.Console.in.read()) match {
+          case Success(char) if char == 10 =>
+            // newline, we've got a full line, so handle it
+            val line = new String(current, StandardCharsets.UTF_8).trim()
+            if (line.size > 0) handleRPC(line)
+            current = Array.empty
+          case Success(char) =>
+            // normal char, add it to the current
+            current = current :+ char.toByte
+          case Failure(err) =>
+            // EOF
+            scala.sys.exit(72)
         }
       }
     }
