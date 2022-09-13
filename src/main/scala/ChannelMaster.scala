@@ -1,6 +1,6 @@
-import scala.scalanative.loop.{Poll, Timer}
+import scala.scalanative.loop.Timer
 import scala.scalanative.unsigned.given
-import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.duration._
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{Failure, Success}
@@ -147,13 +147,13 @@ class ChannelMaster { self =>
       setChainHash()
       updateCurrentBlock()
 
-      Timer.repeat(FiniteDuration(1, "minutes")) { () =>
+      Timer.repeat(1.minutes) { () =>
         updateCurrentBlock()
       }
 
       // as the node starts c-lightning will reply the htlc_accepted HTLCs on us,
       // but we must do the same with the hosted-to-hosted HTLCs that are pending manually
-      Timer.timeout(FiniteDuration(10, "seconds")) { () =>
+      Timer.timeout(10.seconds) { () =>
         for {
           // ~ for all channels
           (sourcePeerId, sourceChannelData) <- database.data.channels

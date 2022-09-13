@@ -4,7 +4,7 @@ import scala.util.{Try, Success, Failure}
 import scala.util.control.Breaks._
 import scala.util.chaining._
 import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.duration._
 import scala.concurrent.Future
 import scala.collection.mutable.ArrayBuffer
 import scala.scalanative.unsigned._
@@ -30,7 +30,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
   private var nextId = 0
   private var onStartup = true
 
-  Timer.timeout(FiniteDuration(10, "seconds")) { () => onStartup = false }
+  Timer.timeout(10.seconds) { () => onStartup = false }
 
   def rpc(
       method: String,
@@ -392,11 +392,8 @@ class CLN(master: ChannelMaster) extends NodeInterface {
         // we wait here because on startup c-lightning will replay all pending htlcs
         // and at that point we won't have the hosted channels active with our clients yet
         Timer.timeout(
-          FiniteDuration(
-            if (onStartup) { 3 }
-            else { 0 },
-            "seconds"
-          )
+          if (onStartup) 3.seconds
+          else 0.seconds
         )(() => {
           val htlc = params("htlc")
           val onion = params("onion")
@@ -530,7 +527,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
           } yield {
             failuredata("status").str match {
               case "pending" =>
-                Timer.timeout(FiniteDuration(1, "seconds")) { () =>
+                Timer.timeout(1.second) { () =>
                   inspectOutgoingPayment(
                     HtlcIdentifier(scid, htlcId),
                     ByteVector32.fromValidHex(failuredata("payment_hash").str)

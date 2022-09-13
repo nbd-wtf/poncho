@@ -2,7 +2,7 @@ import java.io.ByteArrayInputStream
 import java.nio.ByteOrder
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.{Promise, Future}
-import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.duration._
 import scala.util.{Try, Failure, Success}
 import scala.util.chaining._
 import scala.collection.mutable.Map
@@ -734,7 +734,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           // investigate the situation of any payments that might be pending
           if (lcssStored.incomingHtlcs.size > 0) {
             val upto = lcssStored.incomingHtlcs.map(_.id).max
-            Timer.timeout(FiniteDuration(3, "seconds")) { () =>
+            Timer.timeout(3.seconds) { () =>
               lcssStored.incomingHtlcs.filter(_.id <= upto).foreach { htlc =>
                 // try cached preimages first
                 localLogger.debug

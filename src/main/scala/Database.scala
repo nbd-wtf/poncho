@@ -2,7 +2,6 @@ import java.nio.file.{Files, Path, Paths}
 import java.nio.charset.StandardCharsets
 import util.chaining.scalaUtilChainingOps
 import scala.collection.immutable.Map
-import scala.concurrent.duration.FiniteDuration
 import scala.scalanative.unsigned._
 import scala.scalanative.loop.Timer
 import scodec.bits.ByteVector
