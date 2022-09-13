@@ -696,22 +696,25 @@ class CLN(master: ChannelMaster) extends NodeInterface {
   def main(onInit: () => Unit): Unit = {
     initCallback = onInit
 
-    val stdin = Poll(0)
-    var current = Array.empty[Byte]
+    Poll(0).startRead { v =>
+      var current = Array.empty[Byte]
 
-    stdin.startRead { _ =>
       breakable {
         while (true) {
           // read stdin char-by-char
           Try(scala.Console.in.read()) match {
-            case Success(char) if char != 10 =>
-              // normal char, add it to the current
-              current = current :+ char.toByte
-            case Success(char) =>
+            case Success(char) if char == -1 =>
+              // this will happen when stdin is closed, i.e. lightningd
+              //   is not alive anymore so we should shutdown too
+              scala.sys.exit(72)
+            case Success(char) if char == 10 =>
               // newline, we've got a full line, so handle it
               val line = new String(current, StandardCharsets.UTF_8).trim()
               if (line.size > 0) handleRPC(line)
               current = Array.empty
+            case Success(char) =>
+              // normal char, add it to the current
+              current = current :+ char.toByte
             case Failure(err) =>
               // EOF, stop reading and wait for the next libuv callback
               break()
