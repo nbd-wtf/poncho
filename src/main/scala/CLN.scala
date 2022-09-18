@@ -219,64 +219,68 @@ class CLN(master: ChannelMaster) extends NodeInterface {
       cltvExpiryDelta: CltvExpiryDelta,
       onion: ByteVector
   ): Unit = {
-    rpc("listchannels", ujson.Obj("short_channel_id" -> firstHop.toString))
-      .map(resp =>
-        resp("channels").arr.headOption.flatMap(chan =>
-          List(chan("source").str, chan("destination").str)
-            .map(ByteVector.fromValidHex(_))
-            .find(id => id != master.node.publicKey)
-        )
-      )
-      .onComplete {
-        case Failure(err) => {
-          master.log(s"failed to get peer for channel: $err")
-          chan
-            .gotPaymentResult(
-              htlcId,
-              Some(
-                Left(
-                  Some(NormalFailureMessage(UnknownNextPeer))
-                )
-              )
-            )
-        }
-        case Success(None) => {
-          master.log("didn't find peer for channel")
-          chan.gotPaymentResult(
-            htlcId,
-            Some(
-              Left(
-                Some(NormalFailureMessage(UnknownNextPeer))
-              )
-            )
-          )
-        }
-        case Success(Some(targetPeerId: ByteVector)) =>
-          rpc(
-            "sendonion",
-            ujson.Obj(
-              "first_hop" -> ujson.Obj(
-                "id" -> targetPeerId.toHex,
-                "amount_msat" -> amount.toLong,
-                "delay" -> cltvExpiryDelta.toInt
-              ),
-              "onion" -> onion.toHex,
-              "payment_hash" -> paymentHash.toHex,
-              "label" -> upickle.default
-                .write((chan.shortChannelId.toString, htlcId))
-            )
-          )
-            .onComplete {
-              case Failure(e) => {
-                master.log(s"sendonion failure: $e")
-                chan.gotPaymentResult(
-                  htlcId,
-                  Some(Left(None))
-                )
-              }
-              case Success(_) => {}
+    var logger = master.logger.attach.item("scid", firstHop).logger()
+    val noChannelPaymentResult = Some(
+      Left(Some(NormalFailureMessage(UnknownNextPeer)))
+    )
+
+    val sendonion =
+      rpc("listchannels", ujson.Obj("short_channel_id" -> firstHop.toString))
+        .onComplete {
+          case Failure(err) =>
+            logger.debug.item(err).msg("failed to get channel for payment")
+            chan.gotPaymentResult(htlcId, noChannelPaymentResult)
+
+          case Success(list) =>
+            list("channels").arr.headOption match {
+              case None =>
+                logger.debug.msg("this channel doesn't exist at all?")
+                chan.gotPaymentResult(htlcId, noChannelPaymentResult)
+              case Some(chandata) =>
+                val peerFound =
+                  List(chandata("source").str, chandata("destination").str)
+                    .map(ByteVector.fromValidHex(_))
+                    .find(id => id != master.node.publicKey)
+
+                peerFound match {
+                  case None =>
+                    logger.debug.msg("didn't find peer for channel")
+                    chan.gotPaymentResult(htlcId, noChannelPaymentResult)
+                  case Some(targetPeerId) =>
+                    logger =
+                      logger.attach.item("peer", targetPeerId.toHex).logger()
+                    val sendonion = for {
+                      _ <- rpc("connect", ujson.Obj("id" -> targetPeerId.toHex))
+                      send <- rpc(
+                        "sendonion",
+                        ujson.Obj(
+                          "first_hop" -> ujson.Obj(
+                            "id" -> targetPeerId.toHex,
+                            "amount_msat" -> amount.toLong,
+                            "delay" -> cltvExpiryDelta.toInt
+                          ),
+                          "onion" -> onion.toHex,
+                          "payment_hash" -> paymentHash.toHex,
+                          "label" -> upickle.default
+                            .write((chan.shortChannelId.toString, htlcId))
+                        )
+                      )
+                    } yield send
+
+                    sendonion
+                      .onComplete {
+                        case Failure(err) => {
+                          logger.info.item(err).msg("sendonion failure")
+                          chan.gotPaymentResult(
+                            htlcId,
+                            Some(Left(None))
+                          )
+                        }
+                        case Success(_) => {}
+                      }
+                }
             }
-      }
+        }
   }
 
   def handleRPC(line: String): Unit = {
