@@ -240,7 +240,6 @@ class CLN(master: ChannelMaster) extends NodeInterface {
                 val peerFound =
                   List(chandata("source").str, chandata("destination").str)
                     .map(ByteVector.fromValidHex(_))
-                    .tap(ids => System.err.println(ids))
                     .find(_ != master.node.publicKey.value)
 
                 peerFound match {
