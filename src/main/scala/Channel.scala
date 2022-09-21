@@ -207,24 +207,6 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             .fold(0L)(_ + _)
 
         if (
-          impliedCltvDelta < master.config.cltvExpiryDelta.toInt ||
-          cltvOut.blockHeight <= (master.currentBlock + 2)
-        )
-          promise.success(
-            Some(
-              Left(
-                Some(
-                  NormalFailureMessage(
-                    IncorrectOrUnknownPaymentDetails(
-                      amountOut,
-                      master.currentBlock
-                    )
-                  )
-                )
-              )
-            )
-          )
-        else if (
           (amountIn - amountOut) < requiredFee ||
           state.lcssNext.localBalanceMsat < amountOut ||
           inflightHtlcs + 1 > lcssStored.initHostedChannel.maxAcceptedHtlcs ||
