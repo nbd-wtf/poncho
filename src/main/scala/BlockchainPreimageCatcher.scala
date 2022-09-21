@@ -3,13 +3,13 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scodec.bits.ByteVector
 import scoin._
 
-class BlockchainPreimageCatcher(master: ChannelMaster) {
+class BlockchainPreimageCatcher() {
   def onBlockUpdated(height: BlockHeight): Unit = {
-    var localLogger = master.logger.attach
+    var localLogger = ChannelMaster.logger.attach
       .item("block", height.toInt)
       .logger()
 
-    master.node
+    ChannelMaster.node
       .getBlockByHeight(height)
       .onComplete {
         case Success(block) => {
@@ -28,7 +28,7 @@ class BlockchainPreimageCatcher(master: ChannelMaster) {
 
                 // is it for a pending outgoing HTLC in one of our HCs?
                 // (we must use filter because there could be more than one in case of MPP)
-                master.database.data.channels
+                ChannelMaster.database.data.channels
                   .flatMap { case (peer, chandata) =>
                     chandata.lcss.outgoingHtlcs.map(htlc => (peer, htlc))
                   }
@@ -47,7 +47,7 @@ class BlockchainPreimageCatcher(master: ChannelMaster) {
                     // this will protect our money, but the hosted channel will
                     // still error when this outgoing HTLC expire -- which is ok because resorting
                     // to OP_RETURN is an indication that something is wrong.
-                    master
+                    ChannelMaster
                       .getChannel(peer)
                       .provideHtlcResult(htlc.id, Some(Right(preimage)))
 

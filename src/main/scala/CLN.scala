@@ -21,7 +21,7 @@ import scoin.hc._
 import scoin.hc.HostedChannelCodecs._
 import scoin.Crypto.{PublicKey, PrivateKey}
 
-class CLN(master: ChannelMaster) extends NodeInterface {
+class CLN() extends NodeInterface {
   import Picklers.given
 
   private var initCallback = () => {}
@@ -200,7 +200,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
       .toHex
     val payload = tagHex ++ lengthHex ++ value.toHex
 
-    master.log(s"  ::> sending $message --> ${peerId.toHex}")
+    ChannelMaster.log(s"  ::> sending $message --> ${peerId.toHex}")
     rpc(
       "sendcustommsg",
       ujson.Obj(
@@ -219,7 +219,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
       cltvExpiryDelta: CltvExpiryDelta,
       onion: ByteVector
   ): Unit = {
-    var logger = master.logger.attach.item("scid", firstHop).logger()
+    var logger = ChannelMaster.logger.attach.item("scid", firstHop).logger()
     val noChannelPaymentResult = Some(
       Left(Some(NormalFailureMessage(UnknownNextPeer)))
     )
@@ -240,7 +240,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
                 val peerFound =
                   List(chandata("source").str, chandata("destination").str)
                     .map(ByteVector.fromValidHex(_))
-                    .find(_ != master.node.publicKey.value)
+                    .find(_ != ChannelMaster.node.publicKey.value)
 
                 peerFound match {
                   case None =>
@@ -387,9 +387,9 @@ class CLN(master: ChannelMaster) extends NodeInterface {
           )
           .toTry match {
           case Success(msg) =>
-            master.getChannel(peerId).gotPeerMessage(msg.value)
+            ChannelMaster.getChannel(peerId).gotPeerMessage(msg.value)
           case Failure(err) =>
-            master.log(s"failed to parse client messages: $err")
+            ChannelMaster.log(s"failed to parse client messages: $err")
         }
       }
       case "htlc_accepted" => {
@@ -441,14 +441,14 @@ class CLN(master: ChannelMaster) extends NodeInterface {
             val sharedSecret =
               ByteVector32.fromValidHex(onion("shared_secret").str)
 
-            master.database.data.channels.find((peerId, chandata) =>
+            ChannelMaster.database.data.channels.find((peerId, chandata) =>
               HostedChannelHelpers.getShortChannelId(
                 publicKey.value,
                 peerId
               ) == targetChannel
             ) match {
               case Some((peerId, _)) => {
-                master
+                ChannelMaster
                   .getChannel(peerId)
                   .addHtlc(
                     htlcIn = HtlcIdentifier(sourceChannel, sourceId),
@@ -505,10 +505,10 @@ class CLN(master: ChannelMaster) extends NodeInterface {
               upickle.default.read[(String, Long)](label)
             ).toOption
             scid = ShortChannelId(scidStr)
-            (peerId, _) <- master.database.data.channels.find((p, _) =>
+            (peerId, _) <- ChannelMaster.database.data.channels.find((p, _) =>
               HostedChannelHelpers.getShortChannelId(publicKey.value, p) == scid
             )
-          } yield master
+          } yield ChannelMaster
             .getChannel(peerId)
             .gotPaymentResult(
               htlcId,
@@ -524,10 +524,10 @@ class CLN(master: ChannelMaster) extends NodeInterface {
               upickle.default.read[(String, Long)](label)
             ).toOption
             scid = ShortChannelId(scidStr)
-            (peerId, _) <- master.database.data.channels.find((p, _) =>
+            (peerId, _) <- ChannelMaster.database.data.channels.find((p, _) =>
               HostedChannelHelpers.getShortChannelId(publicKey.value, p) == scid
             )
-            channel = master.getChannel(peerId)
+            channel = ChannelMaster.getChannel(peerId)
           } yield {
             failuredata("status").str match {
               case "pending" =>
@@ -550,13 +550,13 @@ class CLN(master: ChannelMaster) extends NodeInterface {
       case "connect" => {
         // val id = params("id").str
         // val address = params("address")("address").str
-        // master.log(s"$id connected: $address")
+        // ChannelMaster.log(s"$id connected: $address")
         // TODO: send InvokeHostedChannel to all hosted peers from which we are clients
         //       and related flows -- for example sending LastCrossSignedState etc
       }
       case "disconnect" => {
         // val id = params("id").str
-        // master.log(s"$id disconnected")
+        // ChannelMaster.log(s"$id disconnected")
       }
 
       // custom rpc methods
@@ -599,7 +599,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
       }
 
       case "add-hc-secret" =>
-        if (!master.config.requireSecret) {
+        if (!ChannelMaster.config.requireSecret) {
           replyError(
             "`requireSecret` must be set to true on config.json for this to do anything."
           )
@@ -610,14 +610,15 @@ class CLN(master: ChannelMaster) extends NodeInterface {
             case _            => None
           } match {
             case Some(secret) => {
-              master.temporarySecrets = master.temporarySecrets :+ secret
+              ChannelMaster.temporarySecrets =
+                ChannelMaster.temporarySecrets :+ secret
               reply(ujson.Obj("added" -> true))
             }
             case None => replyError("secret not given")
           }
 
       case "remove-hc-secret" =>
-        if (!master.config.requireSecret) {
+        if (!ChannelMaster.config.requireSecret) {
           replyError(
             "`requireSecret` must be set to true on config.json for this to do anything."
           )
@@ -660,7 +661,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
           case _ => None
         }) match {
           case Some(Some(peerId), Some(msatoshi)) => {
-            master
+            ChannelMaster
               .getChannel(ByteVector.fromValidHex(peerId))
               .proposeOverride(MilliSatoshi(msatoshi.toLong))
               .onComplete {
@@ -682,7 +683,7 @@ class CLN(master: ChannelMaster) extends NodeInterface {
           case _ => None
         }) match {
           case Some(Some(peerId)) => {
-            master
+            ChannelMaster
               .getChannel(ByteVector.fromValidHex(peerId))
               .requestHostedChannel()
               .onComplete {

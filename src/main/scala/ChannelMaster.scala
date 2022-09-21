@@ -15,12 +15,12 @@ import scoin._
 import scoin.ln._
 import scoin.hc._
 
-class ChannelMaster { self =>
+object ChannelMaster {
   import Picklers.given
 
-  val node: NodeInterface = new CLN(self)
+  val node: NodeInterface = new CLN()
   val database = new Database()
-  val preimageCatcher = new BlockchainPreimageCatcher(self)
+  val preimageCatcher = new BlockchainPreimageCatcher()
 
   var isReady: Boolean = false
   var temporarySecrets: List[String] = List.empty
@@ -31,11 +31,11 @@ class ChannelMaster { self =>
 
   val channels = mutable.Map.empty[ByteVector, Channel]
   def getChannel(peerId: ByteVector): Channel =
-    channels.getOrElseUpdate(peerId, { new Channel(self, peerId) })
+    channels.getOrElseUpdate(peerId, { new Channel(peerId) })
 
   val logger = new nlog.Logger {
     override val threshold =
-      if self.config.isDev then nlog.Debug else nlog.Info
+      if ChannelMaster.config.isDev then nlog.Debug else nlog.Info
     override def print(
         level: nlog.Level,
         items: nlog.Items,
@@ -68,7 +68,7 @@ class ChannelMaster { self =>
 
       val text = s"$lvl ${msg}${sep}${its}"
 
-      if (node.isInstanceOf[CLN] && !self.config.isDev) {
+      if (node.isInstanceOf[CLN] && !ChannelMaster.config.isDev) {
         System.out.println(
           ujson.Obj(
             "jsonrpc" -> "2.0",
@@ -114,12 +114,12 @@ class ChannelMaster { self =>
       .getCurrentBlock()
       .onComplete {
         case Success(block) => {
-          if (block > self.currentBlock) {
-            self.currentBlock = block
+          if (block > this.currentBlock) {
+            this.currentBlock = block
             logger.info.item(block).msg("updated current block")
 
-            self.channels.values.foreach(_.onBlockUpdated(block))
-            self.preimageCatcher.onBlockUpdated(block)
+            this.channels.values.foreach(_.onBlockUpdated(block))
+            this.preimageCatcher.onBlockUpdated(block)
           }
         }
         case Failure(err) =>
@@ -133,7 +133,7 @@ class ChannelMaster { self =>
       .getChainHash()
       .onComplete {
         case Success(chainHash) => {
-          self.chainHash = chainHash
+          this.chainHash = chainHash
           isReady = true
         }
         case Failure(err) =>
@@ -159,32 +159,32 @@ class ChannelMaster { self =>
           (sourcePeerId, sourceChannelData) <- database.data.channels
           // ~ get all that have incoming HTLCs in-flight
           in <- sourceChannelData.lcss.incomingHtlcs
-          sourcePeer = self.getChannel(sourcePeerId)
+          sourcePeer = this.getChannel(sourcePeerId)
           // ~ from these find all that are outgoing to other channels using data from our database
           out <- database.data.htlcForwards.get(
             HtlcIdentifier(sourcePeer.shortChannelId, in.id)
           )
           // ~ parse outgoing data from the onion
           (scid, amount, cltvExpiry, nextOnion) <- Utils.getOutgoingData(
-            self.node.privateKey,
+            this.node.privateKey,
             in
           )
           // ~ use that to get the target channel parameters
           (targetPeerId, targetChannelData) <- database.data.channels.find(
             (p, _) =>
               HostedChannelHelpers.getShortChannelId(
-                self.node.publicKey.value,
+                this.node.publicKey.value,
                 p
               ) == scid
           )
           // ~ get/instantiate the target channel
-          targetPeer = self.getChannel(targetPeerId)
+          targetPeer = this.getChannel(targetPeerId)
           // ~ and send the HTLC to it
           _ = targetPeer
             .addHtlc(
               htlcIn = HtlcIdentifier(
                 HostedChannelHelpers
-                  .getShortChannelId(self.node.publicKey.value, sourcePeerId),
+                  .getShortChannelId(this.node.publicKey.value, sourcePeerId),
                 in.id
               ),
               paymentHash = in.paymentHash,

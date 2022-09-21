@@ -44,11 +44,17 @@ case object NotOpened extends ChannelStatus
 case object Errored extends ChannelStatus
 case object Suspended extends ChannelStatus
 
-class Channel(master: ChannelMaster, peerId: ByteVector) {
+class Channel(peerId: ByteVector) {
   lazy val channelId =
-    HostedChannelHelpers.getChannelId(master.node.publicKey.value, peerId)
+    HostedChannelHelpers.getChannelId(
+      ChannelMaster.node.publicKey.value,
+      peerId
+    )
   lazy val shortChannelId =
-    HostedChannelHelpers.getShortChannelId(master.node.publicKey.value, peerId)
+    HostedChannelHelpers.getShortChannelId(
+      ChannelMaster.node.publicKey.value,
+      peerId
+    )
 
   val htlcResults = Map.empty[Long, Promise[PaymentStatus]]
   var openingRefundScriptPubKey: Option[ByteVector] = None
@@ -56,7 +62,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
   var state = StateManager(peerId, lcssStored)
 
   def currentData =
-    master.database.data.channels.get(peerId).getOrElse(ChannelData())
+    ChannelMaster.database.data.channels.get(peerId).getOrElse(ChannelData())
   def lcssStored = currentData.lcss
   def status =
     if openingRefundScriptPubKey.isDefined then Opening
@@ -67,10 +73,11 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
     else if currentData.suspended then Suspended
     else Active
 
-  val logger = master.logger.attach.item("peer", peerId.toHex.take(7)).logger()
+  val logger =
+    ChannelMaster.logger.attach.item("peer", peerId.toHex.take(7)).logger()
 
   def sendMessage(msg: LightningMessage): Future[ujson.Value] =
-    master.node.sendCustomMessage(peerId, msg)
+    ChannelMaster.node.sendCustomMessage(peerId, msg)
 
   // this function only sends one state_update once for each state
   var stateUpdateSendsTracker = List.empty[StateManager]
@@ -78,8 +85,8 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
     if (!stateUpdateSendsTracker.contains(st)) {
       sendMessage(
         st.lcssNext
-          .withCurrentBlockDay(master.currentBlockDay)
-          .withLocalSigOfRemote(master.node.privateKey)
+          .withCurrentBlockDay(ChannelMaster.currentBlockDay)
+          .withLocalSigOfRemote(ChannelMaster.node.privateKey)
           .stateUpdate
       )
       stateUpdateSendsTracker = (st +: stateUpdateSendsTracker).take(3)
@@ -117,13 +124,13 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
     var promise = Promise[PaymentStatus]()
 
-    val preimage = master.database.data.preimages.get(paymentHash)
+    val preimage = ChannelMaster.database.data.preimages.get(paymentHash)
     val onionRoutingPacket = PaymentOnionCodecs.paymentOnionPacketCodec
       .decode(nextOnion.toBitVector)
       .toOption
     val alreadyIncoming =
       state.lcssNext.incomingHtlcs.exists(_.paymentHash == paymentHash)
-    val isInflight = master.database.data.htlcForwards.get(htlcIn) ==
+    val isInflight = ChannelMaster.database.data.htlcForwards.get(htlcIn) ==
       Some(HtlcIdentifier(shortChannelId, _))
     val isActive = (status == Active)
 
@@ -150,7 +157,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                 NormalFailureMessage(
                   IncorrectOrUnknownPaymentDetails(
                     amountIn,
-                    master.currentBlock
+                    ChannelMaster.currentBlock
                   )
                 )
               )
@@ -165,11 +172,11 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
         // but we still want to update the callbacks we're keeping track of (because we've rebooted!)
         for {
-          outgoing <- master.database.data.htlcForwards.get(htlcIn)
-          entry <- master.database.data.channels.find((p, _) =>
+          outgoing <- ChannelMaster.database.data.htlcForwards.get(htlcIn)
+          entry <- ChannelMaster.database.data.channels.find((p, _) =>
             HostedChannelHelpers
               .getShortChannelId(
-                master.node.publicKey.value,
+                ChannelMaster.node.publicKey.value,
                 p
               ) == outgoing.scid
           )
@@ -196,7 +203,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         //
         // check a bunch of things, if any fail return a temporary_channel_failure
         val requiredFee = MilliSatoshi(
-          master.config.feeBase.toLong + (master.config.feeProportionalMillionths * amountOut.toLong / 1000000L)
+          ChannelMaster.config.feeBase.toLong + (ChannelMaster.config.feeProportionalMillionths * amountOut.toLong / 1000000L)
         )
         val impliedCltvDelta = (cltvIn.blockHeight - cltvOut.blockHeight).toInt
         val inflightHtlcs =
@@ -343,7 +350,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         state = state.addUncommittedUpdate(upd)
 
         // save the preimage so if we go offline we can keep trying to send it or resolve manually
-        master.database.update { data =>
+        ChannelMaster.database.update { data =>
           data
             .modify(_.preimages)
             .using(_ + (Crypto.sha256(preimage) -> preimage))
@@ -370,7 +377,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         for {
           htlc <- state.lcssNext.incomingHtlcs.find(_.id == htlcId)
           OnionParseResult(packet, _, sharedSecret) <- Utils
-            .parseClientOnion(master.node.privateKey, htlc)
+            .parseClientOnion(ChannelMaster.node.privateKey, htlc)
             .toOption
         } yield {
           val fail = failure match {
@@ -434,40 +441,42 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
     message match {
       // we send branding to anyone really
       case msg: AskBrandingInfo =>
-        master.config.branding(localLogger).foreach(sendMessage(_))
+        ChannelMaster.config.branding(localLogger).foreach(sendMessage(_))
 
       // someone wants a new hosted channel from us
       case msg: InvokeHostedChannel
           if status == NotOpened || status == Suspended => {
         // check chain hash
-        if (msg.chainHash != master.chainHash) {
+        if (msg.chainHash != ChannelMaster.chainHash) {
           localLogger.warn
-            .item("local", master.chainHash)
+            .item("local", ChannelMaster.chainHash)
             .item("remote", msg.chainHash)
             .msg(s"peer sent InvokeHostedChannel for wrong chain")
           sendMessage(
             Error(
               channelId,
-              s"invalid chainHash (ours=${master.chainHash} yours=${msg.chainHash})"
+              s"invalid chainHash (ours=${ChannelMaster.chainHash} yours=${msg.chainHash})"
             )
           )
         } else {
           // chain hash is ok, proceed
           if (status == NotOpened) {
             if (
-              !master.config.requireSecret ||
-              master.config.permanentSecrets.contains(msg.secret.toHex) ||
-              master.temporarySecrets.contains(msg.secret.toHex)
+              !ChannelMaster.config.requireSecret ||
+              ChannelMaster.config.permanentSecrets.contains(
+                msg.secret.toHex
+              ) ||
+              ChannelMaster.temporarySecrets.contains(msg.secret.toHex)
             ) {
               // save this for the next step (having this also moves us to the Invoking state)
               openingRefundScriptPubKey = Some(msg.refundScriptPubKey)
 
               // reply saying we accept the invoke and go into Opening state
-              sendMessage(master.config.init)
+              sendMessage(ChannelMaster.config.init)
 
               // remove the temporary secret used, if any
-              master.temporarySecrets =
-                master.temporarySecrets.filterNot(_ == msg.secret.toHex)
+              ChannelMaster.temporarySecrets =
+                ChannelMaster.temporarySecrets.filterNot(_ == msg.secret.toHex)
             }
           } else {
             // channel already exists, so send last cross-signed-state
@@ -482,11 +491,11 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         val lcssInitial = LastCrossSignedState(
           isHost = true,
           refundScriptPubKey = openingRefundScriptPubKey.get,
-          initHostedChannel = master.config.init,
+          initHostedChannel = ChannelMaster.config.init,
           blockDay = msg.blockDay,
           localBalanceMsat =
-            master.config.channelCapacityMsat - master.config.initialClientBalanceMsat,
-          remoteBalanceMsat = master.config.initialClientBalanceMsat,
+            ChannelMaster.config.channelCapacityMsat - ChannelMaster.config.initialClientBalanceMsat,
+          remoteBalanceMsat = ChannelMaster.config.initialClientBalanceMsat,
           localUpdates = 0L,
           remoteUpdates = 0L,
           incomingHtlcs = List.empty,
@@ -494,16 +503,16 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           localSigOfRemote = ByteVector64.Zeroes,
           remoteSigOfLocal = msg.localSigOfRemoteLCSS
         )
-          .withLocalSigOfRemote(master.node.privateKey)
+          .withLocalSigOfRemote(ChannelMaster.node.privateKey)
 
         // step out of the "opening" state
         openingRefundScriptPubKey = None
 
         // check if everything is ok
-        if ((msg.blockDay - master.currentBlockDay).abs > 1) {
+        if ((msg.blockDay - ChannelMaster.currentBlockDay).abs > 1) {
           // we don't get a channel, but also do not send any errors
           localLogger.warn
-            .item("local", master.currentBlockDay)
+            .item("local", ChannelMaster.currentBlockDay)
             .item("remote", msg.blockDay)
             .msg("peer sent state_update with wrong blockday")
         } else if (!lcssInitial.verifyRemoteSig(PublicKey(peerId))) {
@@ -511,7 +520,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           localLogger.warn.msg("peer sent state_update with wrong signature")
         } else {
           // all good, save this channel to the database and consider it opened
-          master.database.update { data =>
+          ChannelMaster.database.update { data =>
             data
               .modify(_.channels)
               .using(_ + (peerId -> ChannelData(lcss = lcssInitial)))
@@ -520,7 +529,9 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
           // send our signed state update
           sendMessage(
-            lcssInitial.withLocalSigOfRemote(master.node.privateKey).stateUpdate
+            lcssInitial
+              .withLocalSigOfRemote(ChannelMaster.node.privateKey)
+              .stateUpdate
           )
 
           // send a channel update
@@ -537,7 +548,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           isHost = false,
           refundScriptPubKey = spk,
           initHostedChannel = init,
-          blockDay = master.currentBlockDay,
+          blockDay = ChannelMaster.currentBlockDay,
           localBalanceMsat = init.initialClientBalanceMsat,
           remoteBalanceMsat =
             init.channelCapacityMsat - init.initialClientBalanceMsat,
@@ -548,12 +559,12 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           localSigOfRemote = ByteVector64.Zeroes,
           remoteSigOfLocal = ByteVector64.Zeroes
         )
-          .withLocalSigOfRemote(master.node.privateKey)
+          .withLocalSigOfRemote(ChannelMaster.node.privateKey)
         invoking = Some(lcss)
 
         sendMessage(
           StateUpdate(
-            blockDay = master.currentBlockDay,
+            blockDay = ChannelMaster.currentBlockDay,
             localUpdates = 0L,
             remoteUpdates = 0L,
             localSigOfRemoteLCSS = lcss.localSigOfRemote
@@ -579,7 +590,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           localLogger.warn.msg("peer sent state_update with wrong signature")
         } else {
           // all good, save this channel to the database and consider it opened
-          master.database.update { data =>
+          ChannelMaster.database.update { data =>
             data
               .modify(_.channels)
               .using(_ + (peerId -> ChannelData(lcss = lcssInitial)))
@@ -647,14 +658,14 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           .andThen(_ =>
             sendMessage(
               currentData.proposedOverride.get
-                .withLocalSigOfRemote(master.node.privateKey)
+                .withLocalSigOfRemote(ChannelMaster.node.privateKey)
                 .stateOverride
             )
           )
 
       // after we've sent our last_cross_signed_state above, the client replies with theirs
       case msg: LastCrossSignedState => {
-        val isLocalSigOk = msg.verifyRemoteSig(master.node.publicKey)
+        val isLocalSigOk = msg.verifyRemoteSig(ChannelMaster.node.publicKey)
         val isRemoteSigOk =
           msg.reverse.verifyRemoteSig(PublicKey(peerId))
 
@@ -678,7 +689,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           }
           localLogger.warn.msg(reason)
           sendMessage(err)
-          master.database.update { data =>
+          ChannelMaster.database.update { data =>
             data
               .modify(_.channels.at(peerId).localErrors)
               .using(_ + DetailedError(err, None, reason))
@@ -701,7 +712,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             openingRefundScriptPubKey = None
 
             // save their lcss here
-            master.database.update { data =>
+            ChannelMaster.database.update { data =>
               data
                 .modify(_.channels)
                 .using(_ + (peerId -> ChannelData(lcss = msg.reverse)))
@@ -722,12 +733,13 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                 localLogger.debug
                   .item("in", htlc)
                   .msg("checking the outgoing status of pending incoming htlc")
-                master.database.data.preimages.get(htlc.paymentHash) match {
+                ChannelMaster.database.data.preimages
+                  .get(htlc.paymentHash) match {
                   case Some(preimage) =>
                     gotPaymentResult(htlc.id, Some(Right(preimage)))
                   case None =>
                     localLogger.debug.msg("no preimage")
-                    master.database.data.htlcForwards
+                    ChannelMaster.database.data.htlcForwards
                       .get(HtlcIdentifier(shortChannelId, htlc.id)) match {
                       case Some(outgoing @ HtlcIdentifier(outScid, outId)) =>
                         // it went to another HC peer, so just wait for it to resolve
@@ -739,7 +751,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                         }
                       case None =>
                         // it went to the upstream node, so ask that
-                        master.node
+                        ChannelMaster.node
                           .inspectOutgoingPayment(
                             HtlcIdentifier(shortChannelId, htlc.id),
                             htlc.paymentHash
@@ -792,7 +804,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               HostedError.ERR_HOSTED_WRONG_REMOTE_SIG
             )
             sendMessage(err)
-            master.database.update { data =>
+            ChannelMaster.database.update { data =>
               data
                 .modify(_.channels.at(peerId).localErrors)
                 .using(
@@ -816,7 +828,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
         // check if fee and cltv delta etc are correct, otherwise return a failure
         Utils
-          .parseClientOnion(master.node.privateKey, htlc)
+          .parseClientOnion(ChannelMaster.node.privateKey, htlc)
           .map(_.packet) match {
           case Right(packet: PaymentOnion.ChannelRelayPayload) => {
             val inflightHtlcs =
@@ -834,14 +846,14 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               inflightValue > lcssStored.initHostedChannel.maxHtlcValueInFlightMsat.toLong ||
               state.lcssNext.localBalanceMsat < MilliSatoshi(0L) ||
               state.lcssNext.remoteBalanceMsat < MilliSatoshi(0L) ||
-              packet.outgoingCltv.blockHeight < master.currentBlock + 2
+              packet.outgoingCltv.blockHeight < ChannelMaster.currentBlock + 2
             ) {
               val err = Error(
                 channelId,
                 HostedError.ERR_HOSTED_MANUAL_SUSPEND
               )
               sendMessage(err)
-              master.database.update { data =>
+              ChannelMaster.database.update { data =>
                 data
                   .modify(_.channels.at(peerId).localErrors)
                   .using(
@@ -855,7 +867,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
             } else if (
               // non-critical failures, just fail the htlc
               htlc.amountMsat < lcssStored.initHostedChannel.htlcMinimumMsat ||
-              impliedCltvDelta < master.config.cltvExpiryDelta
+              impliedCltvDelta < ChannelMaster.config.cltvExpiryDelta
             ) {
               scala.concurrent.ExecutionContext.global.execute(() =>
                 gotPaymentResult(
@@ -916,7 +928,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           .item("remote-updates", s"${msg.remoteUpdates}/${msg.localUpdates}")
           .msg("updating our local state after a transition")
 
-        if (msg.blockDay != master.currentBlockDay) {
+        if (msg.blockDay != ChannelMaster.currentBlockDay) {
           localLogger.warn.msg("blockdays are different")
         } else if (msg.localUpdates > state.lcssNext.remoteUpdates) {
           localLogger.debug.msg("we are missing updates from them")
@@ -930,8 +942,8 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           // (although this is all synchronous so there shouldn't be any issue, but anyway)
           val currentState = state
           val lcssNext = currentState.lcssNext
-            .withCurrentBlockDay(master.currentBlockDay)
-            .withLocalSigOfRemote(master.node.privateKey)
+            .withCurrentBlockDay(ChannelMaster.currentBlockDay)
+            .withLocalSigOfRemote(ChannelMaster.node.privateKey)
             .copy(remoteSigOfLocal = msg.localSigOfRemoteLCSS)
 
           localLogger.debug
@@ -948,7 +960,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
               HostedError.ERR_HOSTED_WRONG_REMOTE_SIG
             )
             sendMessage(err)
-            master.database.update { data =>
+            ChannelMaster.database.update { data =>
               data
                 .modify(_.channels.at(peerId).localErrors)
                 .using(
@@ -965,7 +977,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
             // update new last_cross_signed_state on the database
             localLogger.info.item("lcss", lcssNext).msg("saving on db")
-            master.database.update { data =>
+            ChannelMaster.database.update { data =>
               data
                 .modify(_.channels.at(peerId))
                 .setTo(
@@ -989,7 +1001,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
             // time to do some cleaning up -- non-priority
             scala.concurrent.ExecutionContext.global
-              .execute(() => master.cleanupPreimages())
+              .execute(() => ChannelMaster.cleanupPreimages())
 
             // act on each pending message, relaying them as necessary
             currentState.uncommittedUpdates.foreach {
@@ -1031,7 +1043,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                 // send a payment through the upstream node -- or to another hosted channel
                 scala.concurrent.ExecutionContext.global.execute { () =>
                   Utils.parseClientOnion(
-                    master.node.privateKey,
+                    ChannelMaster.node.privateKey,
                     htlc
                   ) match {
                     case Left(fail) => {
@@ -1089,17 +1101,17 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                         ) => {
                       // a payment the client is sending through us to someone else
                       // first check if it's for another hosted channel we may have
-                      master.database.data.channels
+                      ChannelMaster.database.data.channels
                         .find((p, _) =>
                           HostedChannelHelpers.getShortChannelId(
-                            master.node.publicKey.value,
+                            ChannelMaster.node.publicKey.value,
                             p
                           ) == payload.outgoingChannelId
                         ) match {
                         case Some((targetPeerId, chandata)) => {
                           // it is a local hosted channel
                           // send it to the corresponding channel actor
-                          master
+                          ChannelMaster
                             .getChannel(targetPeerId)
                             .addHtlc(
                               htlcIn = HtlcIdentifier(shortChannelId, htlc.id),
@@ -1115,7 +1127,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                         case None =>
                           // it is a normal channel on the upstream node
                           // use sendonion
-                          master.node
+                          ChannelMaster.node
                             .sendOnion(
                               chan = this,
                               htlcId = htlc.id,
@@ -1137,7 +1149,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                   ) => {
                 // here we update the database with the mapping between received and sent htlcs
                 // (now that we are sure the peer has accepted our update_add_htlc)
-                master.database.update { data =>
+                ChannelMaster.database.update { data =>
                   data
                     .modify(_.htlcForwards)
                     .using(
@@ -1178,13 +1190,13 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         ) {
           // it seems that the peer has agreed to our override proposal
           val lcss = currentData.proposedOverride.get
-            .withCurrentBlockDay(master.currentBlockDay)
-            .withLocalSigOfRemote(master.node.privateKey)
+            .withCurrentBlockDay(ChannelMaster.currentBlockDay)
+            .withLocalSigOfRemote(ChannelMaster.node.privateKey)
             .copy(remoteSigOfLocal = msg.localSigOfRemoteLCSS)
 
           if (lcss.verifyRemoteSig(PublicKey(peerId))) {
             // update state on the database
-            master.database.update { data =>
+            ChannelMaster.database.update { data =>
               data
                 .modify(_.channels.at(peerId))
                 .setTo(ChannelData(lcss = lcss))
@@ -1200,7 +1212,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
       // client is sending an error
       case msg: Error => {
-        master.database.update { data =>
+        ChannelMaster.database.update { data =>
           data
             .modify(_.channels.at(peerId).remoteErrors)
             .using(_ + msg)
@@ -1239,7 +1251,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
       // store one error for each htlc failed in this manner
       expiredOutgoingHtlcs.foreach { htlc =>
-        master.database.update { data =>
+        ChannelMaster.database.update { data =>
           data
             .modify(_.channels.at(peerId).localErrors)
             .using(
@@ -1255,7 +1267,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       // we also fail them on their upstream node
       expiredOutgoingHtlcs
         .map(out =>
-          master.database.data.htlcForwards
+          ChannelMaster.database.data.htlcForwards
             .find((_, to) => to == out)
             .map((from, _) => from)
         )
@@ -1281,7 +1293,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
     // cleanup uncommitted htlcs that may be pending for so long they're now inviable
     state.uncommittedUpdates.collect {
       case m @ FromLocal(htlc: UpdateAddHtlc, _)
-          if (htlc.cltvExpiry.blockHeight <= master.currentBlock + 2) => {
+          if (htlc.cltvExpiry.blockHeight <= ChannelMaster.currentBlock + 2) => {
         state = state.removeUncommitedUpdate(m)
 
         // and fail them upstream
@@ -1293,7 +1305,7 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
                 NormalFailureMessage(
                   IncorrectOrUnknownPaymentDetails(
                     htlc.amountMsat,
-                    master.currentBlock
+                    ChannelMaster.currentBlock
                   )
                 )
               )
@@ -1313,14 +1325,14 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         )
       )
     } else {
-      master.node
+      ChannelMaster.node
         .getAddress()
         .map(Bech32.decodeWitnessAddress(_)._3)
         .flatMap(spk => {
           invoking = Some(spk)
           sendMessage(
             InvokeHostedChannel(
-              chainHash = master.chainHash,
+              chainHash = ChannelMaster.chainHash,
               refundScriptPubKey = spk,
               secret = ByteVector.empty
             )
@@ -1366,10 +1378,10 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
           localBalanceMsat = newLocalBalance,
           remoteBalanceMsat =
             lcssStored.initHostedChannel.channelCapacityMsat - newLocalBalance,
-          blockDay = master.currentBlockDay
+          blockDay = ChannelMaster.currentBlockDay
         )
 
-      master.database.update { data =>
+      ChannelMaster.database.update { data =>
         data
           .modify(_.channels.at(peerId).proposedOverride)
           .setTo(Some(lcssOverride))
@@ -1377,8 +1389,8 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
       sendMessage(
         lcssOverride
-          .withCurrentBlockDay(master.currentBlockDay)
-          .withLocalSigOfRemote(master.node.privateKey)
+          .withCurrentBlockDay(ChannelMaster.currentBlockDay)
+          .withLocalSigOfRemote(ChannelMaster.node.privateKey)
           .stateOverride
       )
         .map((v: ujson.Value) => v("status").str)
@@ -1387,8 +1399,8 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
 
   def getChannelUpdate(channelIsUp: Boolean): ChannelUpdate = {
     val flags = ChannelUpdate.ChannelFlags(
-      isNode1 =
-        LexicographicalOrdering.isLessThan(master.node.publicKey.value, peerId),
+      isNode1 = LexicographicalOrdering
+        .isLessThan(ChannelMaster.node.publicKey.value, peerId),
       isEnabled = channelIsUp
     )
     val timestamp: TimestampSecond = TimestampSecond.now()
@@ -1397,15 +1409,15 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
         LightningMessageCodecs.channelUpdateWitnessCodec
           .encode(
             (
-              master.chainHash,
+              ChannelMaster.chainHash,
               shortChannelId,
               timestamp,
               flags,
-              master.config.cltvExpiryDelta,
-              master.config.htlcMinimumMsat,
-              master.config.feeBase,
-              master.config.feeProportionalMillionths,
-              master.config.channelCapacityMsat,
+              ChannelMaster.config.cltvExpiryDelta,
+              ChannelMaster.config.htlcMinimumMsat,
+              ChannelMaster.config.feeBase,
+              ChannelMaster.config.feeProportionalMillionths,
+              ChannelMaster.config.channelCapacityMsat,
               TlvStream.empty[ChannelUpdateTlv]
             )
           )
@@ -1415,18 +1427,19 @@ class Channel(master: ChannelMaster, peerId: ByteVector) {
       )
     )
 
-    val sig = Crypto.sign(witness, master.node.privateKey)
+    val sig = Crypto.sign(witness, ChannelMaster.node.privateKey)
     ChannelUpdate(
       signature = sig,
-      chainHash = master.chainHash,
+      chainHash = ChannelMaster.chainHash,
       shortChannelId = shortChannelId,
       timestamp = timestamp,
       channelFlags = flags,
-      cltvExpiryDelta = master.config.cltvExpiryDelta,
-      htlcMinimumMsat = master.config.htlcMinimumMsat,
-      feeBaseMsat = master.config.feeBase,
-      feeProportionalMillionths = master.config.feeProportionalMillionths,
-      htlcMaximumMsat = master.config.channelCapacityMsat
+      cltvExpiryDelta = ChannelMaster.config.cltvExpiryDelta,
+      htlcMinimumMsat = ChannelMaster.config.htlcMinimumMsat,
+      feeBaseMsat = ChannelMaster.config.feeBase,
+      feeProportionalMillionths =
+        ChannelMaster.config.feeProportionalMillionths,
+      htlcMaximumMsat = ChannelMaster.config.channelCapacityMsat
     )
   }
 
