@@ -28,7 +28,7 @@ It doesn't require any manual input to work, you just start it and it will autom
 The CLN plugin provides these RPC methods:
 
 - `hc-list`: lists all hosted channels.
-- `hc-channel <peerid>`: shows just the channel specific for the given peer.
+- `hc-channel <peerid>`: shows detailed information about the channel for the given peer.
 - `hc-override <peerid> <msatoshi>`: if the channel for this peer is in an error state, proposes overriding it to a new state in which the local balance is the given.
 - `add-hc-secret <secret>`: adds a one-time secret for when `"requireSecret"` is true.
 - `remove-hc-secret <secret>`: the opposite of the above.

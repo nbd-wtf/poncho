@@ -331,7 +331,7 @@ class CLN() extends NodeInterface {
               ujson.Obj(
                 "name" -> "hc-channel",
                 "usage" -> "peerid",
-                "description" -> "Shows your hosted channel with {peerid}."
+                "description" -> "Shows your hosted channel with {peerid} with more details than hc-list."
               ),
               ujson.Obj(
                 "name" -> "hc-override",
@@ -623,28 +623,45 @@ class CLN() extends NodeInterface {
             case _            => None
           } match {
             case Some(secret) => {
-              master.temporarySecrets =
-                master.temporarySecrets.filterNot(_ == secret)
+              ChannelMaster.temporarySecrets =
+                ChannelMaster.temporarySecrets.filterNot(_ == secret)
               reply(ujson.Obj("removed" -> true))
             }
             case None => replyError("secret not given")
           }
 
       case "hc-list" =>
-        reply(master.database.data.channels.toList.map(master.channelJSON))
+        reply(
+          ChannelMaster.database.data.channels.toList.map(Printer.hcSimple(_))
+        )
 
       case "hc-channel" =>
-        (for {
-          peerHex <- params match {
-            case o: ujson.Obj => o.value.get("peerId").flatMap(_.strOpt)
-            case a: ujson.Arr => a.value.headOption.flatMap(_.strOpt)
-            case _            => None
-          }
-          peerId <- ByteVector.fromHex(peerHex)
-          data <- master.database.data.channels.get(peerId)
-        } yield reply(
-          master.channelJSON((peerId, data))
-        )) getOrElse replyError("couldn't find that channel")
+        val peerHex = params match {
+          case o: ujson.Obj => o.value.get("peerid").flatMap(_.strOpt)
+          case a: ujson.Arr => a.value.headOption.flatMap(_.strOpt)
+          case _            => None
+        }
+        val peerId = peerHex.flatMap(ByteVector.fromHex(_))
+        val data = peerId.flatMap[ChannelData](
+          ChannelMaster.database.data.channels.get(_)
+        )
+
+        // normally this will create a channel from whatever id we gave it,
+        //   so here we first ensure this channel exists on the database
+        val chan = (peerId, data) match {
+          case (Some(id), Some(_)) => Some(ChannelMaster.getChannel(id))
+          case _                   => None
+        }
+
+        (peerId, data, chan) match {
+          case (Some(peerId), Some(data), Some(chan)) =>
+            Printer.hcDetail(peerId, data, chan).onComplete {
+              case Success(json) => reply(json)
+              case Failure(err)  => replyError(err.toString())
+            }
+          case _ =>
+            replyError("couldn't find the channel")
+        }
 
       case "hc-override" =>
         (params match {
