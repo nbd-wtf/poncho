@@ -70,7 +70,7 @@ class CLN() extends NodeInterface {
       ujson.write(
         ujson.Obj(
           "jsonrpc" -> "2.0",
-          "id" -> req("id").num,
+          "id" -> req("id"),
           "result" -> result
         )
       )
@@ -82,7 +82,7 @@ class CLN() extends NodeInterface {
       ujson.write(
         ujson.Obj(
           "jsonrpc" -> "2.0",
-          "id" -> req("id").num,
+          "id" -> req("id"),
           "error" -> ujson.Obj(
             "message" -> errorMessage
           )
@@ -353,13 +353,7 @@ class CLN() extends NodeInterface {
           )
         )
       case "init" => {
-        reply(
-          ujson.Obj(
-            "jsonrpc" -> "2.0",
-            "id" -> req("id").num,
-            "result" -> ujson.Obj()
-          )
-        )
+        reply(ujson.Obj())
 
         val lightningDir = params("configuration")("lightning-dir").str
         rpcAddr = lightningDir + "/" + params("configuration")("rpc-file").str
