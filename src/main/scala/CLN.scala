@@ -225,60 +225,60 @@ class CLN() extends NodeInterface {
     )
 
     val sendonion =
-      rpc("listchannels", ujson.Obj("short_channel_id" -> firstHop.toString))
+      rpc("listpeers")
         .onComplete {
           case Failure(err) =>
-            logger.debug.item(err).msg("failed to get channel for payment")
+            logger.debug.item(err).msg("listpeers call failed")
             chan.gotPaymentResult(htlcId, noChannelPaymentResult)
 
           case Success(list) =>
-            list("channels").arr.headOption match {
+            list("peers").arr
+              .find(peer =>
+                peer.objOpt
+                  .flatMap(peer => peer.get("channels"))
+                  .flatMap(chans => chans.arrOpt)
+                  .find(chans =>
+                    chans.exists(chan =>
+                      chan.obj
+                        .get("short_channel_id")
+                        .map(_.str == firstHop.toString)
+                        .getOrElse(false)
+                    )
+                  )
+                  .isDefined
+              )
+              .map(_("id").str)
+              .map(ByteVector.fromValidHex(_)) match {
               case None =>
-                logger.debug.msg("this channel doesn't exist at all?")
+                logger.debug.msg("we don't know about this channel")
                 chan.gotPaymentResult(htlcId, noChannelPaymentResult)
-              case Some(chandata) =>
-                val peerFound =
-                  List(chandata("source").str, chandata("destination").str)
-                    .map(ByteVector.fromValidHex(_))
-                    .find(_ != ChannelMaster.node.publicKey.value)
+              case Some(targetPeerId) =>
+                logger = logger.attach.item("peer", targetPeerId.toHex).logger()
 
-                peerFound match {
-                  case None =>
-                    logger.debug.msg("didn't find peer for channel")
-                    chan.gotPaymentResult(htlcId, noChannelPaymentResult)
-                  case Some(targetPeerId) =>
-                    logger =
-                      logger.attach.item("peer", targetPeerId.toHex).logger()
-                    val sendonion = for {
-                      _ <- rpc("connect", ujson.Obj("id" -> targetPeerId.toHex))
-                      send <- rpc(
-                        "sendonion",
-                        ujson.Obj(
-                          "first_hop" -> ujson.Obj(
-                            "id" -> targetPeerId.toHex,
-                            "amount_msat" -> amount.toLong,
-                            "delay" -> cltvExpiryDelta.toInt
-                          ),
-                          "onion" -> onion.toHex,
-                          "payment_hash" -> paymentHash.toHex,
-                          "label" -> upickle.default
-                            .write((chan.shortChannelId.toString, htlcId))
-                        )
+                rpc(
+                  "sendonion",
+                  ujson.Obj(
+                    "first_hop" -> ujson.Obj(
+                      "id" -> targetPeerId.toHex,
+                      "amount_msat" -> amount.toLong,
+                      "delay" -> cltvExpiryDelta.toInt
+                    ),
+                    "onion" -> onion.toHex,
+                    "payment_hash" -> paymentHash.toHex,
+                    "label" -> upickle.default
+                      .write((chan.shortChannelId.toString, htlcId))
+                  )
+                )
+                  .onComplete {
+                    case Failure(err) => {
+                      logger.info.item(err).msg("sendonion failure")
+                      chan.gotPaymentResult(
+                        htlcId,
+                        Some(Left(None))
                       )
-                    } yield send
-
-                    sendonion
-                      .onComplete {
-                        case Failure(err) => {
-                          logger.info.item(err).msg("sendonion failure")
-                          chan.gotPaymentResult(
-                            htlcId,
-                            Some(Left(None))
-                          )
-                        }
-                        case Success(_) => {}
-                      }
-                }
+                    }
+                    case Success(_) => {}
+                  }
             }
         }
   }
