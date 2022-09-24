@@ -225,29 +225,21 @@ class CLN() extends NodeInterface {
     )
 
     val sendonion =
-      rpc("listpeers")
+      rpc("listfunds")
         .onComplete {
           case Failure(err) =>
-            logger.debug.item(err).msg("listpeers call failed")
+            logger.debug.item(err).msg("listfunds call failed")
             chan.gotPaymentResult(htlcId, noChannelPaymentResult)
 
-          case Success(list) =>
-            list("peers").arr
-              .find(peer =>
-                peer.objOpt
-                  .flatMap(peer => peer.get("channels"))
-                  .flatMap(chans => chans.arrOpt)
-                  .find(chans =>
-                    chans.exists(chan =>
-                      chan.obj
-                        .get("short_channel_id")
-                        .map(_.str == firstHop.toString)
-                        .getOrElse(false)
-                    )
-                  )
-                  .isDefined
+          case Success(res) =>
+            res("channels").arr
+              .find(
+                _.obj
+                  .get("short_channel_id")
+                  .map(_.str == firstHop.toString)
+                  .getOrElse(false)
               )
-              .map(_("id").str)
+              .map(_("peer_id").str)
               .map(ByteVector.fromValidHex(_)) match {
               case None =>
                 logger.debug.msg("we don't know about this channel")
