@@ -266,7 +266,19 @@ class CLN() extends NodeInterface {
                     "onion" -> onion.toHex,
                     "payment_hash" -> paymentHash.toHex,
                     "label" -> upickle.default
-                      .write((chan.shortChannelId.toString, htlcId))
+                      .write((chan.shortChannelId.toString, htlcId)),
+                    "partid" ->
+                      // we need a unique number here so lightningd is happy to accept multiple parts
+                      ujson.Num(
+                        (
+                          // this contraption is just so we get an unsigned integer
+                          //   that is still fairly unique for this channel
+                          UInt64(chan.shortChannelId.toLong).toBigInt / 100
+                        ).toLong -
+                          // then we subtract the incoming htlc id so the number is actually unique
+                          //   within the channel (this is much more important than the previous contraption)
+                          htlcId
+                      )
                   )
                 )
                   .onComplete {
