@@ -219,7 +219,7 @@ class Channel(peerId: ByteVector) {
             Some(AmountBelowMinimum(amountOut, getChannelUpdate(true)))
           case _ if cltvOut.blockHeight < ChannelMaster.currentBlock + 2 =>
             Some(ExpiryTooSoon(getChannelUpdate(true)))
-          case _ if cltvOut - cltvIn < ChannelMaster.config.cltvExpiryDelta =>
+          case _ if cltvIn - cltvOut < ChannelMaster.config.cltvExpiryDelta =>
             Some(IncorrectCltvExpiry(cltvOut, getChannelUpdate(true)))
           case _ if amountIn - amountOut < requiredFee =>
             Some(FeeInsufficient(amountIn, getChannelUpdate(true)))
