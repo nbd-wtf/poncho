@@ -209,69 +209,81 @@ class Channel(peerId: ByteVector) {
           (state.lcssNext.incomingHtlcs.map(_.amountMsat.toLong) ++
             state.lcssNext.outgoingHtlcs.map(_.amountMsat.toLong))
             .fold(0L)(_ + _)
+        val requiredFee =
+          MilliSatoshi(
+            ChannelMaster.config.feeBase.toLong + (amountOut.toLong * ChannelMaster.config.feeProportionalMillionths / 1000000)
+          )
 
-        if (
-          state.lcssNext.localBalanceMsat < amountOut ||
-          inflightHtlcs + 1 > lcssStored.initHostedChannel.maxAcceptedHtlcs ||
-          inflightValue + amountOut.toLong > lcssStored.initHostedChannel.maxHtlcValueInFlightMsat.toLong
-        )
-          promise.success(
-            Some(
-              Left(
-                Some(
-                  NormalFailureMessage(
-                    TemporaryChannelFailure(getChannelUpdate(true))
-                  )
-                )
-              )
+        val failure: Option[FailureMessage] = () match {
+          case _ if amountOut < lcssStored.initHostedChannel.htlcMinimumMsat =>
+            Some(AmountBelowMinimum(amountOut, getChannelUpdate(true)))
+          case _ if cltvOut.blockHeight < ChannelMaster.currentBlock + 2 =>
+            Some(ExpiryTooSoon(getChannelUpdate(true)))
+          case _ if amountIn - amountOut < requiredFee =>
+            Some(FeeInsufficient(amountIn, getChannelUpdate(true)))
+          case _ if state.lcssNext.localBalanceMsat < amountOut =>
+            Some(TemporaryChannelFailure(getChannelUpdate(true)))
+          case _
+              if inflightHtlcs + 1 > lcssStored.initHostedChannel.maxAcceptedHtlcs ||
+                inflightValue + amountOut.toLong > lcssStored.initHostedChannel.maxHtlcValueInFlightMsat.toLong =>
+            Some(TemporaryChannelFailure(getChannelUpdate(true)))
+          case _ => None
+        }
+
+        failure match {
+          case Some(f) =>
+            promise.success(
+              Some(Left(Some(NormalFailureMessage(f))))
             )
-          )
-        else {
-          // htlc proposal is good, we will proceed to send update_add_htlc to hosted peer
-          // create update_add_htlc based on the data we've received
-          val htlc = UpdateAddHtlc(
-            channelId = channelId,
-            id = state.lcssNext.localUpdates + 1L,
-            paymentHash = paymentHash,
-            amountMsat = amountOut,
-            cltvExpiry = cltvOut,
-            onionRoutingPacket = onionRoutingPacket.value
-          )
+          case None => {
+            // htlc proposal is good, we will proceed to send update_add_htlc to hosted peer
+            // create update_add_htlc based on the data we've received
+            val htlc = UpdateAddHtlc(
+              channelId = channelId,
+              id = state.lcssNext.localUpdates + 1L,
+              paymentHash = paymentHash,
+              amountMsat = amountOut,
+              cltvExpiry = cltvOut,
+              onionRoutingPacket = onionRoutingPacket.value
+            )
 
-          // prepare modification to new lcss to be our next
-          val upd = FromLocal(htlc, Some(htlcIn))
+            // prepare modification to new lcss to be our next
+            val upd = FromLocal(htlc, Some(htlcIn))
 
-          // update the state to include this uncommitted htlc
-          state = state.addUncommittedUpdate(upd)
+            // update the state to include this uncommitted htlc
+            state = state.addUncommittedUpdate(upd)
 
-          // and add to the callbacks we're keeping track of for the upstream node
-          htlcResults += (htlc.id -> promise)
+            // and add to the callbacks we're keeping track of for the upstream node
+            htlcResults += (htlc.id -> promise)
 
-          sendMessage(htlc)
-            .onComplete {
-              case Success(_) =>
-                // success here means the client did get our update_add_htlc,
-                // so send our signed state_update
-                sendStateUpdate(state)
-              case Failure(err) => {
-                // client is offline and can't take our update_add_htlc,
-                // so we fail it on upstream
-                // and remove it from the list of uncommitted updates
-                localLogger.warn.item(err).msg("failed to send update_add_htlc")
-                promise.success(
-                  Some(
-                    Left(
-                      Some(
-                        NormalFailureMessage(
-                          TemporaryChannelFailure(getChannelUpdate(false))
+            sendMessage(htlc)
+              .onComplete {
+                case Success(_) =>
+                  // success here means the client did get our update_add_htlc,
+                  // so send our signed state_update
+                  sendStateUpdate(state)
+                case Failure(err) => {
+                  // client is offline and can't take our update_add_htlc,
+                  // so we fail it on upstream
+                  // and remove it from the list of uncommitted updates
+                  localLogger.warn
+                    .item(err)
+                    .msg("failed to send update_add_htlc")
+                  promise.success(
+                    Some(
+                      Left(
+                        Some(
+                          NormalFailureMessage(
+                            TemporaryChannelFailure(getChannelUpdate(false))
+                          )
                         )
                       )
                     )
                   )
-                )
-                state = state.removeUncommitedUpdate(upd)
+                  state = state.removeUncommitedUpdate(upd)
+                }
               }
-            }
+          }
         }
       }
       case otherwise => {
@@ -834,12 +846,6 @@ class Channel(peerId: ByteVector) {
                 state.lcssNext.outgoingHtlcs.map(_.amountMsat.toLong))
                 .fold(0L)(_ + _)
             val impliedCltvDelta = htlc.cltvExpiry - packet.outgoingCltv
-            val requiredFee =
-              MilliSatoshi(
-                ChannelMaster.config.feeBase.toLong + (
-                  packet.amountToForward.toLong * ChannelMaster.config.feeProportionalMillionths / 1000000
-                )
-              )
 
             // critical failures, fail the channel
             if (
@@ -885,8 +891,7 @@ class Channel(peerId: ByteVector) {
                       getChannelUpdate(true)
                     )
                   )
-                case _
-                    if htlc.amountMsat - packet.amountToForward < requiredFee =>
+                case _ if htlc.amountMsat < packet.amountToForward =>
                   Some(FeeInsufficient(htlc.amountMsat, getChannelUpdate(true)))
                 case _ => None
               }
