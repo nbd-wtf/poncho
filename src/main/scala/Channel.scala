@@ -76,6 +76,13 @@ class Channel(peerId: ByteVector) {
   val logger =
     ChannelMaster.logger.attach.item("peer", peerId.toHex.take(7)).logger()
 
+  def inflightHtlcs =
+    state.lcssNext.incomingHtlcs.size + state.lcssNext.outgoingHtlcs.size
+  def inflightValue =
+    (state.lcssNext.incomingHtlcs.map(_.amountMsat.toLong) ++
+      state.lcssNext.outgoingHtlcs.map(_.amountMsat.toLong))
+      .fold(0L)(_ + _)
+
   def sendMessage(msg: LightningMessage): Future[ujson.Value] =
     ChannelMaster.node.sendCustomMessage(peerId, msg)
 
@@ -203,12 +210,6 @@ class Channel(peerId: ByteVector) {
         //
         // check a bunch of things, if any fail return a temporary_channel_failure
         val impliedCltvDelta = (cltvIn.blockHeight - cltvOut.blockHeight).toInt
-        val inflightHtlcs =
-          state.lcssNext.incomingHtlcs.size + state.lcssNext.outgoingHtlcs.size
-        val inflightValue =
-          (state.lcssNext.incomingHtlcs.map(_.amountMsat.toLong) ++
-            state.lcssNext.outgoingHtlcs.map(_.amountMsat.toLong))
-            .fold(0L)(_ + _)
         val requiredFee =
           MilliSatoshi(
             ChannelMaster.config.feeBase.toLong + (amountOut.toLong * ChannelMaster.config.feeProportionalMillionths / 1000000)
@@ -436,6 +437,92 @@ class Channel(peerId: ByteVector) {
               }
             }
         }
+      }
+    }
+  }
+
+  // this is for when we want to initiate a payment directly to the hosted peer.
+  // the flow is similar to addHtlc(), but we must generate our own onion, and the
+  //   response format is simplified since we don't have to return an LN fulfill/fail upstream
+  //   and so on
+  def sendDirectPayment(bolt11: Bolt11Invoice): Future[ByteVector32] = {
+    val amount = bolt11.amount_opt.get
+    var promise = Promise[PaymentStatus]()
+
+    if (status != Active) Future.failed(new Exception("channel isn't active"))
+    else if (state.lcssNext.localBalanceMsat < amount)
+      Future.failed(new Exception("not enough balance on our side"))
+    else if (
+      inflightHtlcs + 1 > lcssStored.initHostedChannel.maxAcceptedHtlcs ||
+      inflightValue + amount.toLong > lcssStored.initHostedChannel.maxHtlcValueInFlightMsat.toLong
+    ) Future.failed(new Exception("no room for new HTLCs"))
+    else {
+      val localLogger = logger.attach.item(status).logger()
+      localLogger.debug
+        .item("state", summary)
+        .item("bolt11", bolt11)
+        .msg("sending direct payment to hosted peer")
+
+      val cltvDelta = CltvExpiry(
+        ChannelMaster.currentBlock.toInt + (bolt11.minFinalCltvExpiryDelta + ChannelMaster.config.cltvExpiryDelta).toInt
+      )
+
+      val onion = Sphinx.create(
+        Crypto.PrivateKey(Crypto.randomBytes(32)),
+        PaymentOnionCodecs.paymentOnionPayloadLength,
+        List(Crypto.PublicKey(peerId)),
+        List(
+          PaymentOnionCodecs.finalPerHopPayloadCodec
+            .encode(
+              PaymentOnion.createSinglePartPayload(
+                amount = amount,
+                expiry = cltvDelta,
+                paymentSecret = bolt11.paymentSecret.get,
+                paymentMetadata = None
+              )
+            )
+            .require
+            .bytes
+        ),
+        Some(bolt11.hash)
+      )
+
+      val htlc = UpdateAddHtlc(
+        channelId = channelId,
+        id = state.lcssNext.localUpdates + 1L,
+        paymentHash = bolt11.paymentHash,
+        amountMsat = amount,
+        cltvExpiry = cltvDelta,
+        onionRoutingPacket = onion.get.packet
+      )
+
+      // prepare modification to new lcss to be our next
+      val upd = FromLocal(htlc, None)
+
+      // update the state to include this uncommitted htlc
+      state = state.addUncommittedUpdate(upd)
+
+      // and add to the callbacks we're keeping track of for the upstream node
+      htlcResults += (htlc.id -> promise)
+
+      sendMessage(htlc)
+        .onComplete {
+          case Success(_) =>
+            sendStateUpdate(state)
+          case Failure(err) => {
+            promise.failure(
+              new Exception("couldn't send message, peer is probably offline")
+            )
+            state = state.removeUncommitedUpdate(upd)
+          }
+        }
+
+      promise.future.transform {
+        case Success(Some(Right(preimage))) => Success(preimage);
+        case reason =>
+          Failure(
+            new Exception("direct payment failed for some reason: $reason")
+          )
       }
     }
   }
@@ -841,13 +928,6 @@ class Channel(peerId: ByteVector) {
           .parseClientOnion(ChannelMaster.node.privateKey, htlc)
           .map(_.packet) match {
           case Right(packet: PaymentOnion.ChannelRelayPayload) => {
-            val inflightHtlcs =
-              state.lcssNext.incomingHtlcs.size + state.lcssNext.outgoingHtlcs.size
-            val inflightValue =
-              (state.lcssNext.incomingHtlcs.map(_.amountMsat.toLong) ++
-                state.lcssNext.outgoingHtlcs.map(_.amountMsat.toLong))
-                .fold(0L)(_ + _)
-
             // critical failures, fail the channel
             // these should never happen because the peer will know enough to not proposed these invalid HTLCs
             if (

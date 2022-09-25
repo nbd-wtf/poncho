@@ -6,8 +6,8 @@ import scala.concurrent.Future
 import scodec.bits.ByteVector
 import scodec.codecs.uint16
 import scoin._
-import scoin.ln.LightningMessage
 import scoin.Crypto.{PrivateKey, PublicKey}
+import scoin.ln.{LightningMessage, Bolt11Invoice}
 
 trait NodeInterface {
   def privateKey: PrivateKey
