@@ -219,6 +219,8 @@ class Channel(peerId: ByteVector) {
             Some(AmountBelowMinimum(amountOut, getChannelUpdate(true)))
           case _ if cltvOut.blockHeight < ChannelMaster.currentBlock + 2 =>
             Some(ExpiryTooSoon(getChannelUpdate(true)))
+          case _ if cltvOut - cltvIn < ChannelMaster.config.cltvExpiryDelta =>
+            Some(IncorrectCltvExpiry(cltvOut, getChannelUpdate(true)))
           case _ if amountIn - amountOut < requiredFee =>
             Some(FeeInsufficient(amountIn, getChannelUpdate(true)))
           case _ if state.lcssNext.localBalanceMsat < amountOut =>
@@ -845,9 +847,9 @@ class Channel(peerId: ByteVector) {
               (state.lcssNext.incomingHtlcs.map(_.amountMsat.toLong) ++
                 state.lcssNext.outgoingHtlcs.map(_.amountMsat.toLong))
                 .fold(0L)(_ + _)
-            val impliedCltvDelta = htlc.cltvExpiry - packet.outgoingCltv
 
             // critical failures, fail the channel
+            // these should never happen because the peer will know enough to not proposed these invalid HTLCs
             if (
               state.lcssNext.localBalanceMsat < MilliSatoshi(0L) ||
               state.lcssNext.remoteBalanceMsat < MilliSatoshi(0L)
@@ -870,26 +872,16 @@ class Channel(peerId: ByteVector) {
               }
             } else {
               // non-critical failures, just fail the htlc
+              // (some are actually critical, but we're being lax since we hold their money anyway)
               val failure: Option[FailureMessage] = () match {
                 case _
                     if inflightHtlcs > lcssStored.initHostedChannel.maxAcceptedHtlcs ||
                       inflightValue > lcssStored.initHostedChannel.maxHtlcValueInFlightMsat.toLong =>
                   Some(TemporaryChannelFailure(getChannelUpdate(true)))
                 case _
-                    if packet.outgoingCltv.blockHeight < ChannelMaster.currentBlock + 2 =>
-                  Some(ExpiryTooSoon(getChannelUpdate(true)))
-                case _
                     if htlc.amountMsat < lcssStored.initHostedChannel.htlcMinimumMsat =>
                   Some(
                     AmountBelowMinimum(htlc.amountMsat, getChannelUpdate(true))
-                  )
-                case _
-                    if impliedCltvDelta < ChannelMaster.config.cltvExpiryDelta =>
-                  Some(
-                    IncorrectCltvExpiry(
-                      packet.outgoingCltv,
-                      getChannelUpdate(true)
-                    )
                   )
                 case _ if htlc.amountMsat < packet.amountToForward =>
                   Some(FeeInsufficient(htlc.amountMsat, getChannelUpdate(true)))
