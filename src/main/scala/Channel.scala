@@ -202,9 +202,6 @@ class Channel(peerId: ByteVector) {
         // the default case in which we add a new htlc
         //
         // check a bunch of things, if any fail return a temporary_channel_failure
-        val requiredFee = MilliSatoshi(
-          ChannelMaster.config.feeBase.toLong + (ChannelMaster.config.feeProportionalMillionths * amountOut.toLong / 1000000L)
-        )
         val impliedCltvDelta = (cltvIn.blockHeight - cltvOut.blockHeight).toInt
         val inflightHtlcs =
           state.lcssNext.incomingHtlcs.size + state.lcssNext.outgoingHtlcs.size
@@ -214,7 +211,6 @@ class Channel(peerId: ByteVector) {
             .fold(0L)(_ + _)
 
         if (
-          (amountIn - amountOut) < requiredFee ||
           state.lcssNext.localBalanceMsat < amountOut ||
           inflightHtlcs + 1 > lcssStored.initHostedChannel.maxAcceptedHtlcs ||
           inflightValue + amountOut.toLong > lcssStored.initHostedChannel.maxHtlcValueInFlightMsat.toLong
@@ -838,15 +834,17 @@ class Channel(peerId: ByteVector) {
                 state.lcssNext.outgoingHtlcs.map(_.amountMsat.toLong))
                 .fold(0L)(_ + _)
             val impliedCltvDelta = htlc.cltvExpiry - packet.outgoingCltv
+            val requiredFee =
+              MilliSatoshi(
+                ChannelMaster.config.feeBase.toLong + (
+                  packet.amountToForward.toLong * ChannelMaster.config.feeProportionalMillionths / 1000000
+                )
+              )
 
+            // critical failures, fail the channel
             if (
-              // critical failures, fail the channel
-              htlc.amountMsat < packet.amountToForward ||
-              inflightHtlcs > lcssStored.initHostedChannel.maxAcceptedHtlcs ||
-              inflightValue > lcssStored.initHostedChannel.maxHtlcValueInFlightMsat.toLong ||
               state.lcssNext.localBalanceMsat < MilliSatoshi(0L) ||
-              state.lcssNext.remoteBalanceMsat < MilliSatoshi(0L) ||
-              packet.outgoingCltv.blockHeight < ChannelMaster.currentBlock + 2
+              state.lcssNext.remoteBalanceMsat < MilliSatoshi(0L)
             ) {
               val err = Error(
                 channelId,
@@ -860,29 +858,47 @@ class Channel(peerId: ByteVector) {
                     _ + DetailedError(
                       err,
                       Some(htlc),
-                      "peer sent an htlc that went above some limit"
+                      s"peer sent an htlc that caused some balance to go below zero ${state.lcssNext.localBalanceMsat}/${state.lcssNext.remoteBalanceMsat}"
                     )
                   )
               }
-            } else if (
+            } else {
               // non-critical failures, just fail the htlc
-              htlc.amountMsat < lcssStored.initHostedChannel.htlcMinimumMsat ||
-              impliedCltvDelta < ChannelMaster.config.cltvExpiryDelta
-            ) {
-              scala.concurrent.ExecutionContext.global.execute(() =>
-                gotPaymentResult(
-                  htlc.id,
+              val failure: Option[FailureMessage] = () match {
+                case _
+                    if inflightHtlcs > lcssStored.initHostedChannel.maxAcceptedHtlcs ||
+                      inflightValue > lcssStored.initHostedChannel.maxHtlcValueInFlightMsat.toLong =>
+                  Some(TemporaryChannelFailure(getChannelUpdate(true)))
+                case _
+                    if packet.outgoingCltv.blockHeight < ChannelMaster.currentBlock + 2 =>
+                  Some(ExpiryTooSoon(getChannelUpdate(true)))
+                case _
+                    if htlc.amountMsat < lcssStored.initHostedChannel.htlcMinimumMsat =>
                   Some(
-                    Left(
-                      Some(
-                        NormalFailureMessage(
-                          TemporaryChannelFailure(getChannelUpdate(true))
-                        )
-                      )
+                    AmountBelowMinimum(htlc.amountMsat, getChannelUpdate(true))
+                  )
+                case _
+                    if impliedCltvDelta < ChannelMaster.config.cltvExpiryDelta =>
+                  Some(
+                    IncorrectCltvExpiry(
+                      packet.outgoingCltv,
+                      getChannelUpdate(true)
                     )
                   )
+                case _
+                    if htlc.amountMsat - packet.amountToForward < requiredFee =>
+                  Some(FeeInsufficient(htlc.amountMsat, getChannelUpdate(true)))
+                case _ => None
+              }
+
+              failure.foreach { f =>
+                scala.concurrent.ExecutionContext.global.execute(() =>
+                  gotPaymentResult(
+                    htlc.id,
+                    Some(Left(Some(NormalFailureMessage(f))))
+                  )
                 )
-              )
+              }
             }
           }
           case Left(fail: FailureMessage) => {
@@ -900,7 +916,11 @@ class Channel(peerId: ByteVector) {
             scala.concurrent.ExecutionContext.global.execute(() =>
               gotPaymentResult(
                 htlc.id,
-                Some(Left(Some(NormalFailureMessage(TemporaryNodeFailure))))
+                Some(
+                  Left(
+                    Some(NormalFailureMessage(RequiredChannelFeatureMissing))
+                  )
+                )
               )
             )
           }
