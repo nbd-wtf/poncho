@@ -387,7 +387,11 @@ class CLN() extends NodeInterface {
           case Success(msg) =>
             ChannelMaster.getChannel(peerId).gotPeerMessage(msg.value)
           case Failure(err) =>
-            ChannelMaster.log(s"failed to parse client messages: $err")
+            ChannelMaster.logger.debug
+              .item(err)
+              .item("peer", peerId)
+              .item("msg", body)
+              .msg("failed to parse client messages")
         }
       }
       case "htlc_accepted" => {
