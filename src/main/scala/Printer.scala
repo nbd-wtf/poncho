@@ -43,7 +43,7 @@ object Printer {
       "total_updates" -> (data.lcss.localUpdates + data.lcss.remoteUpdates).toInt,
       "status" -> channel
         .map(_.status.getClass.getSimpleName.toLowerCase)
-        .getOrElse("Offline")
+        .getOrElse("offline")
     )
   }
 
