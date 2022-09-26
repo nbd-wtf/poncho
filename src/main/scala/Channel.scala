@@ -1151,8 +1151,7 @@ class Channel(peerId: ByteVector) {
                               paymentHash = htlc.paymentHash,
                               firstHop = payload.outgoingChannelId,
                               amount = payload.amountToForward,
-                              cltvExpiryDelta =
-                                htlc.cltvExpiry - payload.outgoingCltv,
+                              cltvExpiry = payload.outgoingCltv,
                               onion = nextOnion
                             )
                       }

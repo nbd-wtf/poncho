@@ -216,7 +216,7 @@ class CLN() extends NodeInterface {
       paymentHash: ByteVector32,
       firstHop: ShortChannelId,
       amount: MilliSatoshi,
-      cltvExpiryDelta: CltvExpiryDelta,
+      cltvExpiry: CltvExpiry,
       onion: ByteVector
   ): Unit = {
     var logger = ChannelMaster.logger.attach.item("scid", firstHop).logger()
@@ -253,7 +253,11 @@ class CLN() extends NodeInterface {
                     "first_hop" -> ujson.Obj(
                       "id" -> targetPeerId.toHex,
                       "amount_msat" -> amount.toLong,
-                      "delay" -> cltvExpiryDelta.toInt
+                      // lightningd will take whatever we pass here and add to the current block,
+                      //   so since we already have the final cltv value and not a delta, we subtract
+                      //   the current block from it and then when lightningd adds we'll get back to the
+                      //   correct expected cltv
+                      "delay" -> (cltvExpiry - ChannelMaster.currentBlock).toInt
                     ),
                     "onion" -> onion.toHex,
                     "payment_hash" -> paymentHash.toHex,

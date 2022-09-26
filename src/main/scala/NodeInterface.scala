@@ -29,7 +29,7 @@ trait NodeInterface {
       paymentHash: ByteVector32,
       firstHop: ShortChannelId,
       amount: MilliSatoshi,
-      cltvExpiryDelta: CltvExpiryDelta,
+      cltvExpiry: CltvExpiry,
       onion: ByteVector
   ): Unit
 
