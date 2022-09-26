@@ -9,8 +9,6 @@ This is an **early alpha** software that turns your CLN node into a [hosted chan
 
 ### Installation using the prebuilt binary
 
-Before running you must have `libsecp256k1` and `libuv` installed as shared libraries. These can probably be installed using your operating system default package manager.
-
 Grab a binary from the [Releases page](https://github.com/fiatjaf/poncho/releases), call `chmod +x` on it so it is executable, then put it inside your CLN plugin directory (`~/.lightning/plugins/`) -- or start `lightningd` with `--plugin <path-to-poncho>`.
 
 ### Building from source

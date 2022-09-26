@@ -1,5 +1,4 @@
 import java.io.File
-import java.net.URL
 import java.nio.file.{Files, Path, Paths}
 import scala.util.Try
 import upickle.default._
@@ -26,7 +25,7 @@ case class Config(
     isDev: Boolean = true,
 
     // channels settings
-    cltvExpiryDelta: CltvExpiryDelta = CltvExpiryDelta(143),
+    cltvExpiryDelta: CltvExpiryDelta = CltvExpiryDelta(137),
     feeBase: MilliSatoshi = MilliSatoshi(1000L),
     feeProportionalMillionths: Long = 1000L,
     maxHtlcValueInFlightMsat: Long = 100000000L,
@@ -44,9 +43,6 @@ case class Config(
     requireSecret: Boolean = false,
     permanentSecrets: List[String] = List.empty
 ) {
-  // this will throw if not URL, which is desired
-  if (contactURL != "") new URL(contactURL)
-
   def init: InitHostedChannel = InitHostedChannel(
     maxHtlcValueInFlightMsat = UInt64(maxHtlcValueInFlightMsat),
     htlcMinimumMsat = htlcMinimumMsat,
