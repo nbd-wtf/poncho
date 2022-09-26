@@ -259,18 +259,18 @@ class CLN() extends NodeInterface {
                     "payment_hash" -> paymentHash.toHex,
                     "label" -> upickle.default
                       .write((chan.shortChannelId.toString, htlcId)),
+                    "groupid" ->
+                      // we need a unique combination of groupid and partid
+                      //   so lightningd is happy to accept multiple parts
+                      (
+                        // the groupid is the hosted channel from which this payment is coming.
+                        // this contraption is just so we get an unsigned integer
+                        //   that is still fairly unique for this channel and fits in a java Long
+                        UInt64(chan.shortChannelId.toLong).toBigInt / 100
+                      ).toLong,
                     "partid" ->
-                      // we need a unique number here so lightningd is happy to accept multiple parts
-                      ujson.Num(
-                        (
-                          // this contraption is just so we get an unsigned integer
-                          //   that is still fairly unique for this channel
-                          UInt64(chan.shortChannelId.toLong).toBigInt / 100
-                        ).toLong -
-                          // then we subtract the incoming htlc id so the number is actually unique
-                          //   within the channel (this is much more important than the previous contraption)
-                          htlcId
-                      )
+                      // here we just use the htlc id since it is already unique per channel
+                      htlcId
                   )
                 )
                   .onComplete {
