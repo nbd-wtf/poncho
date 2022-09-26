@@ -336,7 +336,7 @@ class Channel(peerId: ByteVector) {
       .item("result", res)
       .logger()
 
-    localLogger.debug.item(summary).msg("got payment result")
+    localLogger.debug.msg("got payment result")
 
     res match {
       case None => // payment still pending
@@ -444,7 +444,6 @@ class Channel(peerId: ByteVector) {
     val localLogger = logger.attach.item(status).logger()
 
     localLogger.debug
-      .item("state", summary)
       .item("message", message)
       .msg("  <:: got peer message")
 
