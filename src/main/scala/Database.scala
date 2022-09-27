@@ -42,19 +42,7 @@ case class DetailedError(
     htlc: Option[UpdateAddHtlc],
     reason: String
 ) {
-  def description: String = {
-    val tag = error.data.take(4)
-    val postTagData = error.data.drop(4)
-
-    HostedError.knownHostedCodes.get(tag.toHex) match {
-      case Some(code) if postTagData.isEmpty => s"hosted-code=$code"
-      case Some(code) =>
-        s"hosted-code=$code, extra=${error.copy(data = postTagData).toAscii}"
-      case None => error.toAscii
-    }
-  }
-
-  override def toString: String = s"$description | $reason | $htlc"
+  override def toString: String = s"${error.toAscii} | $reason | $htlc"
 }
 
 class Database(val path: Path = Paths.get("poncho").toAbsolutePath()) {

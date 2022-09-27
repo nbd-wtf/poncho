@@ -730,18 +730,12 @@ class Channel(peerId: ByteVector) {
         if (!isLocalSigOk || !isRemoteSigOk) {
           val (err, reason) = if (!isLocalSigOk) {
             (
-              Error(
-                channelId,
-                HostedError.ERR_HOSTED_WRONG_LOCAL_SIG
-              ),
+              Error(channelId, "you sent an lcss with our sig wrong"),
               "peer sent LastCrossSignedState with a signature that isn't ours"
             )
           } else {
             (
-              Error(
-                channelId,
-                HostedError.ERR_HOSTED_WRONG_REMOTE_SIG
-              ),
+              Error(channelId, "your lcss signature is wrong"),
               "peer sent LastCrossSignedState with an invalid signature"
             )
           }
@@ -857,10 +851,7 @@ class Channel(peerId: ByteVector) {
         msg match {
           case f: UpdateFailHtlc if (f.reason.isEmpty) => {
             // fail the channel
-            val err = Error(
-              channelId,
-              HostedError.ERR_HOSTED_WRONG_REMOTE_SIG
-            )
+            val err = Error(channelId, "reason is empty on update_fail_htlc")
             sendMessage(err)
             ChannelMaster.database.update { data =>
               data
@@ -902,10 +893,11 @@ class Channel(peerId: ByteVector) {
               state.lcssNext.localBalanceMsat < MilliSatoshi(0L) ||
               state.lcssNext.remoteBalanceMsat < MilliSatoshi(0L)
             ) {
-              val err = Error(
-                channelId,
-                HostedError.ERR_HOSTED_MANUAL_SUSPEND
-              )
+              val err =
+                Error(
+                  channelId,
+                  "you sent an update above your available balance"
+                )
               sendMessage(err)
               ChannelMaster.database.update { data =>
                 data
@@ -1274,10 +1266,7 @@ class Channel(peerId: ByteVector) {
             .modify(_.channels.at(peerId).localErrors)
             .using(
               _ + DetailedError(
-                Error(
-                  channelId,
-                  HostedError.ERR_HOSTED_CLOSED_BY_REMOTE_PEER
-                ),
+                Error(channelId, "just mirroring your error"),
                 None,
                 "peer sent an error"
               )
@@ -1296,10 +1285,7 @@ class Channel(peerId: ByteVector) {
 
     if (!expiredOutgoingHtlcs.isEmpty) {
       // if we have any HTLC, we fail the channel
-      val err = Error(
-        channelId,
-        HostedError.ERR_HOSTED_TIMED_OUT_OUTGOING_HTLC
-      )
+      val err = Error(channelId, "one or more outgoing htlcs have timed out")
       sendMessage(err)
 
       // store one error for each htlc failed in this manner
