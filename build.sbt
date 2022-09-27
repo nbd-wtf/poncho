@@ -27,6 +27,14 @@ nativeConfig := {
 }
 
 nativeConfig := {
+  import scala.sys.process._
+
+  // build libuv
+  Process("git clone https://github.com/libuv/libuv", target.value) #&& Process("./autogen.sh", target.value / "libuv") #&& Process("./configure", target.value / "libuv") #&& Process("make", target.value / "libuv") !
+
+  // build libsecp256k1
+  Process("git clone https://github.com/bitcoin-core/secp256k1", target.value) #&& Process("./autogen.sh", target.value / "secp256k1") #&& Process("./configure --enable-module-schnorrsig --enable-module-recovery", target.value / "secp256k1") #&& Process("make", target.value / "secp256k1") !
+
   val conf = nativeConfig.value
 
   conf

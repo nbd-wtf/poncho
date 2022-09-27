@@ -12,8 +12,6 @@ jobs:
           java-version: '11'
           distribution: 'temurin'
           cache: 'sbt'
-      - run: mkdir -p target && cd target && git clone https://github.com/libuv/libuv && cd libuv && ./autogen.sh && ./configure && make
-      - run: mkdir -p target && cd target && git clone https://github.com/bitcoin-core/secp256k1 && cd secp256k1 && ./autogen.sh && ./configure --enable-module-schnorrsig --enable-module-recovery && make
       - run: SN_RELEASE=fast sbt nativeLink
       - run: mv target/scala-*/poncho-out poncho
       - uses: actions/upload-artifact@v3
