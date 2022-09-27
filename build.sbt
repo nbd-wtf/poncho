@@ -1,4 +1,4 @@
-enablePlugins(VcpkgPlugin, ScalaNativePlugin)
+enablePlugins(ScalaNativePlugin)
 
 scalaVersion          := "3.1.3"
 libraryDependencies   ++= Seq(
@@ -16,8 +16,6 @@ libraryDependencies   ++= Seq(
 )
 testFrameworks  += new TestFramework("utest.runner.Framework")
 
-vcpkgDependencies := Set("libuv", "secp256k1")
-
 nativeConfig := {
   import scala.scalanative.build.Mode
   import scala.scalanative.build.LTO
@@ -29,36 +27,16 @@ nativeConfig := {
 }
 
 nativeConfig := {
-  val configurator = vcpkgConfigurator.value
-  val manager = vcpkgManager.value
   val conf = nativeConfig.value
-  val deps = vcpkgDependencies.value.toSeq
-  val files = deps.map(d => manager.files(d))
-
-  import scala.util.control.NonFatal
 
   conf
-    .withLinkingOptions(conf.linkingOptions :+ "-static")
     .withLinkingOptions(
-      try {
-        configurator.updateLinkingFlags(
-          conf.linkingOptions,
-          deps*
-        )
-      } catch {
-        case NonFatal(exc) =>
-          files.flatMap { f => List("-L" + f.libDir) ++ f.staticLibraries.map(_.toString) } :+ "-v"
-      }
-    )
-    .withCompileOptions(
-      try {
-        configurator.updateCompilationFlags(
-          conf.compileOptions,
-          deps*
-        )
-      } catch {
-        case NonFatal(exc) =>
-          files.flatMap { f => List("-I" + f.includeDir.toString) }
-      }
+      conf.linkingOptions ++ Seq(
+        "-static",
+        s"-L${target.value}/secp256k1/.libs",
+        "-lsecp256k1",
+        s"-L${target.value}/libuv/.libs",
+        "-luv",
+      )
     )
 }
