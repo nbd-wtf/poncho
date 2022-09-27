@@ -611,6 +611,55 @@ class Channel(peerId: ByteVector) {
         }
       }
 
+      // a client wants their channel to be resized
+      case msg: ResizeChannel
+          if status == Active &&
+            msg.verifyClientSig(PublicKey(peerId)) &&
+            msg.newCapacity > state.lcssNext.remoteBalanceMsat.toSatoshi &&
+            currentData.acceptingResize
+              .map(msg.newCapacity <= _)
+              .getOrElse(false) =>
+        localLogger.info
+          .item("sats", msg.newCapacity)
+          .msg("accepting resize proposal")
+
+        def resizedInit(init: InitHostedChannel): InitHostedChannel = init.copy(
+          channelCapacityMsat = msg.newCapacity.toMilliSatoshi,
+          maxHtlcValueInFlightMsat =
+            UInt64(msg.newCapacity.toMilliSatoshi.toLong),
+        )
+        def resizedBalance(curr: MilliSatoshi): MilliSatoshi =
+          curr + msg.newCapacity - lcssStored.initHostedChannel.channelCapacityMsat
+
+        // change our next state
+        state = state.copy(lcssCurrent =
+          state.lcssCurrent.copy(
+            initHostedChannel =
+              resizedInit(state.lcssCurrent.initHostedChannel),
+            localBalanceMsat =
+              resizedBalance(state.lcssCurrent.localBalanceMsat)
+          )
+        )
+
+        // change in the database
+        ChannelMaster.database.update { data =>
+          data
+            // change accepting resize to None again
+            .modify(_.channels.at(peerId).acceptingResize)
+            .setTo(None)
+
+            // increase our balance accordingly (or decrease)
+            .modify(_.channels.at(peerId).lcss.localBalanceMsat)
+            .using(resizedBalance(_))
+
+            // adjust init params
+            .modify(_.channels.at(peerId).lcss.initHostedChannel)
+            .using(resizedInit(_))
+        }
+
+        // send a state_update with the resized parameters
+        sendStateUpdate(state)
+
       // a client is telling us they are online
       case msg: InvokeHostedChannel if status == Active =>
         // after a reconnection our peer won't have any of our
@@ -970,23 +1019,12 @@ class Channel(peerId: ByteVector) {
             .msg("we and the client are now even")
           // verify signature
           if (!lcssNext.verifyRemoteSig(PublicKey(peerId))) {
-            // a wrong signature, fail the channel
-            val err = Error(
-              channelId,
-              HostedError.ERR_HOSTED_WRONG_REMOTE_SIG
+            // a wrong signature, technically we should fail the channel
+            // here, but couldn't this just be a mismatch between states?
+            // let's be friendly and just ignore this message
+            localLogger.debug.msg(
+              "state update from peer has an invalid signature, ignoring it"
             )
-            sendMessage(err)
-            ChannelMaster.database.update { data =>
-              data
-                .modify(_.channels.at(peerId).localErrors)
-                .using(
-                  _ + DetailedError(
-                    err,
-                    None,
-                    "peer sent a wrong state update or one with a broken signature"
-                  )
-                )
-            }
           } else {
             // grab state before saving the update
             val lcssPrev = lcssStored
@@ -1410,6 +1448,36 @@ class Channel(peerId: ByteVector) {
       )
         .map((v: ujson.Value) => v("status").str)
     }
+  }
+
+  def acceptResize(upTo: Option[Satoshi]): Future[String] = {
+    logger.debug
+      .item(status)
+      .item("up-to-satoshis", upTo)
+      .msg("accepting resize")
+
+    if (status != Active) {
+      Future.failed(
+        new Exception(
+          "can't resize channel since it is not in a healthy state."
+        )
+      )
+    } else if (!currentData.lcss.isHost) {
+      Future.failed(
+        new Exception(
+          "can't resize this channel since we are not the hosts."
+        )
+      )
+    } else
+      Future {
+        ChannelMaster.database.update { data =>
+          data
+            .modify(_.channels.at(peerId).acceptingResize)
+            .setTo(upTo)
+        }
+
+        s"resize to $upTo prepared"
+      }
   }
 
   def getChannelUpdate(channelIsUp: Boolean): ChannelUpdate = {

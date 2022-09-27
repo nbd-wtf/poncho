@@ -347,6 +347,11 @@ class CLN() extends NodeInterface {
                 "description" -> "Proposes overriding the state of the channel with {peerid} with the next local balance being equal to {msatoshi}."
               ),
               ujson.Obj(
+                "name" -> "hc-resize",
+                "usage" -> "peerid msatoshi",
+                "description" -> "Prepares the channel with {peerid} to resize its max capacity up to {msatoshi} (after calling this on the host the client must issue a resize command on its side). Calling it with {msatoshi} set to zero cancels the resize."
+              ),
+              ujson.Obj(
                 "name" -> "hc-request-channel",
                 "usage" -> "peerid",
                 "description" -> "Requests a hosted channel from another hosted channel provider (do not use)."
@@ -687,6 +692,33 @@ class CLN() extends NodeInterface {
             ChannelMaster
               .getChannel(ByteVector.fromValidHex(peerId))
               .proposeOverride(MilliSatoshi(msatoshi.toLong))
+              .onComplete {
+                case Success(msg) => reply(msg)
+                case Failure(err) => replyError(err.toString)
+              }
+          }
+          case _ => {
+            replyError("invalid parameters")
+          }
+        }
+
+      case "hc-resize" =>
+        (params match {
+          case _: ujson.Obj =>
+            Some((params("peerid").strOpt, params("msatoshi").numOpt))
+          case arr: ujson.Arr if arr.value.size == 2 =>
+            Some((params(0).strOpt, params(1).numOpt))
+          case _ => None
+        }) match {
+          case Some(Some(peerId), Some(satoshi)) => {
+            val upTo = satoshi.toLong match {
+              case 0 => None
+              case s => Some(MilliSatoshi(s).toSatoshi)
+            }
+
+            ChannelMaster
+              .getChannel(ByteVector.fromValidHex(peerId))
+              .acceptResize(upTo)
               .onComplete {
                 case Success(msg) => reply(msg)
                 case Failure(err) => replyError(err.toString)

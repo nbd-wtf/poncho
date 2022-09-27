@@ -32,8 +32,9 @@ case class ChannelData(
     lcss: LastCrossSignedState = HostedChannelHelpers.lcssEmpty,
     localErrors: Set[DetailedError] = Set.empty,
     remoteErrors: Set[Error] = Set.empty,
+    suspended: Boolean = false,
     proposedOverride: Option[LastCrossSignedState] = None,
-    suspended: Boolean = false
+    acceptingResize: Option[Satoshi] = None
 )
 
 case class DetailedError(

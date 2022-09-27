@@ -60,11 +60,15 @@ object Printer {
         "local" -> data.lcss.localUpdates.toInt,
         "remote" -> data.lcss.remoteUpdates.toInt
       ),
+      "acceptingResize" -> data.acceptingResize.map(_.toLong.toInt),
       "errors" -> ujson.Obj(
         "local" -> data.localErrors
           .map(dtlerr => ujson.Str(dtlerr.toString)),
         "remote" -> data.remoteErrors
           .map(err => ujson.Str(err.toString))
+      ),
+      "proposedOverride" -> data.proposedOverride.map(
+        _.localBalanceMsat.toLong.toInt
       )
     )
 

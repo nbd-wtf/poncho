@@ -17,6 +17,8 @@ object Picklers {
       .bimap[ByteVector64](_.toHex, ByteVector64.fromValidHex(_))
   given ReadWriter[MilliSatoshi] =
     readwriter[Long].bimap[MilliSatoshi](_.toLong, MilliSatoshi(_))
+  given ReadWriter[Satoshi] =
+    readwriter[Long].bimap[Satoshi](_.toLong, Satoshi(_))
   given ReadWriter[ShortChannelId] =
     readwriter[String].bimap[ShortChannelId](_.toString, ShortChannelId(_))
   given ReadWriter[CltvExpiry] =
