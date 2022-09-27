@@ -443,9 +443,14 @@ class Channel(peerId: ByteVector) {
   def gotPeerMessage(message: LightningMessage): Unit = {
     val localLogger = logger.attach.item(status).logger()
 
-    localLogger.debug
-      .item("message", message)
-      .msg("  <:: got peer message")
+    if (
+      !(message.isInstanceOf[Error] &&
+        (status == Errored || status == Overriding))
+    ) {
+      localLogger.debug
+        .item("message", message)
+        .msg("  <:: got peer message")
+    }
 
     message match {
       // we send branding to anyone really
