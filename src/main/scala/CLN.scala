@@ -224,71 +224,85 @@ class CLN() extends NodeInterface {
       Left(Some(NormalFailureMessage(UnknownNextPeer)))
     )
 
-    val sendonion =
-      rpc("listfunds")
-        .onComplete {
-          case Failure(err) =>
-            logger.debug.item(err).msg("listfunds call failed")
-            chan.gotPaymentResult(htlcId, noChannelPaymentResult)
+    (for {
+      funds <- rpc("listfunds")
+      blockheight <- this.getCurrentBlock()
+    } yield (funds, blockheight))
+      .onComplete {
+        case Failure(err) =>
+          logger.debug.item(err).msg("listfunds/getCurrentBlock call failed")
+          chan.gotPaymentResult(htlcId, noChannelPaymentResult)
 
-          case Success(res) =>
-            res("channels").arr
-              .find(
-                _.obj
-                  .get("short_channel_id")
-                  .map(_.str == firstHop.toString)
-                  .getOrElse(false)
-              )
-              .map(_("peer_id").str)
-              .map(ByteVector.fromValidHex(_)) match {
-              case None =>
-                logger.debug.msg("we don't know about this channel")
-                chan.gotPaymentResult(htlcId, noChannelPaymentResult)
-              case Some(targetPeerId) =>
-                logger = logger.attach.item("peer", targetPeerId.toHex).logger()
+        case Success((funds, blockheight)) =>
+          funds("channels").arr
+            .find(
+              _.obj
+                .get("short_channel_id")
+                .map(_.str == firstHop.toString)
+                .getOrElse(false)
+            )
+            .map(_("peer_id").str)
+            .map(ByteVector.fromValidHex(_)) match {
+            case None =>
+              logger.debug.msg("we don't know about this channel")
+              chan.gotPaymentResult(htlcId, noChannelPaymentResult)
+            case Some(targetPeerId) =>
+              logger = logger.attach.item("peer", targetPeerId.toHex).logger()
 
-                rpc(
-                  "sendonion",
-                  ujson.Obj(
-                    "first_hop" -> ujson.Obj(
-                      "id" -> targetPeerId.toHex,
-                      "amount_msat" -> amount.toLong,
-                      // lightningd will take whatever we pass here and add to the current block,
-                      //   so since we already have the final cltv value and not a delta, we subtract
-                      //   the current block from it and then when lightningd adds we'll get back to the
-                      //   correct expected cltv
-                      "delay" -> (cltvExpiry - ChannelMaster.currentBlock).toInt
-                    ),
-                    "onion" -> onion.toHex,
-                    "payment_hash" -> paymentHash.toHex,
-                    "label" -> upickle.default
-                      .write((chan.shortChannelId.toString, htlcId)),
-                    "groupid" ->
-                      // we need a unique combination of groupid and partid
-                      //   so lightningd is happy to accept multiple parts
-                      (
-                        // the groupid is the hosted channel from which this payment is coming.
-                        // this contraption is just so we get an unsigned integer
-                        //   that is still fairly unique for this channel and fits in a java Long
-                        UInt64(chan.shortChannelId.toLong).toBigInt / 100
-                      ).toLong,
-                    "partid" ->
-                      // here we just use the htlc id since it is already unique per channel
-                      htlcId
-                  )
+              rpc(
+                "sendonion",
+                ujson.Obj(
+                  "first_hop" -> ujson.Obj(
+                    "id" -> targetPeerId.toHex,
+                    "amount_msat" -> amount.toLong,
+                    // lightningd will take whatever we pass here and add to the current block,
+                    //   so since we already have the final cltv value and not a delta, we subtract
+                    //   the current block from it and then when lightningd adds we'll get back to the
+                    //   correct expected cltv
+                    "delay" -> (cltvExpiry - blockheight).toInt
+                  ),
+                  "onion" -> onion.toHex,
+                  "payment_hash" -> paymentHash.toHex,
+                  "label" -> upickle.default
+                    .write((chan.shortChannelId.toString, htlcId)),
+                  "groupid" ->
+                    // we need a unique combination of groupid and partid
+                    //   so lightningd is happy to accept multiple parts
+                    (
+                      // the groupid is the hosted channel from which this payment is coming.
+                      // this contraption is just so we get an unsigned integer
+                      //   that is still fairly unique for this channel and fits in a java Long
+                      UInt64(chan.shortChannelId.toLong).toBigInt / 100
+                    ).toLong,
+                  "partid" ->
+                    // here we just use the htlc id since it is already unique per channel
+                    htlcId
                 )
-                  .onComplete {
-                    case Failure(err) => {
-                      logger.info.item(err).msg("sendonion failure")
-                      chan.gotPaymentResult(
-                        htlcId,
-                        Some(Left(None))
-                      )
-                    }
-                    case Success(_) => {}
+              )
+                .onComplete {
+                  case Failure(err) => {
+                    logger.info.item(err).msg("sendonion failure")
+
+                    val failure: Option[PaymentFailure] =
+                      if err
+                          .toString()
+                          .contains("WIRE_TEMPORARY_NODE_FAILURE")
+                      then Some(NormalFailureMessage(TemporaryNodeFailure))
+                      else if err
+                          .toString()
+                          .contains("WIRE_TEMPORARY_CHANNEL_FAILURE")
+                      then Some(NormalFailureMessage(PermanentChannelFailure))
+                      else None
+
+                    chan.gotPaymentResult(
+                      htlcId,
+                      Some(Left(failure))
+                    )
                   }
-            }
-        }
+                  case Success(_) => {}
+                }
+          }
+      }
   }
 
   def handleRPC(line: String): Unit = {
