@@ -19,7 +19,7 @@ But if you really want to, you'll need [podman](https://podman.io) (or Docker sh
 
 ```
 podman build . -t poncho-builder
-podman run --rm -it -v (pwd):'/poncho' poncho-builder
+podman run --rm -it -v "$(pwd)":'/poncho' poncho-builder
 podman image rm poncho-builder
 ```
 
