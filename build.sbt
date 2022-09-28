@@ -10,11 +10,8 @@ libraryDependencies   ++= Seq(
   "com.fiatjaf" %%% "nlog" % "0.1.0",
   "com.fiatjaf" %%% "sn-unixsocket" % "0.1.0",
   "com.github.lolgab" %%% "native-loop-core" % "0.2.1",
-  "com.softwaremill.quicklens" %%% "quicklens" % "1.8.8",
-
-  "com.lihaoyi" %%% "utest" % "0.7.11" % Test
+  "com.softwaremill.quicklens" %%% "quicklens" % "1.8.8"
 )
-testFrameworks  += new TestFramework("utest.runner.Framework")
 
 nativeConfig := {
   import scala.scalanative.build.Mode
