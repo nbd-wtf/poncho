@@ -7,7 +7,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - run: |
+      - name: install podman
+        run: |
           set -x
           sudo apt-get remove -y podman docker-ce docker docker-engine docker.io containerd runc ||:
           curl -L https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/xUbuntu_$( lsb_release -rs )/Release.key | sudo apt-key add -
@@ -15,9 +16,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y podman
           sudo apt autoremove -y
-      - run: |
-          podman build . -t poncho-builder
-          podman run --rm -it -v (pwd):'/poncho' poncho-builder
+      - run: podman build . -t poncho-builder
+      - run: podman run --rm -it -v "$(pwd)":'/poncho' poncho-builder
       - run: mv target/scala-*/poncho-out poncho
       - uses: actions/upload-artifact@v3
         with:
