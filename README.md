@@ -9,15 +9,21 @@ This is an **early alpha** software that turns your CLN node into a [hosted chan
 
 ### Installation using the prebuilt binary
 
-Before running you must have `libsecp256k1` and `libuv` installed as shared libraries. These can probably be installed using your operating system default package manager.
-
 Grab a binary from the [Releases page](https://github.com/fiatjaf/poncho/releases), call `chmod +x` on it so it is executable, then put it inside your CLN plugin directory (`~/.lightning/plugins/`) -- or start `lightningd` with `--plugin <path-to-poncho>`.
 
 ### Building from source
 
-To compile poncho yourself install [sbt](https://www.scala-sbt.org/download.html) (which requires Java/OpenJDK to work), then do `sbt nativeLink`. All dependencies will be fetched automatically.
+It is too cumbersome to build it from source, just trust the binaries from GitHub.
 
-The result will be a binary that doesn't require Java to run. It will be under `target/scala-3.1.3/poncho-out`. Put that in your `lightningd` plugins directory as above.
+But if you really want to, you'll need [podman](https://podman.io) (or Docker should be similar, but I don't know anything this). So we'll build a container image that will compile libuv and libsecp256k1 then produce a poncho binary executable that is standalone, independent and statically linked and you don't have to touch Java ever in your life again.
+
+```
+podman build . -t poncho-builder
+podman run --rm -it -v (pwd):'/poncho' poncho-builder
+podman image rm poncho-builder
+```
+
+The result will be a binary that doesn't require Java to run. It will be under `target/scala-3.1.3/poncho-out` (yes, it will appear magically there because your poncho source directory was mounted inside the container). Put that in your `lightningd` plugins directory as above.
 
 ### Operation
 

@@ -311,7 +311,8 @@ class CLN() extends NodeInterface {
             ),
             "hooks" -> ujson.Arr(
               ujson.Obj("name" -> "custommsg"),
-              ujson.Obj("name" -> "htlc_accepted")
+              ujson.Obj("name" -> "htlc_accepted"),
+              ujson.Obj("name" -> "rpc_command")
             ),
             "rpcmethods" -> ujson.Arr(
               ujson.Obj(
@@ -402,6 +403,78 @@ class CLN() extends NodeInterface {
               .item("msg", body)
               .msg("failed to parse client messages")
         }
+      }
+      case "rpc_command" => {
+        // intercept the "pay" command if it is paying to a hosted channel peer
+        // send a payment manually in that case
+        if (params("rpc_command")("method").str == "pay") {
+          val inv = params("rpc_command")("params") match {
+            case o: ujson.Obj => o.value.get("bolt11").flatMap(_.strOpt)
+            case a: ujson.Arr => a.value.headOption.flatMap(_.strOpt)
+            case _            => None
+          }
+
+          // there will always be an invoice
+          Bolt11Invoice.fromString(inv.get) match {
+            case Failure(err) =>
+              reply(ujson.Obj("result" -> "continue"))
+            case Success(bolt11) if bolt11.amount_opt == None =>
+              reply(ujson.Obj("result" -> "continue"))
+            case Success(bolt11) =>
+              val targetPeer = bolt11.routingInfo
+                .map { hops =>
+                  ChannelMaster.database.data.channels.find((peerId, _) =>
+                    hops.size == 1 &&
+                      HostedChannelHelpers.getShortChannelId(
+                        publicKey.value,
+                        peerId
+                      ) == hops(0).shortChannelId
+                  )
+                }
+                .flatten
+                .headOption
+
+              targetPeer match {
+                case Some((peerId, _)) =>
+                  // try to send this through the hosted channel
+                  ChannelMaster
+                    .getChannel(peerId)
+                    .sendDirectPayment(bolt11)
+                    .onComplete {
+                      case Success(preimage) =>
+                        reply(
+                          ujson.Obj(
+                            "return" -> ujson.Obj(
+                              "result" -> ujson.Obj(
+                                "destination" -> peerId.toHex,
+                                "payment_hash" -> bolt11.hash.toHex,
+                                "parts" -> 1,
+                                "amount_msat" -> bolt11.amount_opt.get.toLong,
+                                "msatoshi_sent" -> bolt11.amount_opt.get.toLong,
+                                "payment_preimage" -> preimage.toHex,
+                                "status" -> "complete"
+                              )
+                            )
+                          )
+                        )
+                      case Failure(err) =>
+                        ChannelMaster.logger.info
+                          .item("peer", peerId)
+                          .item("bolt11", bolt11)
+                          .item("err", err)
+                          .msg(
+                            "couldn't pay hosted peer, letting CLN do its thing"
+                          )
+                        ujson.Obj("result" -> "continue")
+                    }
+                case None =>
+                  // this is not targeting one of our hosted channels, so let CLN handle it
+                  reply(ujson.Obj("result" -> "continue"))
+              }
+          }
+        } else
+          // otherwise let CLN execute the command
+          reply(ujson.Obj("result" -> "continue"))
       }
       case "htlc_accepted" => {
         // we wait here because on startup c-lightning will replay all pending htlcs

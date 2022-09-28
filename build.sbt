@@ -1,9 +1,6 @@
 enablePlugins(ScalaNativePlugin)
 
-name                  := "poncho"
-organization          := "fiatjaf"
 scalaVersion          := "3.1.3"
-version               := "0.2.3"
 libraryDependencies   ++= Seq(
   "org.scodec" %%% "scodec-bits" % "1.1.32",
   "org.scodec" %%% "scodec-core" % "2.2.0",
@@ -18,8 +15,28 @@ libraryDependencies   ++= Seq(
   "com.lihaoyi" %%% "utest" % "0.7.11" % Test
 )
 testFrameworks  += new TestFramework("utest.runner.Framework")
-nativeLinkStubs := true
 
-// _for-release_ nativeMode := "release-fast"
-// _for-release_ nativeLTO := "thin"
-// _for-armv6_ nativeConfig ~= { _.withTargetTriple("armv6-pc-linux-unknown") }
+nativeConfig := {
+  import scala.scalanative.build.Mode
+  import scala.scalanative.build.LTO
+
+  val conf = nativeConfig.value
+  if (sys.env.get("SN_RELEASE").contains("fast"))
+    conf.withOptimize(true).withLTO(LTO.thin).withMode(Mode.releaseFast)
+  else conf
+}
+
+nativeConfig := {
+  val conf = nativeConfig.value
+
+  conf
+    .withLinkingOptions(
+      conf.linkingOptions ++ Seq(
+        "-static",
+        s"-L/secp256k1/.libs",
+        "-lsecp256k1",
+        s"-L/libuv/.libs",
+        "-luv",
+      )
+    )
+}
