@@ -15,15 +15,20 @@ Grab a binary from the [Releases page](https://github.com/fiatjaf/poncho/release
 
 It is too cumbersome to build it from source, just trust the binaries from GitHub.
 
-But if you really want to, you'll need [podman](https://podman.io) (or Docker should be similar, but I don't know anything this). So we'll build a container image that will compile libuv and libsecp256k1 then produce a poncho binary executable that is standalone, independent and statically linked and you don't have to touch Java ever in your life again.
+But if you really want to, you'll need [podman](https://podman.io) (or Docker should be similar, but I don't know anything about this). So we'll build a container image that will compile libuv and libsecp256k1 then produce a poncho binary executable that is standalone, independent and statically linked and you don't have to touch Java ever in your life again.
 
 ```
 podman build . -t poncho-builder
 podman run --rm -it -v "$(pwd)":'/poncho' poncho-builder
-podman image rm poncho-builder
 ```
 
-The result will be a binary that doesn't require Java to run. It will be under `target/scala-3.1.3/poncho-out` (yes, it will appear magically there because your poncho source directory was mounted inside the container). Put that in your `lightningd` plugins directory as above.
+The result will be a binary that doesn't require Java to run. It will be under `target/scala-3.2.0/poncho-out` (yes, it will appear magically there because your poncho source directory was mounted inside the container). Put that in your `lightningd` plugins directory as above.
+
+To delete the image later you can use:
+
+```
+podman image rm poncho-builder
+```
 
 ### Operation
 
