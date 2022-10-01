@@ -249,17 +249,27 @@ class CLN() extends NodeInterface {
             case Some(targetPeerId) =>
               logger = logger.attach.item("peer", targetPeerId.toHex).logger()
 
+              // lightningd will take whatever we pass here and add to the current block,
+              //   so since we already have the final cltv value and not a delta, we subtract
+              //   the current block from it and then when lightningd adds we'll get back to the
+              //   correct expected cltv
+              // we also remove 1 because the world is crazy
+              val delay = (cltvExpiry - blockheight).toInt - 1
+              logger.debug
+                .item("peer", targetPeerId.toHex)
+                .item("hash", paymentHash.toHex)
+                .item("target-ctlv", cltvExpiry.toLong)
+                .item("blockheight", blockheight.toLong)
+                .item("delay", delay)
+                .msg("calling sendonion")
+
               rpc(
                 "sendonion",
                 ujson.Obj(
                   "first_hop" -> ujson.Obj(
                     "id" -> targetPeerId.toHex,
                     "amount_msat" -> amount.toLong,
-                    // lightningd will take whatever we pass here and add to the current block,
-                    //   so since we already have the final cltv value and not a delta, we subtract
-                    //   the current block from it and then when lightningd adds we'll get back to the
-                    //   correct expected cltv
-                    "delay" -> (cltvExpiry - blockheight).toInt
+                    "delay" -> delay
                   ),
                   "onion" -> onion.toHex,
                   "payment_hash" -> paymentHash.toHex,
