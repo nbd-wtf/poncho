@@ -5,4 +5,5 @@ RUN git clone https://github.com/libuv/libuv && cd libuv && ./autogen.sh && ./co
 RUN git clone https://github.com/bitcoin-core/secp256k1 && cd secp256k1 && ./autogen.sh && ./configure --enable-module-schnorrsig --enable-module-recovery && make && make install
 COPY . /poncho
 RUN cd /poncho && sbt clean compile
+ENV SN_LINK=static
 CMD cd /poncho && sbt clean nativeLink

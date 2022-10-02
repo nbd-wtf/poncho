@@ -26,14 +26,14 @@ nativeConfig := {
 nativeConfig := {
   val conf = nativeConfig.value
 
-  conf
-    .withLinkingOptions(
-      conf.linkingOptions ++ Seq(
-        "-static",
-        s"-L/secp256k1/.libs",
-        "-lsecp256k1",
-        s"-L/libuv/.libs",
-        "-luv",
+  if (sys.env.get("SN_LINK").contains("static"))
+    conf
+      .withLinkingOptions(
+        conf.linkingOptions ++ Seq(
+          "-static",
+          "-lsecp256k1",
+          "-luv",
+        )
       )
-    )
+  else conf
 }

@@ -11,11 +11,24 @@ This is an **early alpha** software that turns your CLN node into a [hosted chan
 
 Grab a binary from the [Releases page](https://github.com/fiatjaf/poncho/releases), call `chmod +x` on it so it is executable, then put it inside your CLN plugin directory (`~/.lightning/plugins/`) -- or start `lightningd` with `--plugin <path-to-poncho>`.
 
-### Building from source
+This is entirely statically-linked and has no dependencies.
 
-It is too cumbersome to build it from source, just trust the binaries from GitHub.
+### Building the dynamically-linked library from source
 
-But if you really want to, you'll need [podman](https://podman.io) (or Docker should be similar, but I don't know anything about this). So we'll build a container image that will compile libuv and libsecp256k1 then produce a poncho binary executable that is standalone, independent and statically linked and you don't have to touch Java ever in your life again.
+Install [`libuv`](https://github.com/libuv/libuv) and [`libsecp256k1`](https://github.com/bitcoin-core/secp256k1). `libuv` can be installed from your default OS package manager, but `libsecp256k1` likely not, since it needs to be compiled with the extra modules (why these things aren't built by default is beyond my wildest imagination), call `./autogen.sh` then `./configure --enable-module-recovery --enable-module-schnorrsig` and finally `make` and `sudo make install`.
+
+Here are two commands for downloading and building both (you may need all the things from the default C toolchain):
+
+```
+git clone https://github.com/libuv/libuv && cd libuv && ./autogen.sh && ./configure && make && make install
+git clone https://github.com/bitcoin-core/secp256k1 && cd secp256k1 && ./autogen.sh && ./configure --enable-module-schnorrsig --enable-module-recovery && make && make install
+```
+
+After that, head over to the `poncho/` directory and call `sbt nativeLink`. After the build is successful binary will be at `target/scala-3.2.0/poncho-out`.
+
+### Building the statically-linked binary
+
+You'll need [podman](https://podman.io) (or Docker should be similar, but I don't know anything about this). So we'll build a container image that will compile libuv and libsecp256k1 then produce a poncho binary executable that is standalone, independent and statically linked and you don't have to touch Java ever in your life again.
 
 ```
 podman build . -t poncho-builder
