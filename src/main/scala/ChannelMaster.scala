@@ -119,7 +119,9 @@ object ChannelMaster {
             logger.info.item(block).msg("updated current block")
 
             this.channels.values.foreach(_.onBlockUpdated(block))
-            this.preimageCatcher.onBlockUpdated(block)
+
+            if (!config.disablePreimageChecking)
+              this.preimageCatcher.onBlockUpdated(block)
           }
         }
         case Failure(err) =>

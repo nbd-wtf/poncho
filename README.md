@@ -81,11 +81,14 @@ No configuration is needed for a quick test, but you can write a file at `$LIGHT
   "isDev": true, // controls log level and where are logs displayed
 
   "requireSecret": false, // setting this to true will make it so only clients with this secret can get hosted channels
-  "permanentSecrets": [] // you can specify static secrets here that can be used by clients when "requireSecret" is true
+  "permanentSecrets": [], // you can specify static secrets here that can be used by clients when "requireSecret" is true
+  "disablePreimageChecking": false // setting this to true will make it so poncho won't fetch and parse all bitcoin blocks looking for rogue preimages
 }
 ```
 
 The branding information won't be used unless contact URL and logo file are set. The logo should be a PNG file also placed under `$LIGHTNING_DIR/bitcoin/poncho/` and specified as a relative path.
+
+Setting `disablePreimageChecking` to `true` will drastically decrease resource consumption since it won't fetch and parse all Bitcoin blocks. It is recommended if you are offering hosted channels only to trusted people or yourself. If you are a public entity offering channels to random people it is not recommended since it opens up the possibility of _reputational_ damage against you, see [this part of the spec about the preimage checking](https://github.com/fiatjaf/blips/blob/blip-hosted-channels/blip-0012.md#dealing-with-problems).
 
 (Remember to remove the JSON comments in the file above otherwise it won't work.)
 

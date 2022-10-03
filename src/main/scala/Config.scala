@@ -41,7 +41,8 @@ case class Config(
 
     // extra
     requireSecret: Boolean = false,
-    permanentSecrets: List[String] = List.empty
+    permanentSecrets: List[String] = List.empty,
+    disablePreimageChecking: Boolean = false
 ) {
   def init: InitHostedChannel = InitHostedChannel(
     maxHtlcValueInFlightMsat = UInt64(maxHtlcValueInFlightMsat),
