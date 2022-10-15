@@ -1,3 +1,5 @@
+<a href="https://nbd.wtf"><img align="right" height="196" src="https://user-images.githubusercontent.com/1653275/194609043-0add674b-dd40-41ed-986c-ab4a2e053092.png" /></a>
+
 poncho
 ======
 
@@ -129,10 +131,6 @@ For now, you can use https://sbw.app/ and paste a string containing `nodeid@host
 - **How can I have a whitelist of nodes that can get a channel from my `poncho`?**
 
 To achieve this you must use the `"requireSecret"` option on your `config.json`. See [Configuration](#configuration) above. Then instead of giving your node address to your friends and family, you must conjure a [LUD-07 lnurl](https://github.com/fiatjaf/lnurl-rfc/blob/luds/07.md) and ask them to paste/scan that with their [SBW](https://sbw.app/). The secret must be specified in the lnurl response. Then the wallet will use it when invoking the hosted channel and it will work. You can use this flow to create any kind of arbitrary restriction to your hosted channels, including selling them, giving them dynamically or programmatically, or just restricting them to a fixed set of people to whom you give the secret lnurl.
-
-- **Is LND going to be supported?**
-
-Most likely yes, we just need [one new API](https://github.com/lightningnetwork/lnd/issues/6206) to be supported on the LND side, but it is a simple addition.
 
 - **What happens if I lose the channel states?**
 
