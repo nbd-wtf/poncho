@@ -33,13 +33,17 @@ object Printer {
 
     ujson.Obj(
       "peer_id" -> peerId.toHex,
-      "channel_id" -> HostedChannelHelpers
-        .getChannelId(ChannelMaster.node.publicKey.value, peerId)
-        .toHex,
-      "short_channel_id" -> HostedChannelHelpers
-        .getShortChannelId(ChannelMaster.node.publicKey.value, peerId)
-        .toString,
-      "their_balance" -> data.lcss.remoteBalanceMsat.toLong.toInt,
+      "channel_id" ->
+        hostedChannelId(
+          ChannelMaster.node.publicKey.value,
+          peerId
+        ).toHex,
+      "short_channel_id" ->
+        hostedShortChannelId(
+          ChannelMaster.node.publicKey.value,
+          peerId
+        ).toString,
+      "their_balance" -> data.lcss.remoteBalance.toLong.toInt,
       "total_updates" -> (data.lcss.localUpdates + data.lcss.remoteUpdates).toInt,
       "status" -> channel
         .map(_.status.getClass.getSimpleName.toLowerCase)
@@ -52,9 +56,9 @@ object Printer {
       "is_host" -> data.lcss.isHost,
       "blockday" -> data.lcss.blockDay.toInt,
       "balance" -> ujson.Obj(
-        "total" -> data.lcss.initHostedChannel.channelCapacityMsat.toLong.toInt,
-        "local" -> data.lcss.localBalanceMsat.toLong.toInt,
-        "remote" -> data.lcss.remoteBalanceMsat.toLong.toInt
+        "total" -> data.lcss.initHostedChannel.channelCapacity.toLong.toInt,
+        "local" -> data.lcss.localBalance.toLong.toInt,
+        "remote" -> data.lcss.remoteBalance.toLong.toInt
       ),
       "updates" -> ujson.Obj(
         "local" -> data.lcss.localUpdates.toInt,
@@ -68,7 +72,7 @@ object Printer {
           .map(err => ujson.Str(err.toString))
       ),
       "proposedOverride" -> data.proposedOverride.map(
-        _.localBalanceMsat.toLong.toInt
+        _.localBalance.toLong.toInt
       )
     )
 

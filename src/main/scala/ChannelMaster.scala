@@ -101,7 +101,7 @@ object ChannelMaster {
       "clients-total-balance",
       database.data.channels.values
         .filter(_.lcss.isHost)
-        .map(_.lcss.remoteBalanceMsat)
+        .map(_.lcss.remoteBalance)
         .fold(MilliSatoshi(0))(_ + _)
     )
     .msg(s"starting poncho.")
@@ -174,7 +174,7 @@ object ChannelMaster {
           // ~ use that to get the target channel parameters
           (targetPeerId, targetChannelData) <- database.data.channels.find(
             (p, _) =>
-              HostedChannelHelpers.getShortChannelId(
+              hostedShortChannelId(
                 this.node.publicKey.value,
                 p
               ) == scid
@@ -185,8 +185,7 @@ object ChannelMaster {
           _ = targetPeer
             .addHtlc(
               htlcIn = HtlcIdentifier(
-                HostedChannelHelpers
-                  .getShortChannelId(this.node.publicKey.value, sourcePeerId),
+                hostedShortChannelId(this.node.publicKey.value, sourcePeerId),
                 in.id
               ),
               paymentHash = in.paymentHash,

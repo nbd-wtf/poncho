@@ -67,7 +67,7 @@ object Utils {
     parseClientOnion(privateKey, htlc) match {
       case Right(
             OnionParseResult(
-              payload: PaymentOnion.ChannelRelayPayload,
+              payload: PaymentOnion.ChannelRelayTlvPayload,
               nextOnion: ByteVector,
               _
             )

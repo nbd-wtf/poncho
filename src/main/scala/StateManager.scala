@@ -34,7 +34,7 @@ case class StateManager(
         upd match {
           case FromRemote(add: UpdateAddHtlc) =>
             lcss.copy(
-              remoteBalanceMsat = lcss.remoteBalanceMsat - add.amountMsat,
+              remoteBalance = lcss.remoteBalance - add.amountMsat,
               remoteUpdates = lcss.remoteUpdates + 1,
               incomingHtlcs = lcss.incomingHtlcs :+ add
             )
@@ -49,7 +49,7 @@ case class StateManager(
             lcss.outgoingHtlcs.find(_.id == htlcId) match {
               case Some(htlc) => {
                 lcss.copy(
-                  localBalanceMsat = lcss.localBalanceMsat + htlc.amountMsat,
+                  localBalance = lcss.localBalance + htlc.amountMsat,
                   remoteUpdates = lcss.remoteUpdates + 1,
                   outgoingHtlcs = lcss.outgoingHtlcs.filterNot(_ == htlc)
                 )
@@ -61,7 +61,7 @@ case class StateManager(
             lcss.outgoingHtlcs.find(_.id == fulfill.id) match {
               case Some(htlc) => {
                 lcss.copy(
-                  remoteBalanceMsat = lcss.remoteBalanceMsat + htlc.amountMsat,
+                  remoteBalance = lcss.remoteBalance + htlc.amountMsat,
                   remoteUpdates = lcss.remoteUpdates + 1,
                   outgoingHtlcs = lcss.outgoingHtlcs.filterNot(_ == htlc)
                 )
@@ -71,7 +71,7 @@ case class StateManager(
           }
           case FromLocal(add: UpdateAddHtlc, _) => {
             lcss.copy(
-              localBalanceMsat = lcss.localBalanceMsat - add.amountMsat,
+              localBalance = lcss.localBalance - add.amountMsat,
               localUpdates = lcss.localUpdates + 1,
               outgoingHtlcs = lcss.outgoingHtlcs :+ add
             )
@@ -88,7 +88,7 @@ case class StateManager(
             lcss.incomingHtlcs.find(_.id == htlcId) match {
               case Some(htlc) => {
                 lcss.copy(
-                  remoteBalanceMsat = lcss.remoteBalanceMsat + htlc.amountMsat,
+                  remoteBalance = lcss.remoteBalance + htlc.amountMsat,
                   localUpdates = lcss.localUpdates + 1,
                   incomingHtlcs = lcss.incomingHtlcs.filterNot(_ == htlc)
                 )
@@ -100,7 +100,7 @@ case class StateManager(
             lcss.incomingHtlcs.find(_.id == fulfill.id) match {
               case Some(htlc) => {
                 lcss.copy(
-                  localBalanceMsat = lcss.localBalanceMsat + htlc.amountMsat,
+                  localBalance = lcss.localBalance + htlc.amountMsat,
                   localUpdates = lcss.localUpdates + 1,
                   incomingHtlcs = lcss.incomingHtlcs.filterNot(_ == htlc)
                 )

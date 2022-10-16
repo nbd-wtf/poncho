@@ -29,7 +29,7 @@ case class Data(
 )
 
 case class ChannelData(
-    lcss: LastCrossSignedState = HostedChannelHelpers.lcssEmpty,
+    lcss: LastCrossSignedState = LastCrossSignedState.empty,
     localErrors: Set[DetailedError] = Set.empty,
     remoteErrors: Set[Error] = Set.empty,
     suspended: Boolean = false,

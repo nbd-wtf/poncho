@@ -28,7 +28,7 @@ case class Config(
     cltvExpiryDelta: CltvExpiryDelta = CltvExpiryDelta(137),
     feeBase: MilliSatoshi = MilliSatoshi(1000L),
     feeProportionalMillionths: Long = 1000L,
-    maxHtlcValueInFlightMsat: Long = 100000000L,
+    maxHtlcValueInFlightMsat: MilliSatoshi = MilliSatoshi(100000000L),
     htlcMinimumMsat: MilliSatoshi = MilliSatoshi(1000L),
     maxAcceptedHtlcs: Int = 12,
     channelCapacityMsat: MilliSatoshi = MilliSatoshi(100000000L),
@@ -45,11 +45,11 @@ case class Config(
     disablePreimageChecking: Boolean = false
 ) {
   def init: InitHostedChannel = InitHostedChannel(
-    maxHtlcValueInFlightMsat = UInt64(maxHtlcValueInFlightMsat),
-    htlcMinimumMsat = htlcMinimumMsat,
+    maxHtlcValueInFlight = maxHtlcValueInFlightMsat,
+    htlcMinimum = htlcMinimumMsat,
     maxAcceptedHtlcs = maxAcceptedHtlcs,
-    channelCapacityMsat = channelCapacityMsat,
-    initialClientBalanceMsat = initialClientBalanceMsat
+    channelCapacity = channelCapacityMsat,
+    initialClientBalance = initialClientBalanceMsat
   )
 
   def branding(logger: nlog.Logger): Option[HostedChannelBranding] =

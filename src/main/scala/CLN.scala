@@ -457,7 +457,7 @@ class CLN() extends NodeInterface {
                 .map { hops =>
                   ChannelMaster.database.data.channels.find((peerId, _) =>
                     hops.size == 1 &&
-                      HostedChannelHelpers.getShortChannelId(
+                      hostedShortChannelId(
                         publicKey.value,
                         peerId
                       ) == hops(0).shortChannelId
@@ -558,7 +558,7 @@ class CLN() extends NodeInterface {
               ByteVector32.fromValidHex(onion("shared_secret").str)
 
             ChannelMaster.database.data.channels.find((peerId, chandata) =>
-              HostedChannelHelpers.getShortChannelId(
+              hostedShortChannelId(
                 publicKey.value,
                 peerId
               ) == targetChannel
@@ -622,7 +622,7 @@ class CLN() extends NodeInterface {
             ).toOption
             scid = ShortChannelId(scidStr)
             (peerId, _) <- ChannelMaster.database.data.channels.find((p, _) =>
-              HostedChannelHelpers.getShortChannelId(publicKey.value, p) == scid
+              hostedShortChannelId(publicKey.value, p) == scid
             )
           } yield ChannelMaster
             .getChannel(peerId)
@@ -641,7 +641,7 @@ class CLN() extends NodeInterface {
             ).toOption
             scid = ShortChannelId(scidStr)
             (peerId, _) <- ChannelMaster.database.data.channels.find((p, _) =>
-              HostedChannelHelpers.getShortChannelId(publicKey.value, p) == scid
+              hostedShortChannelId(publicKey.value, p) == scid
             )
             channel = ChannelMaster.getChannel(peerId)
           } yield {
