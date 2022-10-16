@@ -315,8 +315,16 @@ class CLN() extends NodeInterface {
       }
   }
 
-  def handleRPC(line: String): Unit = {
-    val req = ujson.read(line)
+  def handleLine(line: String): Unit = Try(ujson.read(line)) match {
+    case Success(json) => handleRPC(json)
+    case Failure(err) =>
+      ChannelMaster.logger.warn
+        .item("line", line)
+        .item("err", err)
+        .msg("failed to read line from CLN")
+  }
+
+  def handleRPC(req: ujson.Value): Unit = {
     val params = req("params")
     def reply(result: ujson.Value) = answer(req)(result)
     def replyError(err: String) = answer(req)(err)
@@ -867,7 +875,7 @@ class CLN() extends NodeInterface {
             case Success(char) if char == 10 =>
               // newline, we've got a full line, so handle it
               val line = new String(current, StandardCharsets.UTF_8).trim()
-              if (line.size > 0) handleRPC(line)
+              if (line.size > 0) handleLine(line)
               current = Array.empty
             case Success(char) =>
               // normal char, add it to the current
