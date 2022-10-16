@@ -7,10 +7,11 @@ import scala.util.{Failure, Success}
 import scala.util.chaining._
 import scala.collection.mutable
 import scodec.bits.ByteVector
-import upickle.default._
 import com.softwaremill.quicklens._
 import scodec.bits.ByteVector
 import scodec.{DecodeResult}
+import io.circe._
+import io.circe.syntax._
 import scoin._
 import scoin.ln._
 import scoin.hc._
@@ -70,13 +71,15 @@ object ChannelMaster {
 
       if (node.isInstanceOf[CLN] && !ChannelMaster.config.isDev) {
         System.out.println(
-          ujson.Obj(
-            "jsonrpc" -> "2.0",
-            "method" -> "log",
-            "params" -> ujson.Obj(
-              "message" -> text
+          Json
+            .obj(
+              "jsonrpc" -> "2.0".asJson,
+              "method" -> "log".asJson,
+              "params" -> Json.obj(
+                "message" -> text.asJson
+              )
             )
-          )
+            .noSpaces
         )
       } else {
         System.err.println(

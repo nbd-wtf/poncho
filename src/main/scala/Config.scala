@@ -1,17 +1,21 @@
 import java.io.File
 import java.nio.file.{Files, Path, Paths}
 import scala.util.Try
-import upickle.default._
 import scodec.bits.ByteVector
+import io.circe._
+import io.circe.parser.decode
 import scoin._
 import scoin.ln.Color
 import scoin.hc.{InitHostedChannel, HostedChannelBranding}
+
+import Utils.readString
 
 object Config {
   import Picklers.given
 
   def fromFile(basePath: Path): Try[Config] =
-    Try(read[Config](basePath.resolve("config.json")))
+    Try(readString(basePath.resolve("config.json")))
+      .flatMap(decode[Config](_).toTry)
       .map(_.copy(basePath = Some(basePath)))
 
   def defaults: Config = Config()

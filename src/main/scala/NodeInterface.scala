@@ -5,6 +5,7 @@ import scala.scalanative.loop.EventLoop.loop
 import scala.concurrent.Future
 import scodec.bits.ByteVector
 import scodec.codecs.uint16
+import io.circe.Json
 import scoin._
 import scoin.Crypto.{PrivateKey, PublicKey}
 import scoin.ln.{LightningMessage, Bolt11Invoice}
@@ -21,7 +22,7 @@ trait NodeInterface {
   def sendCustomMessage(
       peerId: ByteVector,
       message: LightningMessage
-  ): Future[ujson.Value]
+  ): Future[Json]
 
   def sendOnion(
       chan: Channel,

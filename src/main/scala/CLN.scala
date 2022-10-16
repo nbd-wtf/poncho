@@ -11,9 +11,11 @@ import scala.scalanative.unsigned._
 import scala.scalanative.loop.EventLoop.loop
 import scala.scalanative.loop.{Poll, Timer}
 import scala.util.{Failure, Success}
-import ujson._
 import scodec.bits.{ByteVector, BitVector}
 import scodec.codecs.uint16
+import io.circe.{Printer => _, _}
+import io.circe.parser.{parse, decode}
+import io.circe.syntax._
 import unixsocket.UnixSocket
 import scoin._
 import scoin.ln._
@@ -34,60 +36,66 @@ class CLN() extends NodeInterface {
 
   def rpc(
       method: String,
-      params: ujson.Obj = ujson.Obj()
-  ): Future[ujson.Value] = {
+      params: JsonObject = JsonObject.empty
+  ): Future[Json] = {
     if (rpcAddr == "") {
       return Future.failed(PonchoException("rpc address is not known yet"))
     }
 
     nextId += 1
 
-    val payload =
-      ujson.write(
-        ujson.Obj(
-          "jsonrpc" -> "2.0",
-          "id" -> nextId,
-          "method" -> method,
-          "params" -> params
-        )
+    val payload = Json
+      .obj(
+        "jsonrpc" := "2.0",
+        "id" := nextId,
+        "method" := method,
+        "params" := params
       )
+      .noSpaces
 
     UnixSocket
       .call(rpcAddr, payload)
       .future
-      .map(ujson.read(_))
-      .flatMap(read =>
-        if (read.obj.contains("error")) {
-          Future.failed(PonchoException(read("error")("message").str))
-        } else {
-          Future.successful(read("result"))
-        }
-      )
+      .map(parse(_))
+      .flatMap {
+        case Right(o: Json)
+            if o.hcursor
+              .downField("result")
+              .focus
+              .isDefined =>
+          Future.successful(o.hcursor.downField("result").focus.get)
+        case Right(o: Json) =>
+          Future.failed(
+            PonchoException(
+              o.hcursor.downField("error").get[String]("message").toOption.get
+            )
+          )
+        case Left(err) =>
+          Future.failed(err.underlying)
+      }
   }
 
-  def answer(req: ujson.Value)(result: ujson.Value): Unit = {
+  def answer(req: Json)(result: Json): Unit = {
     System.out.println(
-      ujson.write(
-        ujson.Obj(
-          "jsonrpc" -> "2.0",
-          "id" -> req("id"),
-          "result" -> result
+      Json
+        .obj(
+          "jsonrpc" := "2.0",
+          "id" := req.hcursor.downField("id").focus.get,
+          "result" := result
         )
-      )
+        .noSpaces
     )
   }
 
-  def answer(req: ujson.Value)(errorMessage: String): Unit = {
+  def answer(req: Json)(errorMessage: String): Unit = {
     System.out.println(
-      ujson.write(
-        ujson.Obj(
-          "jsonrpc" -> "2.0",
-          "id" -> req("id"),
-          "error" -> ujson.Obj(
-            "message" -> errorMessage
-          )
+      Json
+        .obj(
+          "jsonrpc" := "2.0",
+          "id" := req.hcursor.downField("id").focus.get,
+          "error" := Json.obj("message" := errorMessage)
         )
-      )
+        .noSpaces
     )
   }
 
@@ -103,83 +111,107 @@ class CLN() extends NodeInterface {
   lazy val publicKey: PublicKey = privateKey.publicKey
 
   def getChainHash(): Future[ByteVector32] =
-    rpc("getinfo", ujson.Obj())
-      .map(_("network").str)
+    rpc("getinfo")
+      .map(_.hcursor.get[String]("network"))
       .map({
-        case "bitcoin" => Block.LivenetGenesisBlock.hash.toHex
-        case "testnet" => Block.TestnetGenesisBlock.hash.toHex
-        case "signet"  => Block.SignetGenesisBlock.hash.toHex
-        case "regtest" => Block.RegtestGenesisBlock.hash.toHex
+        case Right("bitcoin") => Block.LivenetGenesisBlock.hash.toHex
+        case Right("testnet") => Block.TestnetGenesisBlock.hash.toHex
+        case Right("signet")  => Block.SignetGenesisBlock.hash.toHex
+        case Right("regtest") => Block.RegtestGenesisBlock.hash.toHex
         case chain =>
-          throw IllegalArgumentException(s"unknown chain name '$chain'")
+          throw IllegalArgumentException(s"bad chain '$chain'")
       })
       .map(ByteVector32.fromValidHex(_))
 
   def getAddress(): Future[String] =
-    rpc("newaddr").map(info => info("bech32").str)
+    rpc("newaddr").map(_.hcursor.get[String]("bech32").toTry.get)
 
   def getCurrentBlock(): Future[BlockHeight] =
-    rpc("getchaininfo").map(info => BlockHeight(info("headercount").num.toLong))
+    rpc("getchaininfo").map(info =>
+      BlockHeight(info.hcursor.get[Long]("headercount").toTry.get)
+    )
 
   def getBlockByHeight(height: BlockHeight): Future[Block] =
-    rpc("getrawblockbyheight", ujson.Obj("height" -> height.toInt))
-      .flatMap(resp =>
-        resp("block").str
-          .pipe(hex => Future(Block.read(hex)))
+    rpc("getrawblockbyheight", JsonObject("height" := height.toInt))
+      .flatMap(
+        _.hcursor
+          .get[String]("block")
+          .map(hex => Future(Block.read(hex)))
+          .toTry
+          .get
       )
 
   def inspectOutgoingPayment(
       identifier: HtlcIdentifier,
       paymentHash: ByteVector32
   ): Future[PaymentStatus] =
-    rpc("listsendpays", ujson.Obj("payment_hash" -> paymentHash.toHex))
-      .map(response =>
-        response("payments").arr
-          .filter(_.obj.contains("label"))
+    rpc("listsendpays", JsonObject("payment_hash" := paymentHash.toHex))
+      .map(
+        _.hcursor
+          .downField("payments")
+          .focus
+          .get
+          .asArray
+          .get
+          .filter(_.hcursor.downField("label").focus.isDefined)
           .filter(
-            // use a filter because there may be multiple sendpays with the same hash and label
+            // use a filter because there may be multiple sendpays with the
+            //   same hash and label
             p =>
-              Try(
-                (identifier.scid.toString, identifier.id.toLong) ==
-                  upickle.default.read[(String, Long)](p("label").str)
-              ).getOrElse(false)
+              decode[(String, Long)](p.hcursor.get[String]("label").toTry.get)
+                .map(_ == (identifier.scid.toString, identifier.id.toLong))
+                .getOrElse(false)
           )
           .pipe(toStatus(_))
       )
 
-  private def toStatus(results: ArrayBuffer[ujson.Value]): PaymentStatus =
+  private def toStatus(results: Vector[Json]): PaymentStatus =
     if (results.size == 0)
       // no outgoing payments found, this means the payment was never attempted
       Some(Left(None))
     else {
       // we have at least one match
-      if (results.exists(res => res("status").str == "complete"))
-        // if at least one result is complete then this is indeed fully complete
+      if results.exists(
+          _.hcursor.get[String]("status").toOption == Some("complete")
+        )
+      then // if at least one result is complete then this is indeed fully complete
         Some(
           Right(
-            ByteVector32(
-              ByteVector.fromValidHex(
-                results
-                  .find(res => res("status").str == "complete")
-                  .get("payment_preimage")
-                  .str
-              )
+            ByteVector32.fromValidHex(
+              results
+                .find(
+                  _.hcursor.get[String]("status").toOption == Some("complete")
+                )
+                .get
+                .hcursor
+                .get[String]("payment_preimage")
+                .toTry
+                .get
             )
           )
         )
-      else if (results.exists(res => res("status").str == "pending"))
-        // if at least one result is complete then this is still pending
+      else if results.exists(
+          _.hcursor.get[String]("status").toOption == Some("pending")
+        )
+      then // if at least one result is pending then this is still pending
         None
-      else if (results.forall(res => res("status").str == "failed"))
-        // but if all are failed then we consider it failed
+      else if (
+        results.forall(
+          _.hcursor.get[String]("status").toOption == Some("failed")
+        )
+      )
+      then // but if all are failed then we consider it failed
         Some(
           Left(
             results.last // take the last and use its error
-              .obj
-              .pipe(o => o.get("onionreply").orElse(o.get("erroronion")))
-              .map(_.str)
-              .map(ByteVector.fromValidHex(_))
+              .hcursor
+              .pipe(o =>
+                o.get[ByteVector]("onionreply")
+                  .orElse(o.get[ByteVector]("erroronion"))
+              )
               .map(FailureOnion(_))
+              .map(Some(_))
+              .getOrElse(None)
           )
         )
       else None // we don't know
@@ -188,7 +220,7 @@ class CLN() extends NodeInterface {
   def sendCustomMessage(
       peerId: ByteVector,
       message: LightningMessage
-  ): Future[ujson.Value] = {
+  ): Future[Json] = {
     val result = hostedMessageCodec.encode(message).toOption.get.toByteVector
     val tagHex = result.take(2).toHex
     val value = result.drop(2)
@@ -203,9 +235,9 @@ class CLN() extends NodeInterface {
     ChannelMaster.log(s"  ::> sending $message --> ${peerId.toHex}")
     rpc(
       "sendcustommsg",
-      ujson.Obj(
-        "node_id" -> peerId.toHex,
-        "msg" -> payload
+      JsonObject(
+        "node_id" := peerId.toHex,
+        "msg" := payload
       )
     )
   }
@@ -234,14 +266,18 @@ class CLN() extends NodeInterface {
           chan.gotPaymentResult(htlcId, noChannelPaymentResult)
 
         case Success((funds, blockheight)) =>
-          funds("channels").arr
+          funds.hcursor
+            .downField("channels")
+            .as[List[Json]]
+            .toTry
+            .get
             .find(
-              _.obj
-                .get("short_channel_id")
-                .map(_.str == firstHop.toString)
+              _.hcursor
+                .get[String]("short_channel_id")
+                .map(_ == firstHop.toString)
                 .getOrElse(false)
             )
-            .map(_("peer_id").str)
+            .map(_.hcursor.get[String]("peer_id").toTry.get)
             .map(ByteVector.fromValidHex(_)) match {
             case None =>
               logger.debug.msg("we don't know about this channel")
@@ -265,17 +301,21 @@ class CLN() extends NodeInterface {
 
               rpc(
                 "sendonion",
-                ujson.Obj(
-                  "first_hop" -> ujson.Obj(
-                    "id" -> targetPeerId.toHex,
-                    "amount_msat" -> amount.toLong,
-                    "delay" -> delay
+                JsonObject(
+                  "first_hop" := Json.obj(
+                    "id" := targetPeerId.toHex,
+                    "amount_msat" := amount.toLong,
+                    "delay" := delay
                   ),
-                  "onion" -> onion.toHex,
-                  "payment_hash" -> paymentHash.toHex,
-                  "label" -> upickle.default
-                    .write((chan.shortChannelId.toString, htlcId)),
-                  "groupid" ->
+                  "onion" := onion.toHex,
+                  "payment_hash" := paymentHash.toHex,
+                  "label" :=
+                    // json encoded array with these two things
+                    (
+                      chan.shortChannelId.toString,
+                      htlcId
+                    ).asJson.noSpaces,
+                  "groupid" :=
                     // we need a unique combination of groupid and partid
                     //   so lightningd is happy to accept multiple parts
                     (
@@ -284,7 +324,7 @@ class CLN() extends NodeInterface {
                       //   that is still fairly unique for this channel and fits in a java Long
                       UInt64(chan.shortChannelId.toLong).toBigInt / 100
                     ).toLong,
-                  "partid" ->
+                  "partid" :=
                     // here we just use the htlc id since it is already unique per channel
                     htlcId
                 )
@@ -315,116 +355,120 @@ class CLN() extends NodeInterface {
       }
   }
 
-  def handleLine(line: String): Unit = Try(ujson.read(line)) match {
-    case Success(json) => handleRPC(json)
-    case Failure(err) =>
+  def handleLine(line: String): Unit = parse(line) match {
+    case Left(err) =>
       ChannelMaster.logger.warn
         .item("line", line)
         .item("err", err)
         .msg("failed to read line from CLN")
+    case Right(json) => handleRPC(json)
   }
 
-  def handleRPC(req: ujson.Value): Unit = {
-    val params = req("params")
-    def reply(result: ujson.Value) = answer(req)(result)
+  def handleRPC(req: Json): Unit = {
+    val params = req.hcursor.downField("params").focus.get
+    def reply(result: Json) = answer(req)(result)
     def replyError(err: String) = answer(req)(err)
 
-    req("method").str match {
+    req.hcursor.get[String]("method").getOrElse("") match {
       case "getmanifest" =>
         reply(
-          ujson.Obj(
-            "dynamic" -> false, // custom features can only be set on non-dynamic
-            "options" -> ujson.Arr(),
-            "subscriptions" -> ujson.Arr(
-              "sendpay_success",
-              "sendpay_failure",
-              "connect",
-              "disconnect"
+          Json.obj(
+            "dynamic" := false, // custom features can only be set on non-dynamic
+            "options" := Json.arr(),
+            "subscriptions" := Json.arr(
+              "sendpay_success".asJson,
+              "sendpay_failure".asJson,
+              "connect".asJson,
+              "disconnect".asJson
             ),
-            "hooks" -> ujson.Arr(
-              ujson.Obj("name" -> "custommsg"),
-              ujson.Obj("name" -> "htlc_accepted"),
-              ujson.Obj("name" -> "rpc_command")
+            "hooks" := Json.arr(
+              Json.obj("name" := "custommsg"),
+              Json.obj("name" := "htlc_accepted"),
+              Json.obj("name" := "rpc_command")
             ),
-            "rpcmethods" -> ujson.Arr(
-              ujson.Obj(
-                "name" -> "parse-lcss",
-                "usage" -> "peerid last_cross_signed_state_hex",
-                "description" -> "Parse a hex representation of a last_cross_signed_state as provided by a mobile client."
+            "rpcmethods" := Json.arr(
+              Json.obj(
+                "name" := "parse-lcss",
+                "usage" := "peerid last_cross_signed_state_hex",
+                "description" := "Parse a hex representation of a last_cross_signed_state as provided by a mobile client."
               ),
-              ujson.Obj(
-                "name" -> "add-hc-secret",
-                "usage" -> "secret",
-                "description" -> ("Adds a {secret} (hex, 32 bytes) to the list of acceptable secrets for when a client invokes a hosted channel. " +
+              Json.obj(
+                "name" := "add-hc-secret",
+                "usage" := "secret",
+                "description" := ("Adds a {secret} (hex, 32 bytes) to the list of acceptable secrets for when a client invokes a hosted channel. " +
                   "This secret can only be used once. You can add the same secret multiple times so it can be used multiple times. " +
                   "You can also add permanent secrets on the config file.")
               ),
-              ujson.Obj(
-                "name" -> "remove-hc-secret",
-                "usage" -> "secret",
-                "description" -> "Removes a {secret} (hex, 32 bytes) to the list of acceptable secrets for when a client invokes a hosted channel. See also `add-hc-secret`."
+              Json.obj(
+                "name" := "remove-hc-secret",
+                "usage" := "secret",
+                "description" := "Removes a {secret} (hex, 32 bytes) to the list of acceptable secrets for when a client invokes a hosted channel. See also `add-hc-secret`."
               ),
-              ujson.Obj(
-                "name" -> "hc-list",
-                "usage" -> "",
-                "description" -> "Lists all your hosted channels."
+              Json.obj(
+                "name" := "hc-list",
+                "usage" := "",
+                "description" := "Lists all your hosted channels."
               ),
-              ujson.Obj(
-                "name" -> "hc-channel",
-                "usage" -> "peerid",
-                "description" -> "Shows your hosted channel with {peerid} with more details than hc-list."
+              Json.obj(
+                "name" := "hc-channel",
+                "usage" := "peerid",
+                "description" := "Shows your hosted channel with {peerid} with more details than hc-list."
               ),
-              ujson.Obj(
-                "name" -> "hc-override",
-                "usage" -> "peerid msatoshi",
-                "description" -> "Proposes overriding the state of the channel with {peerid} with the next local balance being equal to {msatoshi}."
+              Json.obj(
+                "name" := "hc-override",
+                "usage" := "peerid msatoshi",
+                "description" := "Proposes overriding the state of the channel with {peerid} with the next local balance being equal to {msatoshi}."
               ),
-              ujson.Obj(
-                "name" -> "hc-resize",
-                "usage" -> "peerid msatoshi",
-                "description" -> "Prepares the channel with {peerid} to resize its max capacity up to {msatoshi} (after calling this on the host the client must issue a resize command on its side). Calling it with {msatoshi} set to zero cancels the resize."
+              Json.obj(
+                "name" := "hc-resize",
+                "usage" := "peerid msatoshi",
+                "description" := "Prepares the channel with {peerid} to resize its max capacity up to {msatoshi} (after calling this on the host the client must issue a resize command on its side). Calling it with {msatoshi} set to zero cancels the resize."
               ),
-              ujson.Obj(
-                "name" -> "hc-request-channel",
-                "usage" -> "peerid",
-                "description" -> "Requests a hosted channel from another hosted channel provider (do not use)."
+              Json.obj(
+                "name" := "hc-request-channel",
+                "usage" := "peerid",
+                "description" := "Requests a hosted channel from another hosted channel provider (do not use)."
               )
             ),
-            "notifications" -> ujson.Arr(),
-            "featurebits" -> ujson.Obj(
-              "init" -> Utils.generateFeatureBits(Set(32973, 257)),
-              "node" -> Utils.generateFeatureBits(Set(257))
-              // "channel" -> Utils.generateFeatureBits(Set(32975))
+            "notifications" := Json.arr(),
+            "featurebits" := Json.obj(
+              "init" := Utils.generateFeatureBits(Set(32973, 257)),
+              "node" := Utils.generateFeatureBits(Set(257))
+              // "channel" := Utils.generateFeatureBits(Set(32975))
             )
           )
         )
       case "init" => {
-        reply(ujson.Obj())
+        reply(Json.obj())
 
-        val lightningDir = params("configuration")("lightning-dir").str
-        rpcAddr = lightningDir + "/" + params("configuration")("rpc-file").str
+        val c = params.hcursor
+        val lightningDir =
+          c.downField("configuration")
+            .downField("lightning-dir")
+            .as[String]
+            .toTry
+            .get
+        val rpcFile =
+          c.downField("configuration")
+            .downField("rpc-file")
+            .as[String]
+            .toTry
+            .get
+        rpcAddr = lightningDir + "/" + rpcFile
         hsmSecret = Paths.get(lightningDir + "/hsm_secret")
 
         initCallback()
       }
       case "custommsg" => {
-        reply(ujson.Obj("result" -> "continue"))
+        reply(Json.obj("result" := "continue"))
 
-        val peerId = ByteVector.fromValidHex(params("peer_id").str)
-        val body = params("payload").str
+        val c = params.hcursor
+        val peerId = ByteVector.fromValidHex(c.get[String]("peer_id").toTry.get)
+        val body = c.get[String]("payload").toTry.get
         val payload: ByteVector = ByteVector.fromValidHex(body)
 
         hostedMessageCodec
-          .decode(
-            ByteVector
-              .concat(
-                List(
-                  payload.take(2),
-                  payload.drop(2 /* tag */ + 2 /* length */ )
-                )
-              )
-              .toBitVector
-          )
+          .decode(msg.toBitVector)
           .toTry match {
           case Success(msg) =>
             ChannelMaster.getChannel(peerId).gotPeerMessage(msg.value)
@@ -439,19 +483,22 @@ class CLN() extends NodeInterface {
       case "rpc_command" => {
         // intercept the "pay" command if it is paying to a hosted channel peer
         // send a payment manually in that case
-        if (params("rpc_command")("method").str == "pay") {
-          val inv = params("rpc_command")("params") match {
-            case o: ujson.Obj => o.value.get("bolt11").flatMap(_.strOpt)
-            case a: ujson.Arr => a.value.headOption.flatMap(_.strOpt)
-            case _            => None
-          }
+        val c = params.hcursor.downField("rpc_command")
+
+        if (c.get[String]("method").toOption == Some("pay")) {
+          val inv = c
+            .downField("params")
+            .get[String]("bolt11")
+            .orElse(c.downField("params").downN(0).as[String])
+            .toTry
 
           // there will always be an invoice
-          Bolt11Invoice.fromString(inv.get) match {
+          inv.flatMap(Bolt11Invoice.fromString(_)) match {
             case Failure(err) =>
-              reply(ujson.Obj("result" -> "continue"))
-            case Success(bolt11) if bolt11.amount_opt == None =>
-              reply(ujson.Obj("result" -> "continue"))
+              System.err.println(s"failed to decode invoice, $err")
+              reply(Json.obj("result" := "continue"))
+            case Success(bolt11) if bolt11.amountOpt == None =>
+              reply(Json.obj("result" := "continue"))
             case Success(bolt11) =>
               val targetPeer = bolt11.routingInfo
                 .map { hops =>
@@ -475,16 +522,16 @@ class CLN() extends NodeInterface {
                     .onComplete {
                       case Success(preimage) =>
                         reply(
-                          ujson.Obj(
-                            "return" -> ujson.Obj(
-                              "result" -> ujson.Obj(
-                                "destination" -> peerId.toHex,
-                                "payment_hash" -> bolt11.hash.toHex,
-                                "parts" -> 1,
-                                "amount_msat" -> bolt11.amount_opt.get.toLong,
-                                "msatoshi_sent" -> bolt11.amount_opt.get.toLong,
-                                "payment_preimage" -> preimage.toHex,
-                                "status" -> "complete"
+                          Json.obj(
+                            "return" := Json.obj(
+                              "result" := Json.obj(
+                                "destination" := peerId.toHex,
+                                "payment_hash" := bolt11.hash.toHex,
+                                "parts" := 1,
+                                "amount_msat" := bolt11.amountOpt.get.toLong,
+                                "msatoshi_sent" := bolt11.amountOpt.get.toLong,
+                                "payment_preimage" := preimage.toHex,
+                                "status" := "complete"
                               )
                             )
                           )
@@ -497,16 +544,16 @@ class CLN() extends NodeInterface {
                           .msg(
                             "couldn't pay hosted peer, letting CLN do its thing"
                           )
-                        ujson.Obj("result" -> "continue")
+                        Json.obj("result" := "continue")
                     }
                 case None =>
                   // this is not targeting one of our hosted channels, so let CLN handle it
-                  reply(ujson.Obj("result" -> "continue"))
+                  reply(Json.obj("result" := "continue"))
               }
           }
         } else
           // otherwise let CLN execute the command
-          reply(ujson.Obj("result" -> "continue"))
+          reply(Json.obj("result" := "continue"))
       }
       case "htlc_accepted" => {
         // we wait here because on startup c-lightning will replay all pending htlcs
@@ -515,47 +562,51 @@ class CLN() extends NodeInterface {
           if (onStartup) 3.seconds
           else 0.seconds
         )(() => {
-          val htlc = params("htlc")
-          val onion = params("onion")
+          val c = params.hcursor
+          val htlc = c.downField("htlc")
+          val onion = c.downField("onion")
 
           // if we're the final hop of an htlc this property won't exist
-          if (!onion.obj.contains("short_channel_id")) {
+          if (onion.downField("short_channel_id").focus.isEmpty) {
             // just continue so our node will accept this payment
-            reply(ujson.Obj("result" -> "continue"))
+            reply(Json.obj("result" := "continue"))
           } else {
-            val hash = ByteVector32.fromValidHex(htlc("payment_hash").str)
-            val sourceChannel = ShortChannelId(htlc("short_channel_id").str)
+            val hash = htlc.get[ByteVector32]("payment_hash").toTry.get
+            val sourceChannel =
+              ShortChannelId(htlc.get[String]("short_channel_id").toTry.get)
             val sourceAmount = MilliSatoshi(
-              htlc.obj.get("amount_msat").orElse(htlc.obj.get("amount")) match {
-                case Some(ujson.Num(num)) => num.toLong
-                case Some(ujson.Str(str)) => str.takeWhile(_.isDigit).toLong
-                case what =>
-                  throw new Exception(
-                    s"unexpected htlc.amount at htlc_accepted hook: $what"
-                  )
-              }
+              htlc
+                .get[String]("amount_msat")
+                .orElse(htlc.get[String]("amount"))
+                .map(_.takeWhile(_.isDigit).toLong)
+                .orElse(
+                  htlc
+                    .get[Long]("amount_msat")
+                )
+                .toTry
+                .get
             )
-            val sourceId = htlc("id").num.toLong
-            val cltvIn = CltvExpiry(BlockHeight(htlc("cltv_expiry").num.toLong))
+            val sourceId = htlc.get[Long]("id").toTry.get
+            val cltvIn = htlc.get[CltvExpiry]("cltv_expiry").toTry.get
 
-            val targetChannel = ShortChannelId(onion("short_channel_id").str)
+            val targetChannel =
+              onion.get[ShortChannelId]("short_channel_id").toTry.get
             val targetAmount = MilliSatoshi(
-              onion.obj
-                .get("forward_msat")
-                .orElse(htlc.obj.get("forward_amount")) match {
-                case Some(ujson.Num(num)) => num.toLong
-                case Some(ujson.Str(str)) => str.takeWhile(_.isDigit).toLong
-                case what =>
-                  throw new Exception(
-                    s"unexpected onion.forward_amount at htlc_accepted hook: $what"
-                  )
-              }
+              htlc
+                .get[String]("forward_msat")
+                .orElse(htlc.get[String]("forward_amount"))
+                .map(_.takeWhile(_.isDigit).toLong)
+                .orElse(
+                  htlc
+                    .get[Long]("forward_msat")
+                )
+                .toTry
+                .get
             )
-            val cltvOut =
-              CltvExpiry(BlockHeight(onion("outgoing_cltv_value").num.toLong))
-            val nextOnion = ByteVector.fromValidHex(onion("next_onion").str)
+            val cltvOut = onion.get[CltvExpiry]("outgoing_cltv_value").toTry.get
+            val nextOnion = onion.get[ByteVector]("next_onion").toTry.get
             val sharedSecret =
-              ByteVector32.fromValidHex(onion("shared_secret").str)
+              onion.get[ByteVector32]("shared_secret").toTry.get
 
             ChannelMaster.database.data.channels.find((peerId, chandata) =>
               hostedShortChannelId(
@@ -578,48 +629,48 @@ class CLN() extends NodeInterface {
                   .foreach { status =>
                     val response = status match {
                       case Some(Right(preimage)) =>
-                        ujson.Obj(
-                          "result" -> "resolve",
-                          "payment_key" -> preimage.toHex
+                        Json.obj(
+                          "result" := "resolve",
+                          "payment_key" := preimage.toHex
                         )
                       case Some(Left(Some(FailureOnion(onion)))) =>
                         // must unwrap the onion here because the hosted channel
                         // won't unwrap whatever packet they got from the hosted peer
-                        ujson.Obj(
-                          "result" -> "fail",
-                          "failure_onion" -> Sphinx.FailurePacket
+                        Json.obj(
+                          "result" := "fail",
+                          "failure_onion" := Sphinx.FailurePacket
                             .wrap(onion, sharedSecret)
                             .toHex
                         )
                       case Some(Left(Some(NormalFailureMessage(message)))) =>
-                        ujson.Obj(
-                          "result" -> "fail",
-                          "failure_message" -> message.toHex
+                        Json.obj(
+                          "result" := "fail",
+                          "failure_message" := message.toHex
                         )
                       case Some(Left(None)) =>
-                        ujson
-                          .Obj("result" -> "fail", "failure_message" -> "1007")
+                        Json.obj(
+                          "result" := "fail",
+                          "failure_message" := "1007"
+                        )
                       case None =>
-                        ujson.Obj("result" -> "continue")
+                        Json.obj("result" := "continue")
                     }
                     reply(response)
                   }
               }
               case None => {
-                reply(ujson.Obj("result" -> "continue"))
+                reply(Json.obj("result" := "continue"))
               }
             }
           }
         })
       }
       case "sendpay_success" => {
-        val successdata = params("sendpay_success")
-        if (successdata.obj.contains("label"))
+        val successdata = params.hcursor.downField("sendpay_success")
+        if (successdata.downField("label").focus.isDefined)
           for {
-            label <- successdata("label").strOpt
-            (scidStr, htlcId) <- Try(
-              upickle.default.read[(String, Long)](label)
-            ).toOption
+            label <- successdata.get[String]("label").toOption
+            (scidStr, htlcId) <- decode[(String, Long)](label).toOption
             scid = ShortChannelId(scidStr)
             (peerId, _) <- ChannelMaster.database.data.channels.find((p, _) =>
               hostedShortChannelId(publicKey.value, p) == scid
@@ -628,38 +679,42 @@ class CLN() extends NodeInterface {
             .getChannel(peerId)
             .gotPaymentResult(
               htlcId,
-              toStatus(ArrayBuffer(successdata))
+              toStatus(Vector(successdata.focus.get))
             )
       }
       case "sendpay_failure" => {
-        val failuredata = params("sendpay_failure")("data")
-        if (failuredata.obj.contains("label"))
+        val failuredata =
+          params.hcursor.downField("sendpay_failure").downField("data")
+        if (failuredata.downField("label").focus.isDefined)
           for {
-            label <- failuredata("label").strOpt
-            (scidStr, htlcId) <- Try(
-              upickle.default.read[(String, Long)](label)
-            ).toOption
+            label <- failuredata.get[String]("label").toOption
+            (scidStr, htlcId) <- decode[(String, Long)](label).toOption
             scid = ShortChannelId(scidStr)
             (peerId, _) <- ChannelMaster.database.data.channels.find((p, _) =>
               hostedShortChannelId(publicKey.value, p) == scid
             )
             channel = ChannelMaster.getChannel(peerId)
           } yield {
-            failuredata("status").str match {
-              case "pending" =>
+            failuredata.get[String]("status").toOption match {
+              case Some("pending") =>
                 Timer.timeout(1.second) { () =>
                   inspectOutgoingPayment(
                     HtlcIdentifier(scid, htlcId),
-                    ByteVector32.fromValidHex(failuredata("payment_hash").str)
+                    failuredata.get[ByteVector32]("payment_hash").toTry.get
                   ).foreach { result =>
                     channel.gotPaymentResult(htlcId, result)
                   }
                 }
-              case "failed" =>
+              case Some("failed") =>
                 channel.gotPaymentResult(
                   htlcId,
-                  toStatus(ArrayBuffer(failuredata))
+                  toStatus(Vector(failuredata.focus.get))
                 )
+
+              case status =>
+                ChannelMaster.logger.warn
+                  .item("status", status)
+                  .msg("unexpected status on sendpay_failure")
             }
           }
       }
@@ -677,21 +732,18 @@ class CLN() extends NodeInterface {
 
       // custom rpc methods
       case "parse-lcss" => {
+        val c = params.hcursor
+
         (for {
-          peerIdHex <- params match {
-            case o: ujson.Obj =>
-              o.value.get("peerid").flatMap(_.strOpt)
-            case a: ujson.Arr => a.value.headOption.flatMap(_.strOpt)
-            case _            => None
-          }
-          peerId <- ByteVector.fromHex(peerIdHex)
+          peerId <- c
+            .get[ByteVector]("peerid")
+            .orElse(c.downN(0).as[ByteVector])
+            .toOption
           peer = PublicKey(peerId)
-          lcssHex <- params match {
-            case o: ujson.Obj =>
-              o.value.get("last_cross_signed_state_hex").flatMap(_.strOpt)
-            case a: ujson.Arr => a.value.drop(1).headOption.flatMap(_.strOpt)
-            case _            => None
-          }
+          lcssHex <- c
+            .get[String]("last_cross_signed_state")
+            .orElse(c.downN(1).as[String])
+            .toOption
           lcssBits <- BitVector.fromHex(lcssHex)
           decoded <- lastCrossSignedStateCodec.decode(lcssBits).toOption
           lcss = decoded.value
@@ -704,9 +756,8 @@ class CLN() extends NodeInterface {
                 publicKey
               )
             )
-              upickle.default.write(lcss).pipe(j => reply(ujson.read(j)))
-            else
-              replyError("provided lcss wasn't signed by us")
+              reply(lcss.asJson)
+            else replyError("provided lcss wasn't signed by us")
           case None =>
             replyError("failed to decode last_cross_signed_state or peerid")
           case _ =>
@@ -719,51 +770,46 @@ class CLN() extends NodeInterface {
           replyError(
             "`requireSecret` must be set to true on config.json for this to do anything."
           )
-        } else
-          params match {
-            case o: ujson.Obj => o.value.get("secret").flatMap(_.strOpt)
-            case a: ujson.Arr => a.value.headOption.flatMap(_.strOpt)
-            case _            => None
-          } match {
-            case Some(secret) => {
+        } else {
+          val c = params.hcursor
+          c.get[String]("secret").orElse(c.downN(0).as[String]) match {
+            case Right(secret) => {
               ChannelMaster.temporarySecrets =
                 ChannelMaster.temporarySecrets :+ secret
-              reply(ujson.Obj("added" -> true))
+              reply(Json.obj("added" := true))
             }
-            case None => replyError("secret not given")
+            case Left(fail) => replyError(s"secret not given? $fail")
           }
+        }
 
       case "remove-hc-secret" =>
         if (!ChannelMaster.config.requireSecret) {
           replyError(
             "`requireSecret` must be set to true on config.json for this to do anything."
           )
-        } else
-          params match {
-            case o: ujson.Obj => o.value.get("secret").flatMap(_.strOpt)
-            case a: ujson.Arr => a.value.headOption.flatMap(_.strOpt)
-            case _            => None
-          } match {
-            case Some(secret) => {
+        } else {
+          val c = params.hcursor
+          c.get[String]("secret").orElse(c.downN(0).as[String]) match {
+            case Right(secret) => {
               ChannelMaster.temporarySecrets =
                 ChannelMaster.temporarySecrets.filterNot(_ == secret)
-              reply(ujson.Obj("removed" -> true))
+              reply(Json.obj("removed" := true))
             }
-            case None => replyError("secret not given")
+            case Left(fail) => replyError(s"secret not given? $fail")
           }
+        }
 
       case "hc-list" =>
         reply(
-          ChannelMaster.database.data.channels.toList.map(Printer.hcSimple(_))
+          ChannelMaster.database.data.channels.toList
+            .map(Printer.hcSimple(_))
+            .asJson
         )
 
       case "hc-channel" =>
-        val peerHex = params match {
-          case o: ujson.Obj => o.value.get("peerid").flatMap(_.strOpt)
-          case a: ujson.Arr => a.value.headOption.flatMap(_.strOpt)
-          case _            => None
-        }
-        val peerId = peerHex.flatMap(ByteVector.fromHex(_))
+        val c = params.hcursor
+        val peerId =
+          c.get[ByteVector]("peerid").orElse(c.downN(0).as[ByteVector]).toOption
         val data = peerId.flatMap[ChannelData](
           ChannelMaster.database.data.channels.get(_)
         )
@@ -786,19 +832,23 @@ class CLN() extends NodeInterface {
         }
 
       case "hc-override" =>
-        (params match {
-          case _: ujson.Obj =>
-            Some((params("peerid").strOpt, params("msatoshi").numOpt))
-          case arr: ujson.Arr if arr.value.size == 2 =>
-            Some((params(0).strOpt, params(1).numOpt))
-          case _ => None
-        }) match {
-          case Some(Some(peerId), Some(msatoshi)) => {
+        val c = params.hcursor
+        (
+          c.get[ByteVector]("peerid").orElse(c.downN(0).as[ByteVector]),
+          c.get[MilliSatoshi]("msatoshi")
+            .orElse(c.downN(1).as[MilliSatoshi])
+            .orElse(
+              c.get[String]("msatoshi")
+                .orElse(c.downN(1).as[String])
+                .map(msat => MilliSatoshi(msat.toLong))
+            )
+        ) match {
+          case (Right(peerId), Right(msatoshi)) => {
             ChannelMaster
-              .getChannel(ByteVector.fromValidHex(peerId))
-              .proposeOverride(MilliSatoshi(msatoshi.toLong))
+              .getChannel(peerId)
+              .proposeOverride(msatoshi)
               .onComplete {
-                case Success(msg) => reply(msg)
+                case Success(msg) => reply(msg.asJson)
                 case Failure(err) => replyError(err.toString)
               }
           }
@@ -808,24 +858,28 @@ class CLN() extends NodeInterface {
         }
 
       case "hc-resize" =>
-        (params match {
-          case _: ujson.Obj =>
-            Some((params("peerid").strOpt, params("msatoshi").numOpt))
-          case arr: ujson.Arr if arr.value.size == 2 =>
-            Some((params(0).strOpt, params(1).numOpt))
-          case _ => None
-        }) match {
-          case Some(Some(peerId), Some(satoshi)) => {
-            val upTo = satoshi.toLong match {
+        val c = params.hcursor
+        (
+          c.get[ByteVector]("peerid").orElse(c.downN(0).as[ByteVector]),
+          c.get[MilliSatoshi]("msatoshi")
+            .orElse(c.downN(1).as[MilliSatoshi])
+            .orElse(
+              c.get[String]("msatoshi")
+                .orElse(c.downN(1).as[String])
+                .map(msat => MilliSatoshi(msat.toLong))
+            )
+        ) match {
+          case (Right(peerId), Right(amount)) => {
+            val upTo = amount.toLong match {
               case 0 => None
-              case s => Some(MilliSatoshi(s).toSatoshi)
+              case s => Some(amount.toSatoshi)
             }
 
             ChannelMaster
-              .getChannel(ByteVector.fromValidHex(peerId))
+              .getChannel(peerId)
               .acceptResize(upTo)
               .onComplete {
-                case Success(msg) => reply(msg)
+                case Success(msg) => reply(msg.asJson)
                 case Failure(err) => replyError(err.toString)
               }
           }
@@ -835,19 +889,14 @@ class CLN() extends NodeInterface {
         }
 
       case "hc-request-channel" =>
-        (params match {
-          case _: ujson.Obj =>
-            Some(params("peerid").strOpt)
-          case arr: ujson.Arr if arr.value.size == 1 =>
-            Some(params(0).strOpt)
-          case _ => None
-        }) match {
-          case Some(Some(peerId)) => {
+        val c = params.hcursor
+        c.get[ByteVector]("peerid").orElse(c.downN(0).as[ByteVector]) match {
+          case Right(peerId) => {
             ChannelMaster
-              .getChannel(ByteVector.fromValidHex(peerId))
+              .getChannel(peerId)
               .requestHostedChannel()
               .onComplete {
-                case Success(msg) => reply(msg)
+                case Success(msg) => reply(msg.asJson)
                 case Failure(err) => replyError(err.toString)
               }
           }

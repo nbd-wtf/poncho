@@ -5,10 +5,14 @@ import scala.collection.immutable.Map
 import scala.scalanative.unsigned._
 import scala.scalanative.loop.Timer
 import scodec.bits.ByteVector
-import upickle.default._
+import io.circe.{Error => _, _}
+import io.circe.parser.decode
+import io.circe.syntax._
 import scoin._
 import scoin.ln._
 import scoin.hc._
+
+import Utils.readString
 
 case class HtlcIdentifier(scid: ShortChannelId, id: Long) {
   override def toString(): String = s"HtlcIdentifier($id@$scid)"
@@ -57,11 +61,14 @@ class Database(val path: Path = Paths.get("poncho").toAbsolutePath()) {
   }
   if (!Files.exists(htlcForwardsFile)) {
     Files.createFile(htlcForwardsFile)
-    Files.write(htlcForwardsFile, write(Data().htlcForwards.toList).getBytes)
+    Files.write(
+      htlcForwardsFile,
+      Data().htlcForwards.toList.asJson.noSpaces.getBytes
+    )
   }
   if (!Files.exists(preimagesFile)) {
     Files.createFile(preimagesFile)
-    Files.write(preimagesFile, write(Data().preimages).getBytes)
+    Files.write(preimagesFile, Data().preimages.asJson.noSpaces.getBytes)
   }
 
   var data = Data(
@@ -88,13 +95,18 @@ class Database(val path: Path = Paths.get("poncho").toAbsolutePath()) {
       .map(filename =>
         (
           ByteVector.fromValidHex(filename.take(66)),
-          read[ChannelData](channelsDir.resolve(filename))
+          decode[ChannelData](
+            readString(channelsDir.resolve(filename))
+          ).toTry.get
         )
       )
       .toMap,
-    htlcForwards =
-      read[List[(HtlcIdentifier, HtlcIdentifier)]](htlcForwardsFile).toMap,
-    preimages = read[Map[ByteVector32, ByteVector32]](preimagesFile)
+    htlcForwards = decode[List[(HtlcIdentifier, HtlcIdentifier)]](
+      readString(htlcForwardsFile)
+    ).toTry.get.toMap,
+    preimages = decode[Map[ByteVector32, ByteVector32]](
+      readString(preimagesFile)
+    ).toTry.get
   )
 
   // update will overwrite only the files that changed during the `change` operation
@@ -108,14 +120,17 @@ class Database(val path: Path = Paths.get("poncho").toAbsolutePath()) {
       .foreach { (key, chandata) =>
         val data = newData.channels(key)
         val file = channelsDir.resolve(key.toHex ++ ".json")
-        Files.write(file, write(chandata).getBytes)
+        Files.write(file, chandata.asJson.noSpaces.getBytes)
       }
 
     if (newData.htlcForwards != data.htlcForwards) {
-      Files.write(htlcForwardsFile, write(newData.htlcForwards.toList).getBytes)
+      Files.write(
+        htlcForwardsFile,
+        newData.htlcForwards.toList.asJson.noSpaces.getBytes
+      )
     }
     if (newData.preimages != data.preimages) {
-      Files.write(preimagesFile, write(newData.preimages).getBytes)
+      Files.write(preimagesFile, newData.preimages.asJson.noSpaces.getBytes)
     }
 
     data = newData

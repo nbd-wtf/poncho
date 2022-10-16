@@ -9,9 +9,9 @@ import scala.collection.mutable.Map
 import scala.scalanative.unsigned._
 import scala.scalanative.loop.Timer
 import com.softwaremill.quicklens._
-import upickle.default.{ReadWriter, macroRW}
 import scodec.bits.ByteVector
 import scodec.codecs._
+import io.circe.Json
 import scoin._
 import scoin.Crypto.PublicKey
 import scoin.ln._
@@ -83,7 +83,7 @@ class Channel(peerId: ByteVector) {
       state.lcssNext.outgoingHtlcs.map(_.amountMsat.toLong))
       .fold(0L)(_ + _)
 
-  def sendMessage(msg: LightningMessage): Future[ujson.Value] =
+  def sendMessage(msg: LightningMessage): Future[Json] =
     ChannelMaster.node.sendCustomMessage(peerId, msg)
 
   // this function only sends one state_update once for each state
@@ -445,7 +445,7 @@ class Channel(peerId: ByteVector) {
   //   response format is simplified since we don't have to return an LN fulfill/fail upstream
   //   and so on
   def sendDirectPayment(bolt11: Bolt11Invoice): Future[ByteVector32] = {
-    val amount = bolt11.amount_opt.get
+    val amount = bolt11.amountOpt.get
     var promise = Promise[PaymentStatus]()
 
     if (status != Active) Future.failed(new Exception("channel isn't active"))
@@ -1270,6 +1270,23 @@ class Channel(peerId: ByteVector) {
                             )
                       }
                     }
+                    case Right(somethingElse) =>
+                      localLogger.warn
+                        .item("result", somethingElse)
+                        .msg(
+                          "unexpected onion decode result on htlc received from hostedpeer"
+                        )
+
+                      scala.concurrent.ExecutionContext.global.execute(() =>
+                        gotPaymentResult(
+                          htlc.id,
+                          Some(
+                            Left(
+                              Some(NormalFailureMessage(TemporaryNodeFailure))
+                            )
+                          )
+                        )
+                      )
                   }
                 }
               }
@@ -1462,7 +1479,7 @@ class Channel(peerId: ByteVector) {
             )
           )
         })
-        .map(res => res("status").str)
+        .map(_.hcursor.get[String]("status").toTry.get)
     }
   }
 
@@ -1517,7 +1534,7 @@ class Channel(peerId: ByteVector) {
           .withLocalSigOfRemote(ChannelMaster.node.privateKey)
           .stateOverride
       )
-        .map((v: ujson.Value) => v("status").str)
+        .map(_.hcursor.get[String]("status").toTry.get)
     }
   }
 

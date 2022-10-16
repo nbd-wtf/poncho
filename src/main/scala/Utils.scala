@@ -12,6 +12,12 @@ class PonchoException(s: String) extends java.lang.Exception {
 }
 
 object Utils {
+  def readString(path: java.nio.file.Path): String =
+    new String(
+      java.nio.file.Files.readAllBytes(path),
+      java.nio.charset.StandardCharsets.UTF_8
+    )
+
   def generateFeatureBits(indexes: Set[Int]): String = {
     var buf = BitVector.fill(indexes.max + 1)(high = false).bytes.bits
     indexes.foreach { i => buf = buf.set(i) }
