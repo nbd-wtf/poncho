@@ -578,6 +578,10 @@ class Channel(peerId: ByteVector) {
               // remove the temporary secret used, if any
               ChannelMaster.temporarySecrets =
                 ChannelMaster.temporarySecrets.filterNot(_ == msg.secret.toHex)
+            } else {
+              localLogger.warn
+                .item("secret", msg.secret.toHex)
+                .msg(s"peer sent an invalid secret")
             }
           } else {
             // channel already exists, so send last cross-signed-state
