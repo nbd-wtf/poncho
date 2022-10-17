@@ -71,8 +71,8 @@ class Database(val path: Path = Paths.get("poncho").toAbsolutePath()) {
     Files.write(preimagesFile, Data().preimages.asJson.noSpaces.getBytes)
   }
 
-  var data = Data(
-    channels = channelsDir
+  var data = {
+    val channels = channelsDir
       .toFile()
       .list()
       .filter(_.matches("[a-f0-9]{66}.json"))
@@ -100,14 +100,15 @@ class Database(val path: Path = Paths.get("poncho").toAbsolutePath()) {
           ).toTry.get
         )
       )
-      .toMap,
-    htlcForwards = decode[List[(HtlcIdentifier, HtlcIdentifier)]](
+      .toMap
+    val htlcForwards = decode[List[(HtlcIdentifier, HtlcIdentifier)]](
       readString(htlcForwardsFile)
-    ).toTry.get.toMap,
-    preimages = decode[Map[ByteVector32, ByteVector32]](
+    ).toTry.get.toMap
+    val preimages = decode[List[(ByteVector32, ByteVector32)]](
       readString(preimagesFile)
-    ).toTry.get
-  )
+    ).toTry.get.toMap
+    Data(channels, htlcForwards, preimages)
+  }
 
   // update will overwrite only the files that changed during the `change` operation
   def update(change: Data => Data) = {

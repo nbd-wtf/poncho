@@ -172,7 +172,7 @@ object Picklers {
             .downField("initialClientBalanceMsat")
             .as[MilliSatoshi]
         )
-      features <- c.downField("features").as[List[Int]]
+      features = c.downField("features").as[List[Int]].getOrElse(List.empty)
     } yield InitHostedChannel(
       maxHtlcValueInFlight = maxHtlcValueInFlight,
       htlcMinimum = htlcMinimum,
@@ -209,7 +209,29 @@ object Picklers {
   given Decoder[HtlcIdentifier] = deriveDecoder
 
   given Encoder[ChannelData] = deriveEncoder
-  given Decoder[ChannelData] = deriveDecoder
+  given Decoder[ChannelData] = new Decoder[ChannelData] {
+    final def apply(c: HCursor): Decoder.Result[ChannelData] = Right(
+      ChannelData(
+        lcss = c
+          .downField("lcss")
+          .as[LastCrossSignedState]
+          .getOrElse(LastCrossSignedState.empty),
+        localErrors = c
+          .downField("localErrors")
+          .as[Set[DetailedError]]
+          .getOrElse(Set.empty),
+        remoteErrors =
+          c.downField("remoteErrors").as[Set[Error]].getOrElse(Set.empty),
+        suspended = c.downField("suspended").as[Boolean].getOrElse(false),
+        proposedOverride = c
+          .downField("proposedOverride")
+          .as[Option[LastCrossSignedState]]
+          .getOrElse(None),
+        acceptingResize =
+          c.downField("acceptingResize").as[Option[Satoshi]].getOrElse(None)
+      )
+    )
+  }
 
   given Encoder[DetailedError] = deriveEncoder
   given Decoder[DetailedError] = deriveDecoder
