@@ -215,20 +215,28 @@ object Picklers {
         lcss = c
           .downField("lcss")
           .as[LastCrossSignedState]
-          .getOrElse(LastCrossSignedState.empty),
+          .toTry
+          .get,
         localErrors = c
           .downField("localErrors")
           .as[Set[DetailedError]]
-          .getOrElse(Set.empty),
-        remoteErrors =
-          c.downField("remoteErrors").as[Set[Error]].getOrElse(Set.empty),
-        suspended = c.downField("suspended").as[Boolean].getOrElse(false),
+          .getOrElse(ChannelData.empty.localErrors),
+        remoteErrors = c
+          .downField("remoteErrors")
+          .as[Set[Error]]
+          .getOrElse(ChannelData.empty.remoteErrors),
+        suspended = c
+          .downField("suspended")
+          .as[Boolean]
+          .getOrElse(ChannelData.empty.suspended),
         proposedOverride = c
           .downField("proposedOverride")
           .as[Option[LastCrossSignedState]]
-          .getOrElse(None),
-        acceptingResize =
-          c.downField("acceptingResize").as[Option[Satoshi]].getOrElse(None)
+          .getOrElse(ChannelData.empty.proposedOverride),
+        acceptingResize = c
+          .downField("acceptingResize")
+          .as[Option[Satoshi]]
+          .getOrElse(ChannelData.empty.acceptingResize)
       )
     )
   }
@@ -236,6 +244,72 @@ object Picklers {
   given Encoder[DetailedError] = deriveEncoder
   given Decoder[DetailedError] = deriveDecoder
 
-  given Encoder[Config] = deriveEncoder
-  given Decoder[Config] = deriveDecoder
+  given Decoder[Config] = new Decoder[Config] {
+    final def apply(c: HCursor): Decoder.Result[Config] = Right(
+      Config(
+        basePath = c
+          .downField("basePath")
+          .as[Option[Path]]
+          .getOrElse(Config.defaults.basePath),
+        isDev =
+          c.downField("isDev").as[Boolean].getOrElse(Config.defaults.isDev),
+        cltvExpiryDelta = c
+          .downField("cltvExpiryDelta")
+          .as[CltvExpiryDelta]
+          .getOrElse(Config.defaults.cltvExpiryDelta),
+        feeBase = c
+          .downField("feeBase")
+          .as[MilliSatoshi]
+          .getOrElse(Config.defaults.feeBase),
+        feeProportionalMillionths = c
+          .downField("feeProportionalMillionths")
+          .as[Long]
+          .getOrElse(Config.defaults.feeProportionalMillionths),
+        maxHtlcValueInFlightMsat = c
+          .downField("maxHtlcValueInFlightMsat")
+          .as[MilliSatoshi]
+          .getOrElse(Config.defaults.maxHtlcValueInFlightMsat),
+        htlcMinimumMsat = c
+          .downField("htlcMinimumMsat")
+          .as[MilliSatoshi]
+          .getOrElse(Config.defaults.htlcMinimumMsat),
+        maxAcceptedHtlcs = c
+          .downField("maxAcceptedHtlcs")
+          .as[Int]
+          .getOrElse(Config.defaults.maxAcceptedHtlcs),
+        channelCapacityMsat = c
+          .downField("channelCapacityMsat")
+          .as[MilliSatoshi]
+          .getOrElse(Config.defaults.channelCapacityMsat),
+        initialClientBalanceMsat = c
+          .downField("initialClientBalanceMsat")
+          .as[MilliSatoshi]
+          .getOrElse(Config.defaults.initialClientBalanceMsat),
+        contactURL = c
+          .downField("contactURL")
+          .as[String]
+          .getOrElse(Config.defaults.contactURL),
+        logoFile = c
+          .downField("logoFile")
+          .as[String]
+          .getOrElse(Config.defaults.logoFile),
+        hexColor = c
+          .downField("hexColor")
+          .as[String]
+          .getOrElse(Config.defaults.hexColor),
+        requireSecret = c
+          .downField("requireSecret")
+          .as[Boolean]
+          .getOrElse(Config.defaults.requireSecret),
+        permanentSecrets = c
+          .downField("permanentSecrets")
+          .as[List[String]]
+          .getOrElse(Config.defaults.permanentSecrets),
+        disablePreimageChecking = c
+          .downField("disablePreimageChecking")
+          .as[Boolean]
+          .getOrElse(Config.defaults.disablePreimageChecking)
+      )
+    )
+  }
 }

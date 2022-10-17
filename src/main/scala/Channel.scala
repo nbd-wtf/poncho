@@ -62,7 +62,9 @@ class Channel(peerId: ByteVector) {
   var state = StateManager(peerId, lcssStored)
 
   def currentData =
-    ChannelMaster.database.data.channels.get(peerId).getOrElse(ChannelData())
+    ChannelMaster.database.data.channels
+      .get(peerId)
+      .getOrElse(ChannelData.empty)
   def lcssStored = currentData.lcss
   def status =
     if openingRefundScriptPubKey.isDefined then Opening
@@ -627,7 +629,7 @@ class Channel(peerId: ByteVector) {
           ChannelMaster.database.update { data =>
             data
               .modify(_.channels)
-              .using(_ + (peerId -> ChannelData(lcss = lcssInitial)))
+              .using(_ + (peerId -> ChannelData.empty.copy(lcss = lcssInitial)))
           }
           state = state.copy(lcssCurrent = lcssStored)
 
@@ -696,7 +698,7 @@ class Channel(peerId: ByteVector) {
           ChannelMaster.database.update { data =>
             data
               .modify(_.channels)
-              .using(_ + (peerId -> ChannelData(lcss = lcssInitial)))
+              .using(_ + (peerId -> ChannelData.empty.copy(lcss = lcssInitial)))
           }
           state = state.copy(lcssCurrent = lcssStored)
 
@@ -859,7 +861,9 @@ class Channel(peerId: ByteVector) {
             ChannelMaster.database.update { data =>
               data
                 .modify(_.channels)
-                .using(_ + (peerId -> ChannelData(lcss = msg.reverse)))
+                .using(
+                  _ + (peerId -> ChannelData.empty.copy(lcss = msg.reverse))
+                )
             }
             state = state.copy(lcssCurrent = lcssStored)
           }
@@ -1112,7 +1116,7 @@ class Channel(peerId: ByteVector) {
               data
                 .modify(_.channels.at(peerId))
                 .setTo(
-                  ChannelData(lcss = lcssNext)
+                  ChannelData.empty.copy(lcss = lcssNext)
                 )
                 //
                 // also remove the links for any htlcs that were relayed from elsewhere to this channel
@@ -1346,7 +1350,7 @@ class Channel(peerId: ByteVector) {
             ChannelMaster.database.update { data =>
               data
                 .modify(_.channels.at(peerId))
-                .setTo(ChannelData(lcss = lcss))
+                .setTo(ChannelData.empty.copy(lcss = lcss))
             }
             // channel is active again
             state = StateManager(peerId = peerId, lcssCurrent = lcssStored)

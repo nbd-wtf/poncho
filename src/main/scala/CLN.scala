@@ -454,8 +454,8 @@ class CLN() extends NodeInterface {
             .as[String]
             .toTry
             .get
-        rpcAddr = lightningDir + "/" + rpcFile
-        hsmSecret = Paths.get(lightningDir + "/hsm_secret")
+        rpcAddr = Paths.get(lightningDir).resolve(rpcFile).toString()
+        hsmSecret = Paths.get(lightningDir).resolve("hsm_secret")
 
         initCallback()
       }

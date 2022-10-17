@@ -19,27 +19,46 @@ case class HtlcIdentifier(scid: ShortChannelId, id: Long) {
 }
 
 case class Data(
-    channels: Map[ByteVector, ChannelData] = Map.empty,
+    channels: Map[ByteVector, ChannelData],
 
     // this is a mapping between the channel id and the htlc id of the the stuff we've received to the
     // channel id and htlc id we've sent for every payment that is in flight -- it allows us to know which
     // one to fulfill/fail when the other has been fulfilled/failed, and also prevents us from adding the same
     // htlc more than once when we restart and get the pending htlcs replayed on each channel
-    htlcForwards: Map[HtlcIdentifier, HtlcIdentifier] = Map.empty,
+    htlcForwards: Map[HtlcIdentifier, HtlcIdentifier],
 
     // this is a mapping between hash and preimage containing the
     // the preimages we have received but that our hosted peer hasn't acknowledged yet
-    preimages: Map[ByteVector32, ByteVector32] = Map.empty
+    preimages: Map[ByteVector32, ByteVector32]
 )
 
+object Data {
+  def empty = Data(
+    channels = Map.empty,
+    htlcForwards = Map.empty,
+    preimages = Map.empty
+  )
+}
+
 case class ChannelData(
-    lcss: LastCrossSignedState = LastCrossSignedState.empty,
-    localErrors: Set[DetailedError] = Set.empty,
-    remoteErrors: Set[Error] = Set.empty,
-    suspended: Boolean = false,
-    proposedOverride: Option[LastCrossSignedState] = None,
-    acceptingResize: Option[Satoshi] = None
+    lcss: LastCrossSignedState,
+    localErrors: Set[DetailedError],
+    remoteErrors: Set[Error],
+    suspended: Boolean,
+    proposedOverride: Option[LastCrossSignedState],
+    acceptingResize: Option[Satoshi]
 )
+
+object ChannelData {
+  def empty = ChannelData(
+    lcss = LastCrossSignedState.empty,
+    localErrors = Set.empty,
+    remoteErrors = Set.empty,
+    suspended = false,
+    proposedOverride = None,
+    acceptingResize = None
+  )
+}
 
 case class DetailedError(
     error: Error,
@@ -63,12 +82,15 @@ class Database(val path: Path = Paths.get("poncho").toAbsolutePath()) {
     Files.createFile(htlcForwardsFile)
     Files.write(
       htlcForwardsFile,
-      Data().htlcForwards.toList.asJson.noSpaces.getBytes
+      Data.empty.htlcForwards.toList.asJson.noSpaces.getBytes
     )
   }
   if (!Files.exists(preimagesFile)) {
     Files.createFile(preimagesFile)
-    Files.write(preimagesFile, Data().preimages.asJson.noSpaces.getBytes)
+    Files.write(
+      preimagesFile,
+      Data.empty.preimages.toList.asJson.noSpaces.getBytes
+    )
   }
 
   var data = {
