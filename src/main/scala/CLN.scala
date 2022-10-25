@@ -402,8 +402,9 @@ class CLN() extends NodeInterface {
         reply(ujson.Obj())
 
         val lightningDir = params("configuration")("lightning-dir").str
-        rpcAddr = lightningDir + "/" + params("configuration")("rpc-file").str
-        hsmSecret = Paths.get(lightningDir + "/hsm_secret")
+        val rpcFile = params("configuration")("rpc-file").str
+        rpcAddr = Paths.get(lightningDir).resolve(rpcFile).toString()
+        hsmSecret = Paths.get(lightningDir).resolve("hsm_secret")
 
         initCallback()
       }
