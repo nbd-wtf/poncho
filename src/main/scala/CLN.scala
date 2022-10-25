@@ -31,6 +31,8 @@ class CLN() extends NodeInterface {
   private var hsmSecret: Path = Paths.get("")
   private var nextId = 0
   private var onStartup = true
+  private val peersUsingBrokenEncoding =
+    scala.collection.mutable.Set.empty[ByteVector]
 
   Timer.timeout(10.seconds) { () => onStartup = false }
 
@@ -222,15 +224,18 @@ class CLN() extends NodeInterface {
       message: LightningMessage
   ): Future[Json] = {
     val result = hostedMessageCodec.encode(message).toOption.get.toByteVector
-    val tagHex = result.take(2).toHex
-    val value = result.drop(2)
-    val lengthHex = uint16
-      .encode(value.size.toInt)
-      .toOption
-      .get
-      .toByteVector
-      .toHex
-    val payload = tagHex ++ lengthHex ++ value.toHex
+
+    val payload = if peersUsingBrokenEncoding.contains(peerId) then {
+      val tagHex = result.take(2).toHex
+      val value = result.drop(2)
+      val lengthHex = uint16
+        .encode(value.size.toInt)
+        .toOption
+        .get
+        .toByteVector
+        .toHex
+      tagHex ++ lengthHex ++ value.toHex
+    } else result.toHex
 
     ChannelMaster.log(s"  ::> sending $message --> ${peerId.toHex}")
     rpc(
@@ -467,6 +472,22 @@ class CLN() extends NodeInterface {
         val body = c.get[String]("payload").toTry.get
         val payload: ByteVector = ByteVector.fromValidHex(body)
 
+        val potentialLength =
+          uint16.decode(payload.drop(2).take(2).toBitVector).require.value
+        val isUsingLegacyLength = payload.drop(4).size == potentialLength
+
+        val msg =
+          if isUsingLegacyLength then {
+            System.err.println(s"LEGACY ${peerId.toHex}")
+            peersUsingBrokenEncoding.add(peerId)
+            payload.take(2) ++
+              payload.drop(2 /* tag */ + 2 /* length */ )
+          } else {
+            System.err.println(s"NEW ${peerId.toHex}")
+            peersUsingBrokenEncoding.remove(peerId)
+            payload
+          }
+
         hostedMessageCodec
           .decode(msg.toBitVector)
           .toTry match {
@@ -492,10 +513,15 @@ class CLN() extends NodeInterface {
             .orElse(c.downField("params").downN(0).as[String])
             .toTry
 
+          System.err.println(c.focus.get)
+
           // there will always be an invoice
           inv.flatMap(Bolt11Invoice.fromString(_)) match {
             case Failure(err) =>
-              System.err.println(s"failed to decode invoice, $err")
+              ChannelMaster.logger.err
+                .item("inv", inv)
+                .item("err", err)
+                .msg("failed to decode invoice on 'pay'")
               reply(Json.obj("result" := "continue"))
             case Success(bolt11) if bolt11.amountOpt == None =>
               reply(Json.obj("result" := "continue"))
@@ -544,7 +570,7 @@ class CLN() extends NodeInterface {
                           .msg(
                             "couldn't pay hosted peer, letting CLN do its thing"
                           )
-                        Json.obj("result" := "continue")
+                        reply(Json.obj("result" := "continue"))
                     }
                 case None =>
                   // this is not targeting one of our hosted channels, so let CLN handle it
@@ -593,8 +619,8 @@ class CLN() extends NodeInterface {
               onion.get[ShortChannelId]("short_channel_id").toTry.get
             val targetAmount = MilliSatoshi(
               htlc
-                .get[String]("forward_msat")
-                .orElse(htlc.get[String]("forward_amount"))
+                .get[String]("forward_amount")
+                .orElse(htlc.get[String]("forward_msat"))
                 .map(_.takeWhile(_.isDigit).toLong)
                 .orElse(
                   htlc

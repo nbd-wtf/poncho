@@ -522,7 +522,7 @@ class Channel(peerId: ByteVector) {
         case Success(Some(Right(preimage))) => Success(preimage);
         case reason =>
           Failure(
-            new Exception("direct payment failed for some reason: $reason")
+            new Exception(s"direct payment failed for some reason: $reason")
           )
       }
     }
