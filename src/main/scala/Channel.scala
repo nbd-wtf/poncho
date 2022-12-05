@@ -485,7 +485,7 @@ class Channel(peerId: ByteVector) {
             .require
             .bytes
         ),
-        Some(bolt11.hash)
+        Some(bolt11.paymentHash)
       )
 
       val htlc = UpdateAddHtlc(

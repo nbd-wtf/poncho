@@ -552,7 +552,7 @@ class CLN() extends NodeInterface {
                             "return" := Json.obj(
                               "result" := Json.obj(
                                 "destination" := peerId.toHex,
-                                "payment_hash" := bolt11.hash.toHex,
+                                "payment_hash" := bolt11.paymentHash.toHex,
                                 "parts" := 1,
                                 "amount_msat" := bolt11.amountOpt.get.toLong,
                                 "msatoshi_sent" := bolt11.amountOpt.get.toLong,
