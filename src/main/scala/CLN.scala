@@ -513,8 +513,6 @@ class CLN() extends NodeInterface {
             .orElse(c.downField("params").downN(0).as[String])
             .toTry
 
-          System.err.println(c.focus.get)
-
           // there will always be an invoice
           inv.flatMap(Bolt11Invoice.fromString(_)) match {
             case Failure(err) =>
@@ -618,12 +616,12 @@ class CLN() extends NodeInterface {
             val targetChannel =
               onion.get[ShortChannelId]("short_channel_id").toTry.get
             val targetAmount = MilliSatoshi(
-              htlc
+              onion
                 .get[String]("forward_amount")
-                .orElse(htlc.get[String]("forward_msat"))
+                .orElse(onion.get[String]("forward_msat"))
                 .map(_.takeWhile(_.isDigit).toLong)
                 .orElse(
-                  htlc
+                  onion
                     .get[Long]("forward_msat")
                 )
                 .toTry
