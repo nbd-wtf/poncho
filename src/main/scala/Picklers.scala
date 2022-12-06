@@ -84,7 +84,16 @@ object Picklers {
     Decoder.decodeString.emapTry(s => Try(Paths.get(s)))
 
   given Encoder[UpdateAddHtlc] = deriveEncoder
-  given Decoder[UpdateAddHtlc] = deriveDecoder
+  given Decoder[UpdateAddHtlc] = Decoder.forProduct6(
+    "channelId",
+    "id",
+    "amountMsat",
+    "paymentHash",
+    "cltvExpiry",
+    "onionRoutingPacket"
+  )((cid, id, amt, hash, cltv, onion) =>
+    UpdateAddHtlc(cid, id, amt, hash, cltv, onion)
+  )
 
   given Encoder[Error] = deriveEncoder
   given Decoder[Error] = deriveDecoder
@@ -187,11 +196,6 @@ object Picklers {
   given Encoder[UpdateAddHtlcTlvStream] =
     new Encoder {
       final def apply(a: UpdateAddHtlcTlvStream): Json = Json.arr()
-    }
-  given Decoder[UpdateAddHtlcTlvStream] =
-    new Decoder {
-      final def apply(c: HCursor): Decoder.Result[UpdateAddHtlcTlvStream] =
-        Right(TlvStream.empty[UpdateAddHtlcTlv])
     }
 
   type ErrorTlvStream = TlvStream[ErrorTlv] // hack
