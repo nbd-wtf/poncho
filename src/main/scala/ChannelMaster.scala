@@ -73,11 +73,9 @@ object ChannelMaster {
         System.out.println(
           Json
             .obj(
-              "jsonrpc" -> "2.0".asJson,
-              "method" -> "log".asJson,
-              "params" -> Json.obj(
-                "message" -> text.asJson
-              )
+              "jsonrpc" := "2.0",
+              "method" := "log",
+              "params" := Json.obj("message" := text)
             )
             .noSpaces
         )

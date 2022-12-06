@@ -8,6 +8,8 @@ import scoin.ShortChannelId
 import scoin.ln._
 import scoin.hc._
 
+import Picklers.given
+
 object Printer {
   def hcDetail(
       peerId: ByteVector,
@@ -17,8 +19,8 @@ object Printer {
     val channel = ChannelMaster.channels.get(peerId)
 
     val simple = hcSimple((peerId, data))
-    simple.remove("their_balance")
-    simple.remove("total_updates")
+      .remove("their_balance")
+      .remove("total_updates")
 
     val basic = basicChannelData(data)
 
@@ -32,51 +34,45 @@ object Printer {
     val channel = ChannelMaster.channels.get(peerId)
 
     JsonObject(
-      "peer_id" -> peerId.toHex.asJson,
-      "channel_id" ->
+      "peer_id" := peerId.toHex,
+      "channel_id" :=
         hostedChannelId(
           ChannelMaster.node.publicKey.value,
           peerId
-        ).toHex.asJson,
-      "short_channel_id" ->
+        ).toHex,
+      "short_channel_id" :=
         hostedShortChannelId(
           ChannelMaster.node.publicKey.value,
           peerId
-        ).toString.asJson,
-      "their_balance" -> data.lcss.remoteBalance.toLong.asJson,
-      "total_updates" -> (data.lcss.localUpdates + data.lcss.remoteUpdates).toInt.asJson,
-      "status" -> channel
+        ).toString,
+      "their_balance" := data.lcss.remoteBalance.toLong,
+      "total_updates" := (data.lcss.localUpdates + data.lcss.remoteUpdates).toInt,
+      "status" := channel
         .map(_.status.getClass.getSimpleName.toLowerCase)
         .getOrElse("offline")
-        .asJson
     )
   }
 
   private def basicChannelData(data: ChannelData): JsonObject =
     JsonObject(
-      "is_host" -> data.lcss.isHost.asJson,
-      "blockday" -> data.lcss.blockDay.toInt.asJson,
-      "balance" -> JsonObject(
-        "total" -> data.lcss.initHostedChannel.channelCapacity.toLong.asJson,
-        "local" -> data.lcss.localBalance.toLong.asJson,
-        "remote" -> data.lcss.remoteBalance.toLong.asJson
-      ).asJson,
-      "updates" -> JsonObject(
-        "local" -> data.lcss.localUpdates.toInt.asJson,
-        "remote" -> data.lcss.remoteUpdates.toInt.asJson
-      ).asJson,
-      "acceptingResize" -> data.acceptingResize.map(_.toLong).asJson,
-      "errors" -> JsonObject(
-        "local" -> data.localErrors
-          .map(dtlerr => dtlerr.toString)
-          .asJson,
-        "remote" -> data.remoteErrors
-          .map(err => err.toString)
-          .asJson
-      ).asJson,
-      "proposedOverride" -> data.proposedOverride
+      "is_host" := data.lcss.isHost,
+      "blockday" := data.lcss.blockDay.toInt,
+      "balance" := Json.obj(
+        "total" := data.lcss.initHostedChannel.channelCapacity.toLong,
+        "local" := data.lcss.localBalance.toLong,
+        "remote" := data.lcss.remoteBalance.toLong
+      ),
+      "updates" := Json.obj(
+        "local" := data.lcss.localUpdates.toInt,
+        "remote" := data.lcss.remoteUpdates.toInt
+      ),
+      "acceptingResize" := data.acceptingResize.map(_.toLong),
+      "errors" := Json.obj(
+        "local" := data.localErrors.map(dtlerr => dtlerr.toString),
+        "remote" := data.remoteErrors.map(err => err.asText)
+      ),
+      "proposedOverride" := data.proposedOverride
         .map(_.localBalance.toLong)
-        .asJson
     )
 
   private def moreChannelData(
@@ -90,11 +86,11 @@ object Printer {
       data.lcss.outgoingHtlcs.map(mapHtlc(channel.shortChannelId, _))
     )
   } yield JsonObject(
-    "htlcs" -> JsonObject(
-      "incoming" -> incoming.asJson,
-      "outgoing" -> outgoing.asJson
-    ).asJson,
-    "uncommitted_updates" -> channel.state.uncommittedUpdates
+    "htlcs" := Json.obj(
+      "incoming" := incoming,
+      "outgoing" := outgoing
+    ),
+    "uncommitted_updates" := channel.state.uncommittedUpdates
       .groupBy {
         case FromLocal(_, _) => "from_us"
         case FromRemote(_)   => "from_them"
@@ -105,26 +101,32 @@ object Printer {
       }
         .map(_.size))
       .map(_.size)
-      .asJson
   )
 
   private def mapHtlc(
       scid: ShortChannelId,
       htlc: UpdateAddHtlc,
-      fetchOutgoingStatus: Boolean = false
-  ): Future[Json] =
+      isIncoming: Boolean = false
+  ): Future[Json] = {
+    val releasedPreimage =
+      ChannelMaster.database.data.preimages.get(htlc.paymentHash)
+    val forwardedToAnotherHC = ChannelMaster.database.data.htlcForwards
+      .get(HtlcIdentifier(scid, htlc.id))
+
     val base = JsonObject(
-      "id" -> htlc.id.toLong.asJson,
-      "amount" -> htlc.amountMsat.toLong.asJson,
-      "hash" -> htlc.paymentHash.toHex.asJson,
-      "cltv" -> htlc.cltvExpiry.toLong.asJson,
-      "released_uncommitted_preimage" -> ChannelMaster.database.data.preimages
-        .get(htlc.paymentHash)
-        .map(_.toHex)
-        .asJson
+      "id" := htlc.id.toLong,
+      "amount" := htlc.amountMsat.toLong,
+      "hash" := htlc.paymentHash.toHex,
+      "cltv" := htlc.cltvExpiry.toLong,
+      "released_uncommitted_preimage" := releasedPreimage.map(_.toHex),
+      "relayed_to_hc" := forwardedToAnotherHC
     )
 
-    if (fetchOutgoingStatus) {
+    if (
+      isIncoming &&
+      releasedPreimage.isEmpty &&
+      forwardedToAnotherHC.isEmpty
+    ) {
       ChannelMaster.node
         .inspectOutgoingPayment(
           HtlcIdentifier(scid, htlc.id),
@@ -138,4 +140,5 @@ object Printer {
         }
         .map(result => base.add("upstream_status", result.asJson).asJson)
     } else Future.successful(base.asJson)
+  }
 }
