@@ -4,9 +4,10 @@ scalaVersion          := "3.2.0"
 libraryDependencies   ++= Seq(
   "org.scodec" %%% "scodec-bits" % "1.1.32",
   "org.scodec" %%% "scodec-core" % "2.2.0",
-  "com.lihaoyi" %%% "upickle" % "1.6.0",
-  "com.lihaoyi" %%% "ujson" % "1.6.0",
-  "com.fiatjaf" %%% "scoin" % "0.3.0",
+  "io.circe" %%% "circe-core" % "0.14.3",
+  "io.circe" %%% "circe-generic" % "0.14.3",
+  "io.circe" %%% "circe-parser" % "0.14.3",
+  "com.fiatjaf" %%% "scoin" % "0.5.0-SNAPSHOT",
   "com.fiatjaf" %%% "nlog" % "0.1.0",
   "com.fiatjaf" %%% "sn-unixsocket" % "0.1.0",
   "com.github.lolgab" %%% "native-loop-core" % "0.2.1",

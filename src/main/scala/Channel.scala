@@ -9,9 +9,9 @@ import scala.collection.mutable.Map
 import scala.scalanative.unsigned._
 import scala.scalanative.loop.Timer
 import com.softwaremill.quicklens._
-import upickle.default.{ReadWriter, macroRW}
 import scodec.bits.ByteVector
 import scodec.codecs._
+import io.circe.Json
 import scoin._
 import scoin.Crypto.PublicKey
 import scoin.ln._
@@ -46,12 +46,12 @@ case object Suspended extends ChannelStatus
 
 class Channel(peerId: ByteVector) {
   lazy val channelId =
-    HostedChannelHelpers.getChannelId(
+    hostedChannelId(
       ChannelMaster.node.publicKey.value,
       peerId
     )
   lazy val shortChannelId =
-    HostedChannelHelpers.getShortChannelId(
+    hostedShortChannelId(
       ChannelMaster.node.publicKey.value,
       peerId
     )
@@ -62,7 +62,9 @@ class Channel(peerId: ByteVector) {
   var state = StateManager(peerId, lcssStored)
 
   def currentData =
-    ChannelMaster.database.data.channels.get(peerId).getOrElse(ChannelData())
+    ChannelMaster.database.data.channels
+      .get(peerId)
+      .getOrElse(ChannelData.empty)
   def lcssStored = currentData.lcss
   def status =
     if openingRefundScriptPubKey.isDefined then Opening
@@ -83,7 +85,7 @@ class Channel(peerId: ByteVector) {
       state.lcssNext.outgoingHtlcs.map(_.amountMsat.toLong))
       .fold(0L)(_ + _)
 
-  def sendMessage(msg: LightningMessage): Future[ujson.Value] =
+  def sendMessage(msg: LightningMessage): Future[Json] =
     ChannelMaster.node.sendCustomMessage(peerId, msg)
 
   // this function only sends one state_update once for each state
@@ -181,11 +183,10 @@ class Channel(peerId: ByteVector) {
         for {
           outgoing <- ChannelMaster.database.data.htlcForwards.get(htlcIn)
           entry <- ChannelMaster.database.data.channels.find((p, _) =>
-            HostedChannelHelpers
-              .getShortChannelId(
-                ChannelMaster.node.publicKey.value,
-                p
-              ) == outgoing.scid
+            hostedShortChannelId(
+              ChannelMaster.node.publicKey.value,
+              p
+            ) == outgoing.scid
           )
           chandata = entry._2
           htlc <- lcssStored.outgoingHtlcs.find(htlc => htlc.id == outgoing.id)
@@ -216,7 +217,7 @@ class Channel(peerId: ByteVector) {
           )
 
         val failure: Option[FailureMessage] = () match {
-          case _ if amountOut < lcssStored.initHostedChannel.htlcMinimumMsat =>
+          case _ if amountOut < lcssStored.initHostedChannel.htlcMinimum =>
             Some(AmountBelowMinimum(amountOut, getChannelUpdate(true)))
           case _ if cltvOut.blockHeight < ChannelMaster.currentBlock + 2 =>
             Some(ExpiryTooSoon(getChannelUpdate(true)))
@@ -224,11 +225,11 @@ class Channel(peerId: ByteVector) {
             Some(IncorrectCltvExpiry(cltvOut, getChannelUpdate(true)))
           case _ if amountIn - amountOut < requiredFee =>
             Some(FeeInsufficient(amountIn, getChannelUpdate(true)))
-          case _ if state.lcssNext.localBalanceMsat < amountOut =>
+          case _ if state.lcssNext.localBalance < amountOut =>
             Some(TemporaryChannelFailure(getChannelUpdate(true)))
           case _
               if inflightHtlcs + 1 > lcssStored.initHostedChannel.maxAcceptedHtlcs ||
-                inflightValue + amountOut.toLong > lcssStored.initHostedChannel.maxHtlcValueInFlightMsat.toLong =>
+                inflightValue + amountOut.toLong > lcssStored.initHostedChannel.maxHtlcValueInFlight.toLong =>
             Some(TemporaryChannelFailure(getChannelUpdate(true)))
           case _ => None
         }
@@ -446,15 +447,15 @@ class Channel(peerId: ByteVector) {
   //   response format is simplified since we don't have to return an LN fulfill/fail upstream
   //   and so on
   def sendDirectPayment(bolt11: Bolt11Invoice): Future[ByteVector32] = {
-    val amount = bolt11.amount_opt.get
+    val amount = bolt11.amountOpt.get
     var promise = Promise[PaymentStatus]()
 
     if (status != Active) Future.failed(new Exception("channel isn't active"))
-    else if (state.lcssNext.localBalanceMsat < amount)
+    else if (state.lcssNext.localBalance < amount)
       Future.failed(new Exception("not enough balance on our side"))
     else if (
       inflightHtlcs + 1 > lcssStored.initHostedChannel.maxAcceptedHtlcs ||
-      inflightValue + amount.toLong > lcssStored.initHostedChannel.maxHtlcValueInFlightMsat.toLong
+      inflightValue + amount.toLong > lcssStored.initHostedChannel.maxHtlcValueInFlight.toLong
     ) Future.failed(new Exception("no room for new HTLCs"))
     else {
       val localLogger = logger.attach.item(status).logger()
@@ -484,7 +485,7 @@ class Channel(peerId: ByteVector) {
             .require
             .bytes
         ),
-        Some(bolt11.hash)
+        Some(bolt11.paymentHash)
       )
 
       val htlc = UpdateAddHtlc(
@@ -521,7 +522,7 @@ class Channel(peerId: ByteVector) {
         case Success(Some(Right(preimage))) => Success(preimage);
         case reason =>
           Failure(
-            new Exception("direct payment failed for some reason: $reason")
+            new Exception(s"direct payment failed for some reason: $reason")
           )
       }
     }
@@ -598,9 +599,9 @@ class Channel(peerId: ByteVector) {
           refundScriptPubKey = openingRefundScriptPubKey.get,
           initHostedChannel = ChannelMaster.config.init,
           blockDay = msg.blockDay,
-          localBalanceMsat =
+          localBalance =
             ChannelMaster.config.channelCapacityMsat - ChannelMaster.config.initialClientBalanceMsat,
-          remoteBalanceMsat = ChannelMaster.config.initialClientBalanceMsat,
+          remoteBalance = ChannelMaster.config.initialClientBalanceMsat,
           localUpdates = 0L,
           remoteUpdates = 0L,
           incomingHtlcs = List.empty,
@@ -628,7 +629,7 @@ class Channel(peerId: ByteVector) {
           ChannelMaster.database.update { data =>
             data
               .modify(_.channels)
-              .using(_ + (peerId -> ChannelData(lcss = lcssInitial)))
+              .using(_ + (peerId -> ChannelData.empty.copy(lcss = lcssInitial)))
           }
           state = state.copy(lcssCurrent = lcssStored)
 
@@ -654,9 +655,8 @@ class Channel(peerId: ByteVector) {
           refundScriptPubKey = spk,
           initHostedChannel = init,
           blockDay = ChannelMaster.currentBlockDay,
-          localBalanceMsat = init.initialClientBalanceMsat,
-          remoteBalanceMsat =
-            init.channelCapacityMsat - init.initialClientBalanceMsat,
+          localBalance = init.initialClientBalance,
+          remoteBalance = init.channelCapacity - init.initialClientBalance,
           localUpdates = 0L,
           remoteUpdates = 0L,
           incomingHtlcs = List.empty,
@@ -698,7 +698,7 @@ class Channel(peerId: ByteVector) {
           ChannelMaster.database.update { data =>
             data
               .modify(_.channels)
-              .using(_ + (peerId -> ChannelData(lcss = lcssInitial)))
+              .using(_ + (peerId -> ChannelData.empty.copy(lcss = lcssInitial)))
           }
           state = state.copy(lcssCurrent = lcssStored)
 
@@ -711,7 +711,7 @@ class Channel(peerId: ByteVector) {
       case msg: ResizeChannel
           if status == Active &&
             msg.verifyClientSig(PublicKey(peerId)) &&
-            msg.newCapacity > state.lcssNext.remoteBalanceMsat.toSatoshi &&
+            msg.newCapacity > state.lcssNext.remoteBalance.toSatoshi &&
             currentData.acceptingResize
               .map(msg.newCapacity <= _)
               .getOrElse(false) =>
@@ -720,20 +720,18 @@ class Channel(peerId: ByteVector) {
           .msg("accepting resize proposal")
 
         def resizedInit(init: InitHostedChannel): InitHostedChannel = init.copy(
-          channelCapacityMsat = msg.newCapacity.toMilliSatoshi,
-          maxHtlcValueInFlightMsat =
-            UInt64(msg.newCapacity.toMilliSatoshi.toLong),
+          channelCapacity = msg.newCapacity.toMilliSatoshi,
+          maxHtlcValueInFlight = msg.newCapacity.toMilliSatoshi
         )
         def resizedBalance(curr: MilliSatoshi): MilliSatoshi =
-          curr + msg.newCapacity - lcssStored.initHostedChannel.channelCapacityMsat
+          curr + msg.newCapacity - lcssStored.initHostedChannel.channelCapacity
 
         // change our next state
         state = state.copy(lcssCurrent =
           state.lcssCurrent.copy(
             initHostedChannel =
               resizedInit(state.lcssCurrent.initHostedChannel),
-            localBalanceMsat =
-              resizedBalance(state.lcssCurrent.localBalanceMsat)
+            localBalance = resizedBalance(state.lcssCurrent.localBalance)
           )
         )
 
@@ -745,7 +743,7 @@ class Channel(peerId: ByteVector) {
             .setTo(None)
 
             // increase our balance accordingly (or decrease)
-            .modify(_.channels.at(peerId).lcss.localBalanceMsat)
+            .modify(_.channels.at(peerId).lcss.localBalance)
             .using(resizedBalance(_))
 
             // adjust init params
@@ -803,19 +801,7 @@ class Channel(peerId: ByteVector) {
 
       // if we have an override proposal we return it when the client tries to invoke
       case _: InvokeHostedChannel if status == Overriding =>
-        sendMessage(lcssStored)
-          .andThen(_ =>
-            currentData.localErrors.headOption.map { err =>
-              sendMessage(err.error)
-            }
-          )
-          .andThen(_ =>
-            sendMessage(
-              currentData.proposedOverride.get
-                .withLocalSigOfRemote(ChannelMaster.node.privateKey)
-                .stateOverride
-            )
-          )
+        initWhenOverriding()
 
       // after we've sent our last_cross_signed_state above, the client replies with theirs
       case msg: LastCrossSignedState => {
@@ -863,7 +849,9 @@ class Channel(peerId: ByteVector) {
             ChannelMaster.database.update { data =>
               data
                 .modify(_.channels)
-                .using(_ + (peerId -> ChannelData(lcss = msg.reverse)))
+                .using(
+                  _ + (peerId -> ChannelData.empty.copy(lcss = msg.reverse))
+                )
             }
             state = state.copy(lcssCurrent = lcssStored)
           }
@@ -975,12 +963,12 @@ class Channel(peerId: ByteVector) {
         Utils
           .parseClientOnion(ChannelMaster.node.privateKey, htlc)
           .map(_.packet) match {
-          case Right(packet: PaymentOnion.ChannelRelayPayload) => {
+          case Right(packet: PaymentOnion.ChannelRelayTlvPayload) => {
             // critical failures, fail the channel
             // these should never happen because the peer will know enough to not proposed these invalid HTLCs
             if (
-              state.lcssNext.localBalanceMsat < MilliSatoshi(0L) ||
-              state.lcssNext.remoteBalanceMsat < MilliSatoshi(0L)
+              state.lcssNext.localBalance < MilliSatoshi(0L) ||
+              state.lcssNext.remoteBalance < MilliSatoshi(0L)
             ) {
               val err =
                 Error(
@@ -995,7 +983,7 @@ class Channel(peerId: ByteVector) {
                     _ + DetailedError(
                       err,
                       Some(htlc),
-                      s"peer sent an htlc that caused some balance to go below zero ${state.lcssNext.localBalanceMsat}/${state.lcssNext.remoteBalanceMsat}"
+                      s"peer sent an htlc that caused some balance to go below zero ${state.lcssNext.localBalance}/${state.lcssNext.remoteBalance}"
                     )
                   )
               }
@@ -1005,10 +993,10 @@ class Channel(peerId: ByteVector) {
               val failure: Option[FailureMessage] = () match {
                 case _
                     if inflightHtlcs > lcssStored.initHostedChannel.maxAcceptedHtlcs ||
-                      inflightValue > lcssStored.initHostedChannel.maxHtlcValueInFlightMsat.toLong =>
+                      inflightValue > lcssStored.initHostedChannel.maxHtlcValueInFlight.toLong =>
                   Some(TemporaryChannelFailure(getChannelUpdate(true)))
                 case _
-                    if htlc.amountMsat < lcssStored.initHostedChannel.htlcMinimumMsat =>
+                    if htlc.amountMsat < lcssStored.initHostedChannel.htlcMinimum =>
                   Some(
                     AmountBelowMinimum(htlc.amountMsat, getChannelUpdate(true))
                   )
@@ -1116,7 +1104,7 @@ class Channel(peerId: ByteVector) {
               data
                 .modify(_.channels.at(peerId))
                 .setTo(
-                  ChannelData(lcss = lcssNext)
+                  ChannelData.empty.copy(lcss = lcssNext)
                 )
                 //
                 // also remove the links for any htlcs that were relayed from elsewhere to this channel
@@ -1229,7 +1217,7 @@ class Channel(peerId: ByteVector) {
                     }
                     case Right(
                           OnionParseResult(
-                            payload: PaymentOnion.ChannelRelayPayload,
+                            payload: PaymentOnion.ChannelRelayTlvPayload,
                             nextOnion: ByteVector,
                             sharedSecret: ByteVector32
                           )
@@ -1238,7 +1226,7 @@ class Channel(peerId: ByteVector) {
                       // first check if it's for another hosted channel we may have
                       ChannelMaster.database.data.channels
                         .find((p, _) =>
-                          HostedChannelHelpers.getShortChannelId(
+                          hostedShortChannelId(
                             ChannelMaster.node.publicKey.value,
                             p
                           ) == payload.outgoingChannelId
@@ -1274,6 +1262,23 @@ class Channel(peerId: ByteVector) {
                             )
                       }
                     }
+                    case Right(somethingElse) =>
+                      localLogger.warn
+                        .item("result", somethingElse)
+                        .msg(
+                          "unexpected onion decode result on htlc received from hostedpeer"
+                        )
+
+                      scala.concurrent.ExecutionContext.global.execute(() =>
+                        gotPaymentResult(
+                          htlc.id,
+                          Some(
+                            Left(
+                              Some(NormalFailureMessage(TemporaryNodeFailure))
+                            )
+                          )
+                        )
+                      )
                   }
                 }
               }
@@ -1333,7 +1338,7 @@ class Channel(peerId: ByteVector) {
             ChannelMaster.database.update { data =>
               data
                 .modify(_.channels.at(peerId))
-                .setTo(ChannelData(lcss = lcss))
+                .setTo(ChannelData.empty.copy(lcss = lcss))
             }
             // channel is active again
             state = StateManager(peerId = peerId, lcssCurrent = lcssStored)
@@ -1366,6 +1371,22 @@ class Channel(peerId: ByteVector) {
       case msg =>
         localLogger.debug.item("msg", msg).msg(s"unhandled")
     }
+  }
+
+  def initWhenOverriding(): Unit = {
+    sendMessage(lcssStored)
+      .andThen(_ =>
+        currentData.localErrors.headOption.map { err =>
+          sendMessage(err.error)
+        }
+      )
+      .andThen(_ =>
+        sendMessage(
+          currentData.proposedOverride.get
+            .withLocalSigOfRemote(ChannelMaster.node.privateKey)
+            .stateOverride
+        )
+      )
   }
 
   def onBlockUpdated(block: BlockHeight): Unit = {
@@ -1466,7 +1487,7 @@ class Channel(peerId: ByteVector) {
             )
           )
         })
-        .map(res => res("status").str)
+        .map(_.hcursor.get[String]("status").toTry.get)
     }
   }
 
@@ -1503,9 +1524,9 @@ class Channel(peerId: ByteVector) {
             )
         )
         .copy(
-          localBalanceMsat = newLocalBalance,
-          remoteBalanceMsat =
-            lcssStored.initHostedChannel.channelCapacityMsat - newLocalBalance,
+          localBalance = newLocalBalance,
+          remoteBalance =
+            lcssStored.initHostedChannel.channelCapacity - newLocalBalance,
           blockDay = ChannelMaster.currentBlockDay
         )
 
@@ -1521,7 +1542,7 @@ class Channel(peerId: ByteVector) {
           .withLocalSigOfRemote(ChannelMaster.node.privateKey)
           .stateOverride
       )
-        .map((v: ujson.Value) => v("status").str)
+        .map(_.hcursor.get[String]("status").toTry.get)
     }
   }
 

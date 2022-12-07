@@ -7,10 +7,11 @@ import scala.util.{Failure, Success}
 import scala.util.chaining._
 import scala.collection.mutable
 import scodec.bits.ByteVector
-import upickle.default._
 import com.softwaremill.quicklens._
 import scodec.bits.ByteVector
 import scodec.{DecodeResult}
+import io.circe._
+import io.circe.syntax._
 import scoin._
 import scoin.ln._
 import scoin.hc._
@@ -70,13 +71,13 @@ object ChannelMaster {
 
       if (node.isInstanceOf[CLN] && !ChannelMaster.config.isDev) {
         System.out.println(
-          ujson.Obj(
-            "jsonrpc" -> "2.0",
-            "method" -> "log",
-            "params" -> ujson.Obj(
-              "message" -> text
+          Json
+            .obj(
+              "jsonrpc" := "2.0",
+              "method" := "log",
+              "params" := Json.obj("message" := text)
             )
-          )
+            .noSpaces
         )
       } else {
         System.err.println(
@@ -101,7 +102,7 @@ object ChannelMaster {
       "clients-total-balance",
       database.data.channels.values
         .filter(_.lcss.isHost)
-        .map(_.lcss.remoteBalanceMsat)
+        .map(_.lcss.remoteBalance)
         .fold(MilliSatoshi(0))(_ + _)
     )
     .msg(s"starting poncho.")
@@ -174,7 +175,7 @@ object ChannelMaster {
           // ~ use that to get the target channel parameters
           (targetPeerId, targetChannelData) <- database.data.channels.find(
             (p, _) =>
-              HostedChannelHelpers.getShortChannelId(
+              hostedShortChannelId(
                 this.node.publicKey.value,
                 p
               ) == scid
@@ -185,8 +186,7 @@ object ChannelMaster {
           _ = targetPeer
             .addHtlc(
               htlcIn = HtlcIdentifier(
-                HostedChannelHelpers
-                  .getShortChannelId(this.node.publicKey.value, sourcePeerId),
+                hostedShortChannelId(this.node.publicKey.value, sourcePeerId),
                 in.id
               ),
               paymentHash = in.paymentHash,
