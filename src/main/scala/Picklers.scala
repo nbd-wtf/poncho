@@ -3,6 +3,7 @@ import scala.math.BigInt
 import scala.util.Try
 import scodec.bits.ByteVector
 import io.circe.{Error => _, _}
+import io.circe.syntax._
 import io.circe.generic.semiauto._
 import scoin._
 import scoin.ln._
@@ -83,17 +84,37 @@ object Picklers {
   given Decoder[Path] =
     Decoder.decodeString.emapTry(s => Try(Paths.get(s)))
 
-  given Encoder[UpdateAddHtlc] = deriveEncoder
-  given Decoder[UpdateAddHtlc] = Decoder.forProduct6(
-    "channelId",
-    "id",
-    "amountMsat",
-    "paymentHash",
-    "cltvExpiry",
-    "onionRoutingPacket"
-  )((cid, id, amt, hash, cltv, onion) =>
-    UpdateAddHtlc(cid, id, amt, hash, cltv, onion)
-  )
+  given Encoder[UpdateAddHtlc] = new Encoder[UpdateAddHtlc] {
+    final def apply(htlc: UpdateAddHtlc): Json = Json.obj(
+      "channelId" := htlc.channelId,
+      "id" := htlc.id,
+      "amountMsat" := htlc.amountMsat,
+      "paymentHash" := htlc.paymentHash,
+      "cltvExpiry" := htlc.cltvExpiry,
+      "onionRoutingPacket" := htlc.onionRoutingPacket,
+      "tlvStream" := UpdateAddHtlcTlv.addHtlcTlvCodec
+        .encode(htlc.tlvStream)
+        .toTry
+        .get
+        .toByteVector
+    )
+  }
+  given Decoder[UpdateAddHtlc] = new Decoder[UpdateAddHtlc] {
+    final def apply(c: HCursor): Decoder.Result[UpdateAddHtlc] = for {
+      cid <- c.downField("channelId").as[ByteVector32]
+      id <- c.downField("id").as[Long]
+      amt <- c.downField("amountMsat").as[MilliSatoshi]
+      hash <- c.downField("paymentHash").as[ByteVector32]
+      cltv <- c.downField("cltvExpiry").as[CltvExpiry]
+      onion <- c.downField("onionRoutingPacket").as[OnionRoutingPacket]
+      tlv = c
+        .downField("tlvStream")
+        .as[ByteVector]
+        .map(_.toBitVector)
+        .flatMap(UpdateAddHtlcTlv.addHtlcTlvCodec.decodeValue(_).toEither)
+        .getOrElse(TlvStream.empty)
+    } yield UpdateAddHtlc(cid, id, amt, hash, cltv, onion, tlv)
+  }
 
   given Encoder[Error] = deriveEncoder
   given Decoder[Error] = deriveDecoder
@@ -191,12 +212,6 @@ object Picklers {
       features = features
     )
   }
-
-  type UpdateAddHtlcTlvStream = TlvStream[UpdateAddHtlcTlv] // hack
-  given Encoder[UpdateAddHtlcTlvStream] =
-    new Encoder {
-      final def apply(a: UpdateAddHtlcTlvStream): Json = Json.arr()
-    }
 
   type ErrorTlvStream = TlvStream[ErrorTlv] // hack
   given Encoder[ErrorTlvStream] =
