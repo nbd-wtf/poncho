@@ -98,30 +98,16 @@ class Database(val path: Path = Paths.get("poncho").toAbsolutePath()) {
       .toFile()
       .list()
       .filter(_.matches("[a-f0-9]{66}.json"))
-      .tap(_.foreach { filename =>
-        // (temporary -- remove this later)
-        // replace the $type attribute in the JSON before reading
-        // this is necessary now only because we've changed the types to be at scoin.hc now
-        val path = channelsDir.resolve(filename)
+      .map { filename =>
+        val pubkeyBytes = ByteVector.fromValidHex(filename.take(66))
+        val fileContents = readString(channelsDir.resolve(filename))
+        val channelData = decode[ChannelData](fileContents).toTry.get
 
-        val replaced =
-          new String(Files.readAllBytes(path), StandardCharsets.UTF_8)
-            .replace(
-              "codecs.LastCrossSignedState",
-              "scoin.hc.LastCrossSignedState"
-            )
-            .replace("codecs.InitHostedChannel", "scoin.hc.InitHostedChannel")
-
-        Files.write(path, replaced.getBytes)
-      })
-      .map(filename =>
         (
-          ByteVector.fromValidHex(filename.take(66)),
-          decode[ChannelData](
-            readString(channelsDir.resolve(filename))
-          ).toTry.get
+          pubkeyBytes,
+          channelData
         )
-      )
+      }
       .toMap
     val htlcForwards = decode[List[(HtlcIdentifier, HtlcIdentifier)]](
       readString(htlcForwardsFile)
