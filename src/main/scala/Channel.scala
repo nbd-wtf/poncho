@@ -801,19 +801,7 @@ class Channel(peerId: ByteVector) {
 
       // if we have an override proposal we return it when the client tries to invoke
       case _: InvokeHostedChannel if status == Overriding =>
-        sendMessage(lcssStored)
-          .andThen(_ =>
-            currentData.localErrors.headOption.map { err =>
-              sendMessage(err.error)
-            }
-          )
-          .andThen(_ =>
-            sendMessage(
-              currentData.proposedOverride.get
-                .withLocalSigOfRemote(ChannelMaster.node.privateKey)
-                .stateOverride
-            )
-          )
+        initWhenOverriding()
 
       // after we've sent our last_cross_signed_state above, the client replies with theirs
       case msg: LastCrossSignedState => {
@@ -1383,6 +1371,22 @@ class Channel(peerId: ByteVector) {
       case msg =>
         localLogger.debug.item("msg", msg).msg(s"unhandled")
     }
+  }
+
+  def initWhenOverriding(): Unit = {
+    sendMessage(lcssStored)
+      .andThen(_ =>
+        currentData.localErrors.headOption.map { err =>
+          sendMessage(err.error)
+        }
+      )
+      .andThen(_ =>
+        sendMessage(
+          currentData.proposedOverride.get
+            .withLocalSigOfRemote(ChannelMaster.node.privateKey)
+            .stateOverride
+        )
+      )
   }
 
   def onBlockUpdated(block: BlockHeight): Unit = {

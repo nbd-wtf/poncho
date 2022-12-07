@@ -478,7 +478,6 @@ class CLN() extends NodeInterface {
 
         val msg =
           if isUsingLegacyLength then {
-            System.err.println(s"LEGACY ${peerId.toHex}")
             peersUsingBrokenEncoding.add(peerId)
             payload.take(2) ++
               payload.drop(2 /* tag */ + 2 /* length */ )
@@ -743,16 +742,18 @@ class CLN() extends NodeInterface {
           }
       }
       case "connect" => {
-        // val id = params("id").str
-        // val address = params("address")("address").str
-        // ChannelMaster.log(s"$id connected: $address")
+        // if a peer has an error it might not send us an Invoke when it comes online
+        // so we'll be proactive and send our stored override proposal if it exists
+        val c = params.hcursor
+        val peerId = ByteVector.fromValidHex(c.get[String]("id").toTry.get)
+        val channel = ChannelMaster.getChannel(peerId)
+        if (channel.currentData.proposedOverride.isDefined)
+          channel.initWhenOverriding()
+
         // TODO: send InvokeHostedChannel to all hosted peers from which we are clients
         //       and related flows -- for example sending LastCrossSignedState etc
       }
-      case "disconnect" => {
-        // val id = params("id").str
-        // ChannelMaster.log(s"$id disconnected")
-      }
+      case "disconnect" => {}
 
       // custom rpc methods
       case "parse-lcss" => {
