@@ -90,7 +90,7 @@ No configuration is needed for a quick test, but you can write a file at `$LIGHT
 
 The branding information won't be used unless contact URL and logo file are set. The logo should be a PNG file also placed under `$LIGHTNING_DIR/bitcoin/poncho/` and specified as a relative path.
 
-Setting `disablePreimageChecking` to `true` will drastically decrease resource consumption since it won't fetch and parse all Bitcoin blocks. It is recommended if you are offering hosted channels only to trusted people or yourself. If you are a public entity offering channels to random people it is not recommended since it opens up the possibility of _reputational_ damage against you, see [this part of the spec about the preimage checking](https://github.com/fiatjaf/blips/blob/blip-hosted-channels/blip-0012.md#dealing-with-problems).
+Setting `disablePreimageChecking` to `true` will drastically decrease resource consumption since it won't fetch and parse all Bitcoin blocks. It is recommended if you are offering hosted channels only to trusted people or yourself. If you are a public entity offering channels to random people it is not recommended since it opens up the possibility of _reputational_ damage against you, see [this part of the spec about the preimage checking](https://github.com/lightning/blips/blob/master/blip-0017.md#dealing-with-problems).
 
 (Remember to remove the JSON comments in the file above otherwise it won't work.)
 
@@ -115,7 +115,11 @@ Each channel's `last_cross_signed_state` and other metadata is stored in a file 
 
 - **What are hosted channels?**
 
-Here's one explanation: https://fanismichalakis.fr/posts/what-are-hosted-channels/. Here is another one: https://sbw.app/posts/scaling-ln-with-hosted-channels/.
+Hosted Channels are virtual channels backed by trust, they work very much like Lightning Channels and hosted channel users can interact seamlessly with the broader Lightning Network. Since they don't touch the Bitcoin chain they are basically free to create and do not require any collateral.
+
+Here is a better (very short and high-level) explanation and description of its benefits from the inventor of Hosted Channels, Anton Kumaigorodskiy: https://archive.ph/HFXUK; and here is another explanation from Fanis Michalakis: https://fanismichalakis.fr/posts/what-are-hosted-channels/
+
+The Hosted Channels protocol are also standardized as [bLIP-0017](https://github.com/lightning/blips/blob/master/blip-0017.md). Check that if you want to know more about the low-level details.
 
 - **What can I do with `poncho` and hosted channels?**
 
