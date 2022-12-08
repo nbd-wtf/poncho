@@ -1,12 +1,12 @@
 import java.nio.file.{Files, Path, Paths}
 import java.nio.charset.StandardCharsets
-import util.chaining.scalaUtilChainingOps
+import scala.util.chaining._
 import scala.collection.immutable.Map
 import scala.scalanative.unsigned._
 import scala.scalanative.loop.Timer
 import scodec.bits.ByteVector
 import io.circe.{Error => _, _}
-import io.circe.parser.decode
+import io.circe.parser.{decode, parse}
 import io.circe.syntax._
 import scoin._
 import scoin.ln._
@@ -112,9 +112,15 @@ class Database(val path: Path = Paths.get("poncho").toAbsolutePath()) {
     val htlcForwards = decode[List[(HtlcIdentifier, HtlcIdentifier)]](
       readString(htlcForwardsFile)
     ).toTry.get.toMap
-    val preimages = decode[List[(ByteVector32, ByteVector32)]](
-      readString(preimagesFile)
-    ).toTry.get.toMap
+    val preimages = parse(readString(preimagesFile))
+      .flatMap(json =>
+        json
+          .as[List[(ByteVector32, ByteVector32)]]
+          .map(_.toMap)
+          .orElse(json.as[Map[ByteVector32, ByteVector32]])
+      )
+      .toTry
+      .get
     Data(channels, htlcForwards, preimages)
   }
 
