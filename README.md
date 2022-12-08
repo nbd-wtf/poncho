@@ -3,13 +3,15 @@
 poncho
 ======
 
-## provider of credit-based channels for lightning nodes
+_provider of credit-based channels for lightning nodes_
 
 ![](https://i.pinimg.com/originals/63/6b/46/636b46410c8e0166bb6d8fe20dbe23f5.jpg)
 
 This is an **early alpha** software that turns your CLN node into a [hosted channels](https://sbw.app/posts/scaling-ln-with-hosted-channels/) provider.
 
-### Installation using the prebuilt binary
+## Installation
+
+### Using the prebuilt binary
 
 Grab a binary from the [Releases page](https://github.com/fiatjaf/poncho/releases), call `chmod +x` on it so it is executable, then put it inside your CLN plugin directory (`~/.lightning/plugins/`) -- or start `lightningd` with `--plugin <path-to-poncho>`.
 
@@ -45,7 +47,7 @@ To delete the image later you can use:
 podman image rm poncho-builder
 ```
 
-### Operation
+## Operation
 
 `poncho` requires your `hsm_secret` to _not_ be encrypted. If it is encrypted it won't work, at least for now.
 
@@ -111,7 +113,7 @@ When running on CLN, the plugin will create a folder at `$LIGHTNING_DIR/bitcoin/
 
 Each channel's `last_cross_signed_state` and other metadata is stored in a file under `channels/` named with the pubkey of remote peer. The other two files are helpers that should be empty most of the time and only have values in them while payments are in flight (so they can be recovered after a restart).
 
-### FAQ
+## FAQ
 
 - **What are hosted channels?**
 
