@@ -31,7 +31,7 @@ class CLN() extends NodeInterface {
   private var hsmSecret: Path = Paths.get("")
   private var nextId = 0
   private var onStartup = true
-  private val peersUsingBrokenEncoding =
+  private val peersUsingLegacyEncoding =
     scala.collection.mutable.Set.empty[ByteVector]
 
   Timer.timeout(10.seconds) { () => onStartup = false }
@@ -225,7 +225,7 @@ class CLN() extends NodeInterface {
   ): Future[Json] = {
     val result = hostedMessageCodec.encode(message).toOption.get.toByteVector
 
-    val payload = if peersUsingBrokenEncoding.contains(peerId) then {
+    val payload = if peersUsingLegacyEncoding.contains(peerId) then {
       val tagHex = result.take(2).toHex
       val value = result.drop(2)
       val lengthHex = uint16
@@ -478,12 +478,11 @@ class CLN() extends NodeInterface {
 
         val msg =
           if isUsingLegacyLength then {
-            peersUsingBrokenEncoding.add(peerId)
+            peersUsingLegacyEncoding.add(peerId)
             payload.take(2) ++
               payload.drop(2 /* tag */ + 2 /* length */ )
           } else {
-            System.err.println(s"NEW ${peerId.toHex}")
-            peersUsingBrokenEncoding.remove(peerId)
+            peersUsingLegacyEncoding.remove(peerId)
             payload
           }
 
