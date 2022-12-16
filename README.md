@@ -32,7 +32,7 @@ After that, head over to the `poncho/` directory and call `sbt nativeLink`. Afte
 
 ### Building the statically-linked binary
 
-You'll need [podman](https://podman.io) (or Docker should be similar, but I don't know anything about this). So we'll build a container image that will compile libuv and libsecp256k1 then produce a poncho binary executable that is standalone, independent and statically linked and you don't have to touch Java ever in your life again.
+You'll need [podman](https://podman.io) (or Docker should be similar, but I don't know anything about this). So we'll build a container image that will compile libuv and libsecp256k1 then produce a poncho binary executable that is standalone, independent, and statically linked and you don't have to touch Java ever in your life again.
 
 ```
 podman build . -t poncho-builder
@@ -111,13 +111,13 @@ When running on CLN, the plugin will create a folder at `$LIGHTNING_DIR/bitcoin/
 └── preimages.json
 ```
 
-Each channel's `last_cross_signed_state` and other metadata is stored in a file under `channels/` named with the pubkey of remote peer. The other two files are helpers that should be empty most of the time and only have values in them while payments are in flight (so they can be recovered after a restart).
+Each channel's `last_cross_signed_state` and other metadata is stored in a file under `channels/` named with the pubkey of the remote peer. The other two files are helpers that should be empty most of the time and only have values in them while payments are in flight (so they can be recovered after a restart).
 
 ## FAQ
 
 - **What are hosted channels?**
 
-Hosted Channels are virtual channels backed by trust, they work very much like Lightning Channels and hosted channel users can interact seamlessly with the broader Lightning Network. Since they don't touch the Bitcoin chain they are basically free to create and do not require any collateral.
+Hosted Channels are virtual channels backed by trust, they work very much like Lightning Channels, and hosted channel users can interact seamlessly with the broader Lightning Network. Since they don't touch the Bitcoin chain they are basically free to create and do not require any collateral.
 
 Here is a better (very short and high-level) explanation and description of its benefits from the inventor of Hosted Channels, Anton Kumaigorodskiy: https://archive.ph/HFXUK; and here is another explanation from Fanis Michalakis: https://fanismichalakis.fr/posts/what-are-hosted-channels/
 
