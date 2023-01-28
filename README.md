@@ -86,7 +86,7 @@ No configuration is needed for a quick test, but you can write a file at `$LIGHT
 
   "requireSecret": false, // setting this to true will make it so only clients with this secret can get hosted channels
   "permanentSecrets": [], // you can specify static secrets here that can be used by clients when "requireSecret" is true
-  "disablePreimageChecking": false // setting this to true will make it so poncho won't fetch and parse all bitcoin blocks looking for rogue preimages
+  "disablePreimageChecking": true // setting this to false will make it so poncho will fetch and parse all bitcoin blocks
 }
 ```
 

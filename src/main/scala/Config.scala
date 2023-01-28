@@ -121,6 +121,6 @@ object Config {
     hexColor = "#ffffff",
     requireSecret = false,
     permanentSecrets = List.empty,
-    disablePreimageChecking = false
+    disablePreimageChecking = true
   )
 }
