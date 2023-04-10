@@ -129,9 +129,9 @@ class Database(val path: Path = Paths.get("poncho").toAbsolutePath()) {
     val newData = change(data)
 
     newData.channels
-      .filter((key, chandata) =>
+      .filter { (key, chandata) =>
         !data.channels.contains(key) || data.channels(key) != chandata
-      )
+      }
       .foreach { (key, chandata) =>
         val data = newData.channels(key)
         val file = channelsDir.resolve(key.toHex ++ ".json")
